@@ -8,13 +8,16 @@ import {
   Easing,
   Dimensions,
   Platform,
+  Image,
+  ScrollView,
+  PanResponder,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Slider from '@react-native-community/slider';
 import { Feather } from '@expo/vector-icons';
 import { COLORS } from '../styles/colors';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
 export default function AudioControls({
   isVisible,
@@ -28,14 +31,30 @@ export default function AudioControls({
   onClose,
   formatTime,
   audioTitle,
+  story,
 }) {
   const insets = useSafeAreaInsets();
+  // Animations that use native driver (transforms, opacity)
   const slideAnim = useRef(new Animated.Value(100)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  
+  // JS-driven animation for height/layout (can't use native driver)
+  const expandAnim = useRef(new Animated.Value(0)).current;
+  
   const [sliderValue, setSliderValue] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const hasAudio = duration > 0;
   const hasAutoPlayed = useRef(false);
+  
+  // Placeholder story data (will be replaced with real data later)
+  const storyData = story || {
+    title: audioTitle || "Story Title",
+    author: "Author Name",
+    cover: null, // This will be replaced with actual image
+    description: "This is a placeholder for the story description. It will be replaced with the actual story description from the server later.",
+    text: "Once upon a time, in a land far, far away...\n\nThis is a placeholder for the full story text. When the server is extended, this will be replaced with the complete story content. For now, let's imagine this is a wonderful tale about brave knights, magical creatures, and exciting adventures.\n\nThe story continues with twists and turns, keeping children engaged and excited to hear what happens next. Every character has their own unique personality and challenges to overcome.\n\nAs the plot develops, valuable lessons about friendship, courage, and kindness are woven into the narrative. These stories help children develop empathy and understanding while enjoying the entertainment of a good story."
+  };
   
   // Update slider value when position changes (unless user is seeking)
   useEffect(() => {
@@ -44,7 +63,7 @@ export default function AudioControls({
     }
   }, [position, duration, isSeeking]);
   
-  // Animate in/out when visibility changes
+  // Animate in/out when visibility changes (using native driver)
   useEffect(() => {
     if (isVisible) {
       // Animate in
@@ -76,8 +95,68 @@ export default function AudioControls({
           useNativeDriver: true,
         }),
       ]).start();
+      
+      // Reset expanded state when hiding
+      setExpanded(false);
+      expandAnim.setValue(0);
     }
   }, [isVisible, slideAnim, fadeAnim]);
+  
+  // Animation for expanding/collapsing (JS driven - NOT using native driver)
+  useEffect(() => {
+    Animated.timing(expandAnim, {
+      toValue: expanded ? 1 : 0,
+      duration: 300,
+      useNativeDriver: false, // JS-driven for height animation
+      easing: Easing.out(Easing.cubic),
+    }).start();
+  }, [expanded, expandAnim]);
+  
+  // Calculate expanded container height (minus insets and player height)
+  const expandedHeight = height - insets.top - 80;
+  
+  // Pan responder for swipe gestures
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        // Only respond to vertical gestures
+        return Math.abs(gestureState.dy) > 10 && Math.abs(gestureState.dx) < 20;
+      },
+      onPanResponderMove: (_, gestureState) => {
+        // Handle drag
+        let newValue;
+        if (expanded) {
+          // When expanded, only allow swipe down
+          newValue = 1 - Math.max(0, Math.min(1, gestureState.dy / 200));
+        } else {
+          // When minimized, only allow swipe up
+          newValue = Math.max(0, Math.min(1, -gestureState.dy / 200));
+        }
+        expandAnim.setValue(newValue);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        // Finalize animation based on velocity and distance
+        if (expanded) {
+          // If swiping down while expanded
+          if (gestureState.dy > 50 || gestureState.vy > 0.5) {
+            setExpanded(false);
+          } else {
+            // Return to expanded state
+            expandAnim.setValue(1);
+          }
+        } else {
+          // If swiping up while minimized
+          if (gestureState.dy < -50 || gestureState.vy < -0.5) {
+            setExpanded(true);
+          } else {
+            // Return to minimized state
+            expandAnim.setValue(0);
+          }
+        }
+      },
+    })
+  ).current;
   
   // Handle slider value change when user is seeking
   const handleSliderChange = (value) => {
@@ -95,6 +174,11 @@ export default function AudioControls({
     if (duration > 0) {
       onSeek(value * duration);
     }
+  };
+
+  // Handle tap on pull indicator to toggle expanded state
+  const toggleExpanded = () => {
+    setExpanded(!expanded);
   };
 
   // AUTO-Plays
@@ -116,112 +200,238 @@ export default function AudioControls({
       hasAutoPlayed.current = false;
     }
   }, [isVisible]);
-    
-  // Don't return null, let the animation handle visibility
+  
+  // Animated values for rotation using native driver
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+  
+  // Update rotation animation when expanded state changes
+  useEffect(() => {
+    Animated.timing(rotateAnim, {
+      toValue: expanded ? 1 : 0,
+      duration: 300,
+      useNativeDriver: true,
+      easing: Easing.out(Easing.cubic),
+    }).start();
+  }, [expanded, rotateAnim]);
+  
+  // Calculate styles separately for native and JS animations
+  const containerHeightStyle = {
+    height: expandAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [80, expandedHeight]
+    }),
+  };
+  
+  const containerNativeStyle = {
+    transform: [{ translateY: slideAnim }],
+    opacity: fadeAnim,
+  };
+  
+  const pullIndicatorStyle = {
+    transform: [{
+      rotate: rotateAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0deg', '180deg']
+      })
+    }]
+  };
+  
+  // Create JS-driven animated values for content visibility
+  const minimizedContentOpacity = expandAnim.interpolate({
+    inputRange: [0, 0.3],
+    outputRange: [1, 0],
+    extrapolate: 'clamp'
+  });
+  
+  const expandedContentOpacity = expandAnim.interpolate({
+    inputRange: [0.7, 1],
+    outputRange: [0, 1],
+    extrapolate: 'clamp'
+  });
+  
   return (
     <Animated.View
       style={[
         styles.container,
         {
           paddingBottom: Math.max(insets.bottom, 10),
-          transform: [{ translateY: slideAnim }],
-          opacity: fadeAnim,
         },
+        containerNativeStyle,
       ]}
       accessible={isVisible}
       accessibilityRole="toolbar"
       accessibilityLabel="Audio player controls"
     >
-      {!hasAudio ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>✨ Wybierz bajkę, by rozpocząć</Text>
-        </View>
-      ) : (
-        <View style={styles.controls}>
-          {/* Audio title */}
-          {audioTitle && (
-            <Text numberOfLines={1} style={styles.audioTitle}>
-              {audioTitle}
-            </Text>
-          )}
-          
-          <View style={styles.sliderContainer}>
-            <Text style={styles.timeText}>{formatTime(position)}</Text>
-            <Slider
-              style={styles.slider}
-              minimumValue={0}
-              maximumValue={1}
-              value={sliderValue}
-              minimumTrackTintColor={COLORS.lavender}
-              maximumTrackTintColor="#E5E7EB"
-              thumbTintColor={COLORS.lavender}
-              onValueChange={handleSliderChange}
-              onSlidingStart={handleSlidingStart}
-              onSlidingComplete={handleSlidingComplete}
-              accessibilityLabel="Audio progress slider"
-              accessibilityHint="Drag to change position in the audio"
-            />
-            <Text style={styles.timeText}>{formatTime(duration)}</Text>
+      {/* This wrapper handles the height animation separately */}
+      <Animated.View style={[styles.heightContainer, containerHeightStyle]}>
+        {/* Pull indicator */}
+        <TouchableOpacity 
+          style={styles.pullIndicatorContainer}
+          onPress={toggleExpanded}
+          {...panResponder.panHandlers}
+        >
+          <Animated.View style={[styles.pullIndicator, pullIndicatorStyle]}>
+            <Feather name="chevron-up" size={20} color={COLORS.text.tertiary} />
+          </Animated.View>
+        </TouchableOpacity>
+        
+        {!hasAudio ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>✨ Wybierz bajkę, by rozpocząć</Text>
           </View>
-          
-          <View style={styles.buttonsContainer}>
-            {/* Rewind Button */}
-            <TouchableOpacity 
-              onPress={() => onRewind(10)} 
-              style={styles.sideButton}
-              accessibilityLabel="Rewind 10 seconds"
-              accessibilityRole="button"
-              accessibilityHint="Double tap to go back 10 seconds"
-            >
-              <View style={styles.buttonGroup}>
-                <Feather name="rewind" size={24} color={COLORS.text.secondary} />
-                <Text style={styles.buttonText}>10s</Text>
+        ) : (
+          <>
+            {/* Minimized Controls - shown when not expanded */}
+            <Animated.View style={[styles.controls, { opacity: minimizedContentOpacity }]}>
+              <View style={styles.minimizedControls}>
+                <View style={styles.sliderContainer}>
+                  <Text style={styles.timeText}>{formatTime(position)}</Text>
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={0}
+                    maximumValue={1}
+                    value={sliderValue}
+                    minimumTrackTintColor={COLORS.lavender}
+                    maximumTrackTintColor="#E5E7EB"
+                    thumbTintColor={COLORS.lavender}
+                    onValueChange={handleSliderChange}
+                    onSlidingStart={handleSlidingStart}
+                    onSlidingComplete={handleSlidingComplete}
+                    accessibilityLabel="Audio progress slider"
+                    accessibilityHint="Drag to change position in the audio"
+                  />
+                  <Text style={styles.timeText}>{formatTime(duration)}</Text>
+                </View>
+                
+                <View style={styles.buttonsContainer}>
+                  {/* Rewind Button */}
+                  <TouchableOpacity 
+                    onPress={() => onRewind(10)} 
+                    style={styles.sideButton}
+                    accessibilityLabel="Rewind 10 seconds"
+                    accessibilityRole="button"
+                    accessibilityHint="Double tap to go back 10 seconds"
+                  >
+                    <View style={styles.buttonGroup}>
+                      <Feather name="rewind" size={24} color={COLORS.text.secondary} />
+                      <Text style={styles.buttonText}>10s</Text>
+                    </View>
+                  </TouchableOpacity>
+                  
+                  {/* Play/Pause Button */}
+                  <TouchableOpacity 
+                    onPress={onPlayPause} 
+                    style={styles.playButton}
+                    accessibilityLabel={isPlaying ? "Pause" : "Play"}
+                    accessibilityRole="button"
+                    accessibilityHint={isPlaying ? "Double tap to pause" : "Double tap to play"}
+                  >
+                    <Feather 
+                      name={isPlaying ? 'pause' : 'play'} 
+                      size={28} 
+                      color={COLORS.white} 
+                    />
+                  </TouchableOpacity>
+                  
+                  {/* Forward Button */}
+                  <TouchableOpacity 
+                    onPress={() => onForward(10)} 
+                    style={styles.sideButton}
+                    accessibilityLabel="Forward 10 seconds"
+                    accessibilityRole="button"
+                    accessibilityHint="Double tap to skip forward 10 seconds"
+                  >
+                    <View style={styles.buttonGroup}>
+                      <Text style={styles.buttonText}>10s</Text>
+                      <Feather name="fast-forward" size={24} color={COLORS.text.secondary} />
+                    </View>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </TouchableOpacity>
+            </Animated.View>
             
-            {/* Play/Pause Button */}
-            <TouchableOpacity 
-              onPress={onPlayPause} 
-              style={styles.playButton}
-              accessibilityLabel={isPlaying ? "Pause" : "Play"}
-              accessibilityRole="button"
-              accessibilityHint={isPlaying ? "Double tap to pause" : "Double tap to play"}
+            {/* Expanded Content - visible when expanded */}
+            <Animated.View 
+              style={[
+                styles.expandedContent, 
+                { opacity: expandedContentOpacity }
+              ]}
             >
-              <Feather 
-                name={isPlaying ? 'pause' : 'play'} 
-                size={28} 
-                color={COLORS.white} 
-              />
-            </TouchableOpacity>
-            
-            {/* Forward Button */}
-            <TouchableOpacity 
-              onPress={() => onForward(10)} 
-              style={styles.sideButton}
-              accessibilityLabel="Forward 10 seconds"
-              accessibilityRole="button"
-              accessibilityHint="Double tap to skip forward 10 seconds"
-            >
-              <View style={styles.buttonGroup}>
-                <Text style={styles.buttonText}>10s</Text>
-                <Feather name="fast-forward" size={24} color={COLORS.text.secondary} />
+              {/* Story Header Section */}
+              <View style={styles.storyHeader}>
+                <View style={styles.coverContainer}>
+                  <Image 
+                    source={
+                      storyData.cover ? 
+                      { uri: storyData.cover } : 
+                      require('../assets/images/cover.png')
+                    } 
+                    style={styles.coverImage} 
+                    resizeMode="cover"
+                  />
+                </View>
+                <View style={styles.storyInfo}>
+                  <Text style={styles.storyTitle}>{storyData.title}</Text>
+                  <Text style={styles.storyAuthor}>{storyData.author}</Text>
+                  <Text style={styles.storyDescription}>{storyData.description}</Text>
+                </View>
               </View>
-            </TouchableOpacity>
-          </View>
-          
-          {/* Close button */}
-          {/* {onClose && (
-            <TouchableOpacity 
-              style={styles.closeButton}
-              onPress={onClose}
-              accessibilityLabel="Close audio player"
-              accessibilityRole="button"
-            >
-              <Feather name="x" size={20} color={COLORS.text.tertiary} />
-            </TouchableOpacity>
-          )} */}
-        </View>
-      )}
+              
+              {/* Story Text Scroll View */}
+              <ScrollView 
+                style={styles.storyTextContainer}
+                contentContainerStyle={styles.storyTextContent}
+              >
+                <Text style={styles.storyText}>{storyData.text}</Text>
+              </ScrollView>
+              
+              {/* Player Controls in Expanded Mode */}
+              <View style={styles.expandedPlayerControls}>
+                <View style={styles.sliderContainer}>
+                  <Text style={styles.timeText}>{formatTime(position)}</Text>
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={0}
+                    maximumValue={1}
+                    value={sliderValue}
+                    minimumTrackTintColor={COLORS.lavender}
+                    maximumTrackTintColor="#E5E7EB"
+                    thumbTintColor={COLORS.lavender}
+                    onValueChange={handleSliderChange}
+                    onSlidingStart={handleSlidingStart}
+                    onSlidingComplete={handleSlidingComplete}
+                  />
+                  <Text style={styles.timeText}>{formatTime(duration)}</Text>
+                </View>
+                
+                <View style={styles.buttonsContainer}>
+                  <TouchableOpacity onPress={() => onRewind(10)}>
+                    <View style={styles.buttonGroup}>
+                      <Feather name="rewind" size={24} color={COLORS.text.secondary} />
+                      <Text style={styles.buttonText}>10s</Text>
+                    </View>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity onPress={onPlayPause} style={styles.playButton}>
+                    <Feather 
+                      name={isPlaying ? 'pause' : 'play'} 
+                      size={28} 
+                      color={COLORS.white} 
+                    />
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity onPress={() => onForward(10)}>
+                    <View style={styles.buttonGroup}>
+                      <Text style={styles.buttonText}>10s</Text>
+                      <Feather name="fast-forward" size={24} color={COLORS.text.secondary} />
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Animated.View>
+          </>
+        )}
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -242,9 +452,26 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 5,
-    paddingTop: 12,
+    paddingTop: 0,
     paddingHorizontal: 16,
     zIndex: 100,
+    overflow: 'hidden',
+  },
+  heightContainer: {
+    width: '100%',
+    overflow: 'hidden',
+  },
+  pullIndicatorContainer: {
+    height: 20,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pullIndicator: {
+    width: 40,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyState: {
     paddingVertical: 32,
@@ -257,8 +484,16 @@ const styles = StyleSheet.create({
     color: COLORS.text.tertiary,
   },
   controls: {
-    paddingTop: 4,
+    paddingTop: 0,
     paddingBottom: 8,
+    height: 160,
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    top: 20,
+  },
+  minimizedControls: {
+    flex: 1,
   },
   audioTitle: {
     fontFamily: 'Quicksand-Medium',
@@ -322,5 +557,66 @@ const styles = StyleSheet.create({
     top: 4,
     right: 8,
     padding: 8,
+  },
+  
+  // Expanded content styles
+  expandedContent: {
+    flex: 1,
+    padding: 16,
+  },
+  storyHeader: {
+    flexDirection: 'row',
+    marginBottom: 20,
+  },
+  coverContainer: {
+    width: 120,
+    height: 120,
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginRight: 16,
+    backgroundColor: COLORS.lavender + '30', // 30% opacity
+  },
+  coverImage: {
+    width: '100%',
+    height: '100%',
+  },
+  storyInfo: {
+    flex: 1,
+  },
+  storyTitle: {
+    fontFamily: 'Quicksand-Bold',
+    fontSize: 20,
+    color: COLORS.text.primary,
+    marginBottom: 4,
+  },
+  storyAuthor: {
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 16,
+    color: COLORS.text.secondary,
+    marginBottom: 8,
+  },
+  storyDescription: {
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 14,
+    color: COLORS.text.secondary,
+    lineHeight: 20,
+  },
+  storyTextContainer: {
+    flex: 1,
+    marginBottom: 16,
+  },
+  storyTextContent: {
+    paddingBottom: 20,
+  },
+  storyText: {
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 16,
+    lineHeight: 24,
+    color: COLORS.text.primary,
+  },
+  expandedPlayerControls: {
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0, 0, 0, 0.05)',
   },
 });
