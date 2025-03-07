@@ -389,7 +389,7 @@ export default function SynthesisScreen({ navigation }) {
       title={item.title}
       author={item.author}
       duration={item.duration}
-      imageSource={item.image_url}
+      imageSource={item.cover_url}
       isSelected={selectedStory?.id === item.id}
       isGenerating={!!processingStories[item.id]}
       hasAudio={item.hasAudio}
