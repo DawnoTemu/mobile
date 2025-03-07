@@ -301,15 +301,29 @@ export default function SynthesisScreen({ navigation }) {
   // Load story audio
   const loadStoryAudio = async (audioUri, autoPlay = true) => {
     try {
+      // First make sure audioControlsVisible is set to true before loading audio
+      setAudioControlsVisible(true);
+      
       const success = await loadAudio(audioUri, autoPlay);
-      if (success) {
-        setAudioControlsVisible(true);
-      } else {
+      if (!success) {
         showToast('Nie udało się załadować audio. Spróbuj ponownie.', 'ERROR');
+        // If loading failed, hide the controls
+        setAudioControlsVisible(false);
       }
     } catch (error) {
       console.error('Error loading audio:', error);
       showToast('Wystąpił problem podczas ładowania audio.', 'ERROR');
+      setAudioControlsVisible(false);
+    }
+  };
+
+  const handleResetAudio = async () => {
+    try {
+      await unloadAudio();
+      setAudioControlsVisible(false);
+      setSelectedStory(null);
+    } catch (error) {
+      console.error('Error resetting audio:', error);
     }
   };
   
@@ -449,6 +463,8 @@ export default function SynthesisScreen({ navigation }) {
         onSeek={seekTo}
         onClose={() => setAudioControlsVisible(false)}
         formatTime={formatTime}
+        audioTitle={selectedStory?.title}
+        story={selectedStory}
       />
       
       {/* Confirmation Modal */}

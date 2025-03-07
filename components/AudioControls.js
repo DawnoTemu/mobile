@@ -34,8 +34,8 @@ export default function AudioControls({
   story,
 }) {
   const insets = useSafeAreaInsets();
-  // Animations that use native driver (transforms, opacity)
-  const slideAnim = useRef(new Animated.Value(100)).current;
+  // Reduced initial value from 100 to 50 for less extreme starting position
+  const slideAnim = useRef(new Animated.Value(50)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   
   // JS-driven animation for height/layout (can't use native driver)
@@ -66,6 +66,8 @@ export default function AudioControls({
   // Animate in/out when visibility changes (using native driver)
   useEffect(() => {
     if (isVisible) {
+      // Make component visible immediately before animation
+      slideAnim.setValue(140);
       // Animate in
       Animated.parallel([
         Animated.timing(slideAnim, {
@@ -115,31 +117,31 @@ export default function AudioControls({
   // Calculate expanded container height (minus insets and player height)
   const expandedHeight = height - insets.top - 80;
   
-  // Pan responder for swipe gestures
+  // Improved pan responder for more reliable gesture detection
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Only respond to vertical gestures
-        return Math.abs(gestureState.dy) > 10 && Math.abs(gestureState.dx) < 20;
+        // More sensitive threshold for vertical gestures
+        return Math.abs(gestureState.dy) > 5 && Math.abs(gestureState.dx) < 20;
       },
       onPanResponderMove: (_, gestureState) => {
-        // Handle drag
-        let newValue;
-        if (expanded) {
-          // When expanded, only allow swipe down
-          newValue = 1 - Math.max(0, Math.min(1, gestureState.dy / 200));
-        } else {
-          // When minimized, only allow swipe up
-          newValue = Math.max(0, Math.min(1, -gestureState.dy / 200));
+        // Improved gesture handling
+        if (expanded && gestureState.dy > 0) {
+          // When expanded, better response for swipe down
+          const newValue = 1 - Math.min(1, gestureState.dy / 150);
+          expandAnim.setValue(Math.max(0, newValue));
+        } else if (!expanded && gestureState.dy < 0) {
+          // When collapsed, more responsive swipe up
+          const newValue = Math.min(1, -gestureState.dy / 150);
+          expandAnim.setValue(newValue);
         }
-        expandAnim.setValue(newValue);
       },
       onPanResponderRelease: (_, gestureState) => {
-        // Finalize animation based on velocity and distance
+        // More lenient thresholds for recognizing gestures
         if (expanded) {
-          // If swiping down while expanded
-          if (gestureState.dy > 50 || gestureState.vy > 0.5) {
+          // If swiping down while expanded - lowered threshold
+          if (gestureState.dy > 30 || gestureState.vy > 0.3) {
             setExpanded(false);
           } else {
             // Return to expanded state
@@ -147,7 +149,7 @@ export default function AudioControls({
           }
         } else {
           // If swiping up while minimized
-          if (gestureState.dy < -50 || gestureState.vy < -0.5) {
+          if (gestureState.dy < -30 || gestureState.vy < -0.3) {
             setExpanded(true);
           } else {
             // Return to minimized state
@@ -218,7 +220,7 @@ export default function AudioControls({
   const containerHeightStyle = {
     height: expandAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [80, expandedHeight]
+      outputRange: [140, expandedHeight]
     }),
   };
   
@@ -277,7 +279,6 @@ export default function AudioControls({
         
         {!hasAudio ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>✨ Wybierz bajkę, by rozpocząć</Text>
           </View>
         ) : (
           <>
@@ -357,6 +358,16 @@ export default function AudioControls({
                 { opacity: expandedContentOpacity }
               ]}
             >
+              {/* Added explicit close button for expanded view */}
+              <TouchableOpacity 
+                style={styles.closeExpandedButton}
+                onPress={() => setExpanded(false)}
+                accessibilityLabel="Close expanded view"
+                accessibilityRole="button"
+              >
+                <Feather name="x" size={24} color={COLORS.text.secondary} />
+              </TouchableOpacity>
+            
               {/* Story Header Section */}
               <View style={styles.storyHeader}>
                 <View style={styles.coverContainer}>
@@ -382,7 +393,7 @@ export default function AudioControls({
                 style={styles.storyTextContainer}
                 contentContainerStyle={styles.storyTextContent}
               >
-                <Text style={styles.storyText}>{storyData.text}</Text>
+                <Text style={styles.storyText}>{storyData.content}</Text>
               </ScrollView>
               
               {/* Player Controls in Expanded Mode */}
@@ -486,7 +497,7 @@ const styles = StyleSheet.create({
   controls: {
     paddingTop: 0,
     paddingBottom: 8,
-    height: 160,
+    height: 140,
     position: 'absolute',
     left: 16,
     right: 16,
@@ -567,6 +578,7 @@ const styles = StyleSheet.create({
   storyHeader: {
     flexDirection: 'row',
     marginBottom: 20,
+    marginTop: 10, // Added margin to make room for close button
   },
   coverContainer: {
     width: 120,
@@ -618,5 +630,15 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     borderTopWidth: 1,
     borderTopColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  // New style for close button
+  closeExpandedButton: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    padding: 8,
+    zIndex: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    borderRadius: 20,
   },
 });
