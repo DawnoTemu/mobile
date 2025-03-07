@@ -1,50 +1,177 @@
-# Welcome to your Expo app 👋
+# DawnoTemu
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+DawnoTemu is a React Native mobile application that allows users to create a voice clone and then listen to stories narrated in their own voice. The app provides a personalized storytelling experience by combining high-quality story content with the user's voice characteristics.
 
-## Get started
+![DawnoTemu Logo](./assets/images/logo.png)
 
-1. Install dependencies
+## Features
 
+- **Voice Cloning**: Record your voice or upload an audio file to create a digital clone
+- **Story Selection**: Browse through a collection of stories
+- **Voice Synthesis**: Generate narration of stories using your cloned voice
+- **Audio Player**: Control playback with play/pause, rewind, fast-forward, and seek functionality
+- **Offline Support**: Queue operations when offline and process them when back online
+- **Caching**: Store generated audio files locally for quick access
+
+## Project Structure
+
+```
+my-app/
+├── app/                       # Main app entry point
+├── assets/                    # Static assets (images, fonts, etc.)
+├── components/                # Reusable UI components
+│   ├── Modals/                # Modal components
+│   ├── AudioControls.js       # Audio player component
+│   ├── StatusToast.js         # Toast notification component
+│   └── StoryItem.js           # Story list item component
+├── hooks/                     # Custom React hooks
+│   ├── useAudioPlayer.js      # Hook for audio playback
+│   └── useAudioRecorder.js    # Hook for voice recording
+├── navigation/                # Navigation configuration
+│   └── AppNavigator.js        # Main navigation stack
+├── screens/                   # App screens
+│   ├── CloneScreen.js         # Voice cloning screen
+│   ├── SplashScreen.js        # Initial loading screen
+│   └── SynthesisScreen.js     # Story selection and playback screen
+├── services/                  # API and service integrations
+│   └── voiceService.js        # Voice cloning and synthesis service
+├── styles/                    # Global styles
+│   ├── colors.js              # Color definitions
+│   ├── fonts.js               # Typography styles
+│   └── theme.js               # Combined theme configuration
+└── utils/                     # Utility functions
+    └── audioUtils.js          # Audio-related utility functions
+```
+
+## Tech Stack
+
+- **React Native**: Cross-platform mobile framework
+- **Expo**: Development platform for React Native
+- **React Navigation**: Navigation library
+- **Expo AV**: Audio recording and playback
+- **Expo FileSystem**: File management
+- **AsyncStorage**: Local data persistence
+- **NetInfo**: Network connectivity monitoring
+- **Expo Blur**: Visual blur effects
+- **Animated API**: Animation system
+
+## Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/dawnottemu.git
+   cd dawnottemu
+   ```
+
+2. Install dependencies:
    ```bash
    npm install
    ```
 
-2. Start the app
-
+3. Start the development server:
    ```bash
-    npx expo start
+   npx expo start
    ```
 
-In the output, you'll find options to open the app in a
+## Usage
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+### Voice Cloning
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+1. Launch the app and you'll be directed to the voice cloning screen
+2. Choose to either:
+   - Record your voice by reading the provided text
+   - Upload an existing audio file
 
-## Get a fresh project
+### Accessing Stories
 
-When you're ready, run:
+Once your voice is cloned:
 
-```bash
-npm run reset-project
+1. Browse through the available stories
+2. Tap on a story to select it
+3. The app will generate audio narration using your voice
+4. Use the audio controls to play, pause, rewind, or fast-forward
+
+## API Integration
+
+The app connects to a voice cloning and synthesis API. The service endpoints include:
+
+- `/clone`: Upload voice samples for cloning
+- `/synthesize`: Generate audio narration for stories
+- `/audio/{voiceId}/{storyId}`: Retrieve generated audio files
+- `/stories`: Get available stories
+
+## Customization
+
+### Colors
+
+You can customize the app's color scheme in `styles/colors.js`:
+
+```javascript
+export const COLORS = {
+  peach: '#FFB5A7',
+  lavender: '#D4C1EC',
+  mint: '#B8E0D2',
+  // ... other colors
+};
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+### Fonts
 
-## Learn more
+Font configurations are in `styles/fonts.js`. The app uses Comfortaa and Quicksand font families.
 
-To learn more about developing your project with Expo, look at the following resources:
+## Development Notes
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### Environment Configuration
 
-## Join the community
+The app supports multiple environments:
 
-Join our community of developers creating universal apps.
+```javascript
+const ENV = {
+  DEV: 'http://192.168.1.108:8000/api',
+  STAGING: 'https://staging-story-voice.herokuapp.com/api',
+  PROD: 'https://story-voice-47d650d68bd6.herokuapp.com/api'
+};
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+To change the environment, modify the `API_BASE_URL` in `services/voiceService.js`.
+
+### Audio Processing
+
+The app handles audio in several formats:
+- Recording: WAV format
+- Playback: MP3 format
+- Storage: Files are cached in the app's temporary directory
+
+### Offline Support
+
+The app queues operations when offline and processes them when connectivity is restored:
+
+- Voice cloning operations
+- Story generation requests 
+- Download operations
+
+## Troubleshooting
+
+### Audio Permission Issues
+
+If you encounter issues with recording:
+
+1. Ensure microphone permissions are granted
+2. On iOS, check that "Microphone" permission is enabled in device settings
+3. On Android, verify recording permissions in app settings
+
+### Playback Problems
+
+If audio doesn't play:
+
+1. Check device volume
+2. Ensure the audio file was downloaded successfully
+3. Try restarting the app
+
+## License
+
+[Add your license information here]
+
+## Contact
+
+[Add your contact information here]
