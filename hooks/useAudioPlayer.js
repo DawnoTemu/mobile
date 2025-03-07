@@ -35,8 +35,9 @@ export default function useAudioPlayer() {
   };
   
   // Load an audio file
-  const loadAudio = async (uri) => {
-    // try {
+  // Added autoPlay parameter with default value of true
+  const loadAudio = async (uri, autoPlay = true) => {
+    try {
       setIsLoading(true);
       setError(null);
       
@@ -49,15 +50,12 @@ export default function useAudioPlayer() {
       await Audio.setAudioModeAsync({
         playsInSilentModeIOS: true,
         staysActiveInBackground: true,
-        // interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX, 
-        // interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
         shouldDuckAndroid: true,
       });
       
-      // Create and load the sound
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri },
-        { shouldPlay: false },
+        { shouldPlay: autoPlay },
         onPlaybackStatusUpdate
       );
       
@@ -65,12 +63,12 @@ export default function useAudioPlayer() {
       setIsLoading(false);
       
       return true;
-    // } catch (error) {
+    } catch (error) {
       console.error('Error loading audio:', error);
       setError('Failed to load audio file');
       setIsLoading(false);
       return false;
-    // }
+    }
   };
   
   // Callback for playback status updates

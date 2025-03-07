@@ -186,12 +186,18 @@ export default function SynthesisScreen({ navigation }) {
       return;
     }
     
+    // If audio is currently playing, stop it first
+    if (isPlaying) {
+      await unloadAudio();
+    }
+    
     // Set as selected story
     setSelectedStory(story);
     
     // Check if already has audio
     if (story.hasAudio && story.localUri) {
-      loadStoryAudio(story.localUri);
+      // Pass true to auto-play when loading story audio
+      loadStoryAudio(story.localUri, true);
       return;
     }
     
@@ -242,8 +248,8 @@ export default function SynthesisScreen({ navigation }) {
       });
       
       if (result.success) {
-        // Load the audio
-        await loadStoryAudio(result.uri);
+        // Load the audio with auto-play set to true
+        await loadStoryAudio(result.uri, true);
         
         // Update story in the list to show it has audio
         setStories(currentStories =>
@@ -293,12 +299,11 @@ export default function SynthesisScreen({ navigation }) {
   };
   
   // Load story audio
-  const loadStoryAudio = async (audioUri) => {
+  const loadStoryAudio = async (audioUri, autoPlay = true) => {
     try {
-      const success = await loadAudio(audioUri);
+      const success = await loadAudio(audioUri, autoPlay);
       if (success) {
         setAudioControlsVisible(true);
-
       } else {
         showToast('Nie udało się załadować audio. Spróbuj ponownie.', 'ERROR');
       }

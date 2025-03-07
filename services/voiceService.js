@@ -441,24 +441,26 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
     voiceId = current.voiceId;
   }
   
-  // Start synthesis request
-  const result = await apiRequest('/synthesize', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      voice_id: voiceId,
-      story_id: storyId,
-    }),
-  });
-  
-  if (!result.success) {
-    return {
-      success: false,
-      error: result.error,
-      code: result.code
-    };
+  try {
+    // Start synthesis request
+    const result = await apiRequest('/synthesize', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        voice_id: voiceId,
+        story_id: storyId,
+      }),
+    });
+    
+    if (!result.success) {
+      console.warn('Synthesis request failed. Proceeding to poll for audio availability anyway.');
+      // Continue polling even if synthesis request fails - matches web app behavior
+    }
+  } catch (error) {
+    console.warn('Synthesis request error:', error.message);
+    // Continue to polling even if synthesis request throws an error
   }
   
   // Start polling for audio availability
@@ -477,9 +479,15 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
     // Wait between polling attempts
     await new Promise(resolve => setTimeout(resolve, 5000));
     
-    // Check if audio is ready
-    const checkResult = await checkAudioExists(voiceId, storyId);
-    audioReady = checkResult.success && checkResult.exists;
+    try {
+      // Check if audio is ready with more robust error handling
+      const checkResult = await checkAudioExists(voiceId, storyId);
+      audioReady = checkResult.success && checkResult.exists;
+    } catch (error) {
+      console.warn(`Poll attempt ${attempts + 1} failed:`, error.message);
+      // Continue polling even if a check fails
+    }
+    
     attempts++;
   }
   
@@ -497,7 +505,7 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
     success: true,
     audioUrl,
   };
-};
+}
 
 // AUDIO FILE MANAGEMENT
 
