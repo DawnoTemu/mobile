@@ -35,7 +35,6 @@ export default function useAudioPlayer() {
   };
   
   // Load an audio file
-  // Added autoPlay parameter with default value of true
   const loadAudio = async (uri, autoPlay = true) => {
     try {
       setIsLoading(true);
@@ -53,6 +52,7 @@ export default function useAudioPlayer() {
         shouldDuckAndroid: true,
       });
       
+      // Create and load the sound
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri },
         { shouldPlay: autoPlay },
@@ -93,14 +93,27 @@ export default function useAudioPlayer() {
     if (!sound) return;
     
     try {
+      const status = await sound.getStatusAsync();
+
       if (isPlaying) {
         await sound.pauseAsync();
       } else {
+        if (status.positionMillis === status.durationMillis) {
+          await sound.setPositionAsync(0);
+        }
         await sound.playAsync();
       }
     } catch (error) {
       console.error('Error toggling play/pause:', error);
       setError('Failed to control playback');
+
+      if (audioElement?.src) {
+        try {
+          await loadAudio(audioElement.src);
+        } catch (reloadError) {
+          console.error('Failed to reload audio:', reloadError);
+        }
+      }
     }
   };
   

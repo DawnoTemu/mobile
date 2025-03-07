@@ -13,16 +13,16 @@ LogBox.ignoreLogs(['Remote debugger']);
 
 export default function App() {
   // Load custom fonts
-  // const [fontsLoaded] = useFonts({
-  //   'Comfortaa-Regular': require('./assets/fonts/Comfortaa.ttf'),
-  //   'Quicksand-Regular': require('./assets/fonts/Quicksand.ttf'),
-  //   'Quicksand-Medium': require('./assets/fonts/Quicksand-Medium.ttf'),
-  //   'Quicksand-Bold': require('./assets/fonts/Quicksand-Bold.ttf'),
-  // });
+  const [fontsLoaded] = useFonts({
+    'Comfortaa-Regular': require('../assets/fonts/Comfortaa.ttf'),
+    'Quicksand-Regular': require('../assets/fonts/Quicksand.ttf'),
+    'Quicksand-Medium': require('../assets/fonts/Quicksand-Medium.ttf'),
+    'Quicksand-Bold': require('../assets/fonts/Quicksand-Bold.ttf'),
+  });
 
-  // if (!fontsLoaded) {
-  //   return null; // Don't render anything until fonts are loaded
-  // }
+  if (!fontsLoaded) {
+    return null; // Don't render anything until fonts are loaded
+  }
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

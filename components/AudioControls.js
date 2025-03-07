@@ -609,9 +609,9 @@ const styles = StyleSheet.create({
   },
   storyDescription: {
     fontFamily: 'Quicksand-Regular',
-    fontSize: 14,
+    fontSize: 12,
     color: COLORS.text.secondary,
-    lineHeight: 20,
+    lineHeight: 16,
   },
   storyTextContainer: {
     flex: 1,
@@ -623,8 +623,9 @@ const styles = StyleSheet.create({
   storyText: {
     fontFamily: 'Quicksand-Regular',
     fontSize: 16,
-    lineHeight: 24,
+    lineHeight: 32,
     color: COLORS.text.primary,
+    textAlign: 'justify'
   },
   expandedPlayerControls: {
     paddingTop: 16,

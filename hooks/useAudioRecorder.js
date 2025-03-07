@@ -52,6 +52,7 @@ export default function useAudioRecorder() {
     try {
       // Check permissions
       if (permissionStatus !== 'granted') {
+        console.log('Requesting microphone permission...');
         const { status } = await Audio.requestPermissionsAsync();
         setPermissionStatus(status);
         if (status !== 'granted') {
@@ -60,28 +61,54 @@ export default function useAudioRecorder() {
       }
       
       // Configure audio session
+      console.log('Configuring audio session...');
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
-        // interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
         staysActiveInBackground: false,
-        // interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
         shouldDuckAndroid: true,
         playThroughEarpieceAndroid: false,
       });
       
       // Create and prepare recording
+      console.log('Preparing to record...');
       const newRecording = new Audio.Recording();
-      await newRecording.prepareToRecordAsync(Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY);
       
-      // Start recording
-      await newRecording.startAsync();
-      setRecording(newRecording);
-      setIsRecording(true);
-      setRecordingDuration(0);
-      setProgress(0);
-      
-      return true;
+      try {
+        await newRecording.prepareToRecordAsync({
+          android: {
+            extension: '.wav',
+            outputFormat: Audio.RECORDING_OPTION_ANDROID_OUTPUT_FORMAT_DEFAULT,
+            audioEncoder: Audio.RECORDING_OPTION_ANDROID_AUDIO_ENCODER_DEFAULT,
+            sampleRate: 44100,
+            numberOfChannels: 2,
+            bitRate: 128000,
+          },
+          ios: {
+            extension: '.wav',
+            audioQuality: Audio.RECORDING_OPTION_IOS_AUDIO_QUALITY_HIGH,
+            sampleRate: 44100,
+            numberOfChannels: 2,
+            bitRate: 128000,
+            linearPCMBitDepth: 16,
+            linearPCMIsBigEndian: false,
+            linearPCMIsFloat: false,
+          },
+        });
+        
+        // Start recording
+        console.log('Starting recording...');
+        await newRecording.startAsync();
+        setRecording(newRecording);
+        setIsRecording(true);
+        setRecordingDuration(0);
+        setProgress(0);
+        
+        return true;
+      } catch (prepareError) {
+        console.error('Error preparing recording:', prepareError);
+        throw prepareError;
+      }
     } catch (error) {
       console.error('Failed to start recording', error);
       return false;
@@ -91,20 +118,36 @@ export default function useAudioRecorder() {
   // Stop recording function
   const stopRecording = async () => {
     try {
-      if (!recording) return;
+      if (!recording) {
+        console.log('No active recording to stop');
+        return null;
+      }
       
-      // Stop recording
-      await recording.stopAndUnloadAsync();
+      console.log('Stopping recording...');
       
-      // Get the recording URI
-      const uri = recording.getURI();
-      setAudioUri(uri);
-      
-      // Reset recording state
-      setIsRecording(false);
-      setRecording(null);
-      
-      return uri;
+      try {
+        // Stop recording
+        await recording.stopAndUnloadAsync();
+        
+        // Get the recording URI
+        const uri = recording.getURI();
+        console.log('Recording saved at:', uri);
+        setAudioUri(uri);
+        
+        // Reset recording state
+        setIsRecording(false);
+        setRecording(null);
+        
+        return uri;
+      } catch (stopError) {
+        console.error('Error stopping recording:', stopError);
+        
+        // Reset recording state even if there's an error
+        setIsRecording(false);
+        setRecording(null);
+        
+        return null;
+      }
     } catch (error) {
       console.error('Failed to stop recording', error);
       
