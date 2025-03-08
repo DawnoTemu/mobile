@@ -72,7 +72,12 @@ export default function CloneScreen({ navigation }) {
     
     // Show recording modal and start recording
     setIsModalVisible(true);
-    const success = await startRecording();
+    
+    // Pass handleStopRecording as the callback for auto-stop
+    const success = await startRecording((audioUri) => {
+      // This function will be called automatically when recording stops after 30 seconds
+      processAudioForCloning(audioUri);
+    });
     
     if (!success) {
       setIsModalVisible(false);
@@ -92,7 +97,7 @@ export default function CloneScreen({ navigation }) {
       showToast('Wystąpił problem z nagraniem. Spróbuj ponownie.', 'ERROR');
     }
   };
-  
+
   // Cancel recording modal
   const handleCancelRecording = async () => {
     if (isRecording) {
@@ -137,34 +142,36 @@ export default function CloneScreen({ navigation }) {
   };
   
   // Process audio (either recorded or uploaded) for voice cloning
-  const processAudioForCloning = async (uri) => {
-    try {
-      setIsProcessing(true);
+const processAudioForCloning = async (uri) => {
+  try {
+    // Keep the modal visible but switch to processing state
+    setIsProcessing(true);
+    
+    // API call to clone voice
+    const result = await cloneVoice(uri);
+    
+    // Hide modals at the end
+    setIsProcessing(false);
+    setIsModalVisible(false);
+    
+    if (result.success) {
+      // Save voice ID to AsyncStorage
+      await AsyncStorage.setItem('voice_id', result.voiceId);
       
-      // API call to clone voice
-      const result = await cloneVoice(uri);
+      showToast('Głos sklonowany pomyślnie!', 'SUCCESS');
       
-      setIsProcessing(false);
-      setIsModalVisible(false);
-      
-      if (result.success) {
-        // Save voice ID to AsyncStorage
-        await AsyncStorage.setItem('voice_id', result.voiceId);
-        
-        showToast('Głos sklonowany pomyślnie!', 'SUCCESS');
-        
-        // Navigate to synthesis screen
-        navigation.replace('Synthesis');
-      } else {
-        showToast(`Błąd klonowania głosu: ${result.error}`, 'ERROR');
-      }
-    } catch (error) {
-      console.error('Error processing audio:', error);
-      setIsProcessing(false);
-      setIsModalVisible(false);
-      showToast('Wystąpił problem podczas przetwarzania audio. Spróbuj ponownie.', 'ERROR');
+      // Navigate to synthesis screen
+      navigation.replace('Synthesis');
+    } else {
+      showToast(`Błąd klonowania głosu: ${result.error}`, 'ERROR');
     }
-  };
+  } catch (error) {
+    console.error('Error processing audio:', error);
+    setIsProcessing(false);
+    setIsModalVisible(false);
+    showToast('Wystąpił problem podczas przetwarzania audio. Spróbuj ponownie.', 'ERROR');
+  }
+};
   
   // Reset voice clone (after confirmation)
   const handleResetVoice = async () => {
@@ -249,7 +256,7 @@ export default function CloneScreen({ navigation }) {
           isProcessing
             ? 'Przetwarzanie głosu...'
             : isRecording
-            ? `Nagrywanie: ${formatDuration(recordingDuration)}`
+            ? `Pozostało: ${formatDuration(recordingDuration)}`
             : 'Rozpocznij mówić'
         }
         onCancel={handleCancelRecording}

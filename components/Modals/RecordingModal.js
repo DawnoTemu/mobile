@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Animated,
   Easing,
-  ScrollView,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
@@ -31,15 +30,13 @@ export default function RecordingModal({
   // Auto-scroll animation for the text
   useEffect(() => {
     if (visible && isRecording) {
-      // Start automatic scrolling animation
-      Animated.loop(
-        Animated.timing(scrollY, {
-          toValue: -1000, // Scroll down by 1000 units
-          duration: 60000, // 60 seconds to complete the scroll
-          easing: Easing.linear,
-          useNativeDriver: true,
-        })
-      ).start();
+      // Start automatic scrolling animation - much slower now
+      Animated.timing(scrollY, {
+        toValue: -300, // Less scrolling distance to keep text visible
+        duration: 45000, // 3 minutes - very slow scrolling
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }).start();
     } else {
       // Reset scroll position when modal is closed or not recording
       scrollY.setValue(0);
@@ -129,7 +126,11 @@ export default function RecordingModal({
                 ]}
               >
                 <Text style={styles.recordingText}>
-                  Był spokojny, ciepły wieczór. Słońce powoli chowało się za horyzontem, malując niebo odcieniami pomarańczu i różu. Anna usiadła wygodnie w fotelu przy oknie, trzymając w dłoniach filiżankę herbaty. Powietrze pachniało letnim deszczem, który niedawno przeszedł przez miasto. W oddali słychać było śmiech dzieci bawiących się na podwórku i cichy szum liści poruszanych wiatrem. Kot, zwinięty w kłębek na parapecie, leniwie otworzył jedno oko, jakby chciał sprawdzić, czy wszystko jest w porządku. Anna wzięła głęboki oddech i uśmiechnęła się. To był idealny moment, by na chwilę zatrzymać się i po prostu cieszyć się chwilą.
+                  Był spokojny, ciepły wieczór. Słońce powoli chowało się za horyzontem, malując niebo odcieniami pomarańczu i różu. Anna usiadła wygodnie w fotelu przy oknie, trzymając w dłoniach filiżankę herbaty. 
+                  {'\n\n'}
+                  Powietrze pachniało letnim deszczem, który niedawno przeszedł przez miasto. W oddali słychać było śmiech dzieci bawiących się na podwórku i cichy szum liści poruszanych wiatrem. 
+                  {'\n\n'}
+                  Kot, zwinięty w kłębek na parapecie, leniwie otworzył jedno oko, jakby chciał sprawdzić, czy wszystko jest w porządku. Anna wzięła głęboki oddech i uśmiechnęła się. To był idealny moment, by na chwilę zatrzymać się i po prostu cieszyć się chwilą.
                 </Text>
               </Animated.View>
             </View>
@@ -146,9 +147,9 @@ export default function RecordingModal({
               </View>
             </View>
             
-            {/* Status Text */}
+            {/* Status Text with Countdown Timer */}
             <Text style={styles.statusText}>
-              {statusText || (isRecording ? `Nagrywanie: ${formatDuration(recordingDuration)}` : 'Gotowy do nagrywania')}
+              {statusText || (isRecording ? `Pozostało: ${formatDuration(recordingDuration)}` : 'Rozpocznij mówić')}
             </Text>
             
             {/* Cancel Button */}
@@ -203,22 +204,26 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   scrollingContainer: {
-    height: 300,
+    height: 320, // Increased height for more text
     overflow: 'hidden',
     position: 'relative',
     backgroundColor: `${COLORS.mint}05`, // 5% opacity
   },
   textContainer: {
     padding: 24,
+    paddingBottom: 40, // Extra padding at bottom
   },
   recordingText: {
     fontFamily: 'Quicksand-Regular',
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 16, // Large text size
+    lineHeight: 32, // Increased line height
     color: COLORS.text.primary,
+    flexWrap: 'wrap', // Ensure text wraps properly
+    width: '100%', // Full width
+    height: 1000,
   },
   processingContainer: {
-    height: 300,
+    height: 320, // Match height with scrollingContainer
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: `${COLORS.mint}05`, // 5% opacity
@@ -252,7 +257,8 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontFamily: 'Quicksand-Regular',
-    fontSize: 14,
+    fontSize: 16, // Increased size
+    fontWeight: 'bold', // Make it bold
     color: COLORS.text.secondary,
     textAlign: 'center',
     marginBottom: 16,

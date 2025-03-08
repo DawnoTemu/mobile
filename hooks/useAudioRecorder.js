@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 import * as Permissions from 'expo-permissions';
@@ -7,10 +7,16 @@ import { Platform } from 'react-native';
 export default function useAudioRecorder() {
   const [recording, setRecording] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [recordingDuration, setRecordingDuration] = useState(30); // Start at 30 seconds
   const [audioUri, setAudioUri] = useState(null);
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [progress, setProgress] = useState(0);
+  
+  // Add ref for auto-stop timer
+  const recordingTimerRef = useRef(null);
+  
+  // Add ref to store the auto-stop callback
+  const autoStopCallbackRef = useRef(null);
   
   // Request permissions on mount
   useEffect(() => {
@@ -22,34 +28,74 @@ export default function useAudioRecorder() {
     // Clean up recording if component unmounts
     return () => {
       stopRecording();
+      // Also clear the timer on unmount
+      if (recordingTimerRef.current) {
+        clearTimeout(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
     };
   }, []);
   
-  // Update duration every second while recording
+  // Update duration every second while recording and handle auto-stop
   useEffect(() => {
     let interval = null;
     
     if (isRecording) {
+      // Reset to 30 when recording starts
+      setRecordingDuration(30);
+      setProgress(0);
+      
       interval = setInterval(() => {
         setRecordingDuration(prev => {
-          const newDuration = prev + 1;
-          // Update progress based on a 60-second maximum recording time
-          setProgress(Math.min(newDuration / 60, 1) * 100);
+          const newDuration = prev - 1; // Count down instead of up
+          
+          // Auto-stop recording at 0 seconds
+          if (newDuration <= 0) {
+            // We need to use setTimeout to avoid calling stopRecording inside setState
+            // This prevents state update during another state update
+            if (!recordingTimerRef.current) {
+              recordingTimerRef.current = setTimeout(async () => {
+                const uri = await stopRecording();
+                
+                // Call the auto-stop callback if provided
+                if (autoStopCallbackRef.current && uri) {
+                  autoStopCallbackRef.current(uri);
+                }
+                
+                recordingTimerRef.current = null;
+              }, 100);
+            }
+            return 0; // Don't go below 0
+          }
+          
+          // Update progress based on remaining time (30 seconds to 0)
+          setProgress(((30 - newDuration) / 30) * 100);
           return newDuration;
         });
       }, 1000);
+    } else {
+      // Reset to 30 when not recording
+      setRecordingDuration(30);
     }
     
     return () => {
       if (interval) {
         clearInterval(interval);
       }
+      // Clear the auto-stop timer on cleanup
+      if (recordingTimerRef.current) {
+        clearTimeout(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
     };
   }, [isRecording]);
   
-  // Start recording function
-  const startRecording = async () => {
+  // Start recording function with auto-stop callback
+  const startRecording = async (autoStopCallback = null) => {
     try {
+      // Store the callback for later use
+      autoStopCallbackRef.current = autoStopCallback;
+      
       // Check permissions
       if (permissionStatus !== 'granted') {
         console.log('Requesting microphone permission...');
@@ -101,7 +147,7 @@ export default function useAudioRecorder() {
         await newRecording.startAsync();
         setRecording(newRecording);
         setIsRecording(true);
-        setRecordingDuration(0);
+        setRecordingDuration(30); // Initialize to 30 seconds
         setProgress(0);
         
         return true;
