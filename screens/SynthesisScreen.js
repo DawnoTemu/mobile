@@ -117,7 +117,7 @@ export default function SynthesisScreen({ navigation }) {
     try {
       setIsLoading(true);
       
-      // Get voice ID using the new service
+      // Get voice ID using the service
       const voiceResult = await voiceService.getCurrentVoice();
       if (!voiceResult.success || !voiceResult.voiceId) {
         // No voice ID found, navigate back to clone screen
@@ -129,7 +129,7 @@ export default function SynthesisScreen({ navigation }) {
       // Fetch available stories from API
       const storiesResult = await voiceService.getStories();
       if (storiesResult.success) {
-        // Update stories with audio existence status
+        // Update stories with audio existence status and cover URLs
         const storiesWithStatus = await Promise.all(
           storiesResult.stories.map(async (story) => {
             const audioExists = await voiceService.checkAudioExists(voiceResult.voiceId, story.id);
@@ -137,7 +137,8 @@ export default function SynthesisScreen({ navigation }) {
               ...story,
               hasAudio: audioExists.success && audioExists.exists,
               localUri: audioExists.localUri || null,
-            };
+              cover_url: voiceService.getStoryCoverUrl(story.id),
+            }
           })
         );
         
@@ -326,56 +327,38 @@ export default function SynthesisScreen({ navigation }) {
       console.error('Error resetting audio:', error);
     }
   };
+
+  const performVoiceReset = async () => {
+    try {
+      setIsLoading(true);
+      
+      // Unload any playing audio
+      await unloadAudio();
+      
+      // Delete voice from server using the voice service
+      if (voiceId) {
+        const deleteResult = await voiceService.deleteVoice(voiceId);
+        if (!deleteResult.success) {
+          handleApiError(deleteResult, 'Błąd usuwania głosu:');
+          setIsLoading(false);
+          return;
+        }
+      }
+      
+      setIsConfirmModalVisible(false);
+      
+      // Navigate back to clone screen
+      navigation.replace('Clone');
+    } catch (error) {
+      console.error('Error deleting voice:', error);
+      showToast('Wystąpił problem podczas usuwania głosu. Spróbuj ponownie.', 'ERROR');
+      setIsLoading(false);
+    }
+  };
   
   // Reset voice and go back to clone screen
-  const handleResetVoice = async () => {
-    try {
-      // Show confirmation dialog
-      Alert.alert(
-        'Usunąć głos?',
-        'Czy na pewno chcesz trwale usunąć swój model głosu z serwera?',
-        [
-          {
-            text: 'Anuluj',
-            style: 'cancel',
-          },
-          {
-            text: 'Usuń',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                setIsLoading(true);
-                
-                // Unload any playing audio
-                await unloadAudio();
-                
-                // Delete voice from server using the new service
-                if (voiceId) {
-                  const deleteResult = await voiceService.deleteVoice(voiceId);
-                  if (!deleteResult.success) {
-                    handleApiError(deleteResult, 'Błąd usuwania głosu:');
-                    setIsLoading(false);
-                    return;
-                  }
-                }
-                
-                setIsConfirmModalVisible(false);
-                
-                // Navigate back to clone screen
-                navigation.replace('Clone');
-              } catch (error) {
-                console.error('Error deleting voice:', error);
-                showToast('Wystąpił problem podczas usuwania głosu. Spróbuj ponownie.', 'ERROR');
-                setIsLoading(false);
-              }
-            }
-          }
-        ]
-      );
-    } catch (error) {
-      console.error('Error resetting voice:', error);
-      showToast('Wystąpił problem podczas resetowania. Spróbuj ponownie.', 'ERROR');
-    }
+  const handleResetVoice = () => {
+    setIsConfirmModalVisible(true);
   };
   
   // Refresh stories
@@ -474,7 +457,7 @@ export default function SynthesisScreen({ navigation }) {
         message="Usuniemy Twój obecny model głosu i wszystkie dotychczas powstałe bajki. Czy na pewno chcesz kontynuować?"
         confirmText="Usuń i nagraj ponownie"
         cancelText="Anuluj"
-        onConfirm={handleResetVoice}
+        onConfirm={performVoiceReset}
         onCancel={() => setIsConfirmModalVisible(false)}
       />
       

@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system';
 import { Audio } from 'expo-av';
+import { Image } from 'react-native';
 import { Platform } from 'react-native';
 
 /**
@@ -205,5 +206,23 @@ export const cleanupTempAudioFiles = async (maxAgeHours = 24) => {
   } catch (error) {
     console.error('Error cleaning up temp files:', error);
     return 0;
+  }
+};
+
+/**
+ * Pre-loads an image to check if it's available
+ * @param {string} imageUrl - URL of the image to check
+ * @returns {Promise<boolean>} True if image is available
+ */
+export const checkImageAvailability = async (imageUrl) => {
+  if (!imageUrl) return false;
+  
+  try {
+    // For React Native, we can use Image.prefetch
+    const result = await Image.prefetch(imageUrl);
+    return true;
+  } catch (error) {
+    console.log(`Image not available: ${imageUrl}`, error);
+    return false;
   }
 };

@@ -36,6 +36,9 @@ export default function StoryItem({
             : require('../assets/images/cover.png')
         }
         style={styles.image}
+        resizeMode="cover"
+        // Add error handling to fallback to default image if the URL fails to load
+        onError={(e) => console.log('Image loading error:', e.nativeEvent.error)}
       />
       
       {/* Middle - Content */}

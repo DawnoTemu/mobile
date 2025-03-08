@@ -373,12 +373,15 @@ export default function AudioControls({
                 <View style={styles.coverContainer}>
                   <Image 
                     source={
-                      storyData.cover ? 
-                      { uri: storyData.cover } : 
-                      require('../assets/images/cover.png')
+                      story && story.cover_url
+                        ? { uri: story.cover_url }
+                        : require('../assets/images/cover.png')
                     } 
                     style={styles.coverImage} 
                     resizeMode="cover"
+                    onError={(e) => {
+                      console.log('Cover image loading error:', e.nativeEvent.error);
+                    }}
                   />
                 </View>
                 <View style={styles.storyInfo}>

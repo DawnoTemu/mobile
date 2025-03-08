@@ -743,6 +743,15 @@ NetInfo.addEventListener(state => {
   }
 });
 
+/**
+ * Gets the URL for a story cover image
+ * @param {string|number} storyId - Story ID
+ * @returns {string} Cover image URL
+ */
+export const getStoryCoverUrl = (storyId) => {
+  return `${API_BASE_URL}/stories/${storyId}/cover.png`;
+};
+
 // Export default object with all functions
 export default {
   cloneVoice,
@@ -754,5 +763,6 @@ export default {
   setCurrentVoice,
   checkAudioExists,
   getAudio,
-  processOfflineQueue
-};
+  processOfflineQueue,
+  getStoryCoverUrl
+}
