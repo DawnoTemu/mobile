@@ -133,6 +133,9 @@ export default function CloneScreen({ navigation }) {
       const fileUri = result.assets[0].uri;
       showToast('Plik audio wybrany pomyślnie', 'SUCCESS');
       
+      // Show the modal before processing (THIS LINE IS MISSING)
+      setIsModalVisible(true);
+      
       // Process the file for voice cloning
       processAudioForCloning(fileUri);
     } catch (error) {

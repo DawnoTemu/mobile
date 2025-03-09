@@ -184,6 +184,15 @@ export default function useAudioRecorder() {
         setIsRecording(false);
         setRecording(null);
         
+        // RESET AUDIO MODE FOR PLAYBACK - ADD THIS
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: true,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: true, // Set back to true for normal speaker output
+        });
+        
         return uri;
       } catch (stopError) {
         console.error('Error stopping recording:', stopError);
