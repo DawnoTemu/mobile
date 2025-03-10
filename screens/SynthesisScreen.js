@@ -8,18 +8,18 @@ import {
   TouchableOpacity,
   Image,
   BackHandler,
-  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
+import NetInfo from '@react-native-community/netinfo';
 import StoryItem from '../components/StoryItem';
 import AudioControls from '../components/AudioControls';
 import ConfirmModal from '../components/Modals/ConfirmModal';
-import ProgressModal from '../components/Modals/ProgressModal'; // New component for showing progress
+import ProgressModal from '../components/Modals/ProgressModal';
 import { useToast } from '../components/StatusToast';
 import useAudioPlayer from '../hooks/useAudioPlayer';
-import voiceService from '../services/voiceService'; // Import the entire service
+import voiceService from '../services/voiceService';
 import { COLORS } from '../styles/colors';
 
 export default function SynthesisScreen({ navigation }) {
@@ -51,6 +51,7 @@ export default function SynthesisScreen({ navigation }) {
   const [voiceId, setVoiceId] = useState(null);
   const [isProgressModalVisible, setIsProgressModalVisible] = useState(false);
   const [progressData, setProgressData] = useState({ progress: 0, status: '' });
+  const [isOnline, setIsOnline] = useState(true);
   
   // Abort controller ref for cancellable operations
   const abortControllerRef = useRef(null);
@@ -69,6 +70,7 @@ export default function SynthesisScreen({ navigation }) {
   // Load stories and voice ID on mount
   useEffect(() => {
     fetchStoriesAndVoiceId();
+    setupNetworkListener();
     
     // Clean up on unmount
     return () => {
@@ -78,25 +80,46 @@ export default function SynthesisScreen({ navigation }) {
     };
   }, []);
   
-  // Process offline queue when screen gains focus
-  useFocusEffect(
-    useCallback(() => {
-      const processQueue = async () => {
-        try {
-          const result = await voiceService.processOfflineQueue();
-          if (result.success && result.processed > 0) {
-            showToast(`Zsynchronizowano ${result.processed} operacji offline`, 'SUCCESS');
-            // Refresh stories after processing queue
-            fetchStoriesAndVoiceId();
-          }
-        } catch (error) {
-          console.error('Error processing offline queue:', error);
-        }
-      };
+  // Set up network status listener
+  const setupNetworkListener = () => {
+    // Check initial status
+    NetInfo.fetch().then(state => {
+      setIsOnline(state.isConnected === true);
+    });
+    
+    // Subscribe to network changes
+    const unsubscribe = NetInfo.addEventListener(state => {
+      const newIsOnline = state.isConnected === true;
       
-      processQueue();
-    }, [])
-  );
+      // Only update if the status changed
+      if (newIsOnline !== isOnline) {
+        setIsOnline(newIsOnline);
+        
+        // If we just came back online, try to process the queue
+        if (newIsOnline) {
+          // Don't show a toast for reconnection - keep it seamless
+          processOfflineQueue();
+        }
+      }
+    });
+    
+    return unsubscribe;
+  };
+  
+  // Process offline queue
+  const processOfflineQueue = async () => {
+    if (!isOnline) return;
+    
+    try {
+      const result = await voiceService.processOfflineQueue();
+      if (result.success && result.processed > 0) {
+        // Refresh stories silently after processing queue
+        fetchStoriesAndVoiceId(true);
+      }
+    } catch (error) {
+      console.error('Error processing offline queue:', error);
+    }
+  };
   
   // Handle back button
   useFocusEffect(
@@ -113,9 +136,11 @@ export default function SynthesisScreen({ navigation }) {
   );
   
   // Fetch stories and voice ID
-  const fetchStoriesAndVoiceId = async () => {
+  const fetchStoriesAndVoiceId = async (silent = false) => {
     try {
-      setIsLoading(true);
+      if (!silent) {
+        setIsLoading(true);
+      }
       
       // Get voice ID using the service
       const voiceResult = await voiceService.getCurrentVoice();
@@ -124,22 +149,35 @@ export default function SynthesisScreen({ navigation }) {
         navigation.replace('Clone');
         return;
       }
-      setVoiceId(voiceResult.voiceId);
       
-      // Fetch available stories from API
+      const currentVoiceId = voiceResult.voiceId;
+      setVoiceId(currentVoiceId);
+      
+      // Fetch available stories
       const storiesResult = await voiceService.getStories();
+      
       if (storiesResult.success) {
+        let storiesData = storiesResult.stories;
+        
         // Update stories with audio existence status and cover URLs
-        const storiesWithStatus = await Promise.all(
-          storiesResult.stories.map(async (story) => {
-            const audioExists = await voiceService.checkAudioExists(voiceResult.voiceId, story.id);
+        let storiesWithStatus = await Promise.all(
+          storiesData.map(async (story) => {
+            // Check if audio exists
+            const audioExists = await voiceService.checkAudioExists(currentVoiceId, story.id);
+            
             return {
               ...story,
               hasAudio: audioExists.success && audioExists.exists,
               localUri: audioExists.localUri || null,
               cover_url: voiceService.getStoryCoverUrl(story.id),
-            }
+            };
           })
+        );
+        
+        // Mark stories that have local audio
+        storiesWithStatus = await voiceService.markStoriesWithLocalAudio(
+          currentVoiceId, 
+          storiesWithStatus
         );
         
         setStories(storiesWithStatus);
@@ -148,22 +186,24 @@ export default function SynthesisScreen({ navigation }) {
       }
     } catch (error) {
       console.error('Error fetching stories and voice ID:', error);
-      showToast('Wystąpił problem podczas ładowania danych.', 'ERROR');
+      if (!silent) {
+        showToast('Wystąpił problem podczas ładowania danych.', 'ERROR');
+      }
     } finally {
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   };
   
   // Handle API errors with appropriate messages
   const handleApiError = (result, defaultMessage) => {
-    let message = defaultMessage;
-    
-    // Handle specific error codes
-    if (result.code === 'OFFLINE') {
-      message = 'Brak połączenia z internetem. Operacja zostanie wykonana po przywróceniu połączenia.';
-      showToast(message, 'WARNING');
+    // If the app is offline, don't show errors for network operations
+    if (!isOnline && result.code === 'OFFLINE') {
       return;
     }
+    
+    let message = defaultMessage;
     
     if (result.code === 'TIMEOUT') {
       message = 'Upłynął limit czasu operacji. Spróbuj ponownie.';
@@ -195,20 +235,33 @@ export default function SynthesisScreen({ navigation }) {
     // Set as selected story
     setSelectedStory(story);
     
-    // Check if already has audio
+    // Check if already has locally saved audio
+    if (story.localAudioUri) {
+      // Load local audio with auto-play
+      loadStoryAudio(story.localAudioUri, true);
+      return;
+    }
+    
+    // Check if already has audio on server
     if (story.hasAudio && story.localUri) {
-      // Pass true to auto-play when loading story audio
+      // Load server audio with auto-play
       loadStoryAudio(story.localUri, true);
       return;
     }
     
-    // Get audio with progress tracking
+    // If no audio available, try to generate/download it
     await getStoryAudio(story);
   };
   
   // Get story audio with progress tracking
   const getStoryAudio = async (story) => {
     try {
+      // Check if online - if offline and no local audio, show message
+      if (!isOnline) {
+        showToast('Brak połączenia z internetem. Dostępne są tylko zapisane bajki.', 'WARNING');
+        return;
+      }
+      
       // Mark story as processing      
       setProcessingStories((prev) => ({ ...prev, [story.id]: true }));
       
@@ -252,25 +305,30 @@ export default function SynthesisScreen({ navigation }) {
         // Load the audio with auto-play set to true
         await loadStoryAudio(result.uri, true);
         
-        // Update story in the list to show it has audio
+        // Update story in the list to show it has audio and local availability
         setStories(currentStories =>
           currentStories.map(s => 
-            s.id === story.id ? { ...s, hasAudio: true, localUri: result.uri } : s
+            s.id === story.id ? { 
+              ...s, 
+              hasAudio: true, 
+              localUri: result.uri,
+              hasLocalAudio: true,
+              localAudioUri: result.uri
+            } : s
           )
-        );
-        
-        showToast(
-          result.fromCache 
-            ? 'Załadowano bajkę z pamięci podręcznej!' 
-            : 'Bajka wygenerowana pomyślnie!', 
-          'SUCCESS'
         );
       } else {
         handleApiError(result, 'Nie udało się wygenerować bajki:');
       }
     } catch (error) {
       console.error('Error getting story audio:', error);
-      showToast('Wystąpił problem podczas generowania bajki.', 'ERROR');
+      
+      // If the error is due to offline, show a specific message
+      if (!isOnline) {
+        showToast('Brak połączenia z internetem. Dostępne są tylko zapisane bajki.', 'WARNING');
+      } else {
+        showToast('Wystąpił problem podczas generowania bajki.', 'ERROR');
+      }
     } finally {
       // Hide progress modal if still visible
       setIsProgressModalVisible(false);
@@ -363,6 +421,12 @@ export default function SynthesisScreen({ navigation }) {
   
   // Refresh stories
   const handleRefresh = () => {
+    // Only refresh if online
+    if (!isOnline) {
+      showToast('Brak połączenia z internetem. Dostępne są tylko zapisane bajki.', 'WARNING');
+      return;
+    }
+    
     fetchStoriesAndVoiceId();
   };
   
@@ -380,17 +444,32 @@ export default function SynthesisScreen({ navigation }) {
     />
   );
   
+  // Filter stories based on connection status
+  const getFilteredStories = () => {
+    // If online, show all stories
+    if (isOnline) {
+      return stories;
+    }
+    
+    // If offline, only show stories that have local audio
+    return stories.filter(story => story.hasLocalAudio);
+  };
+  
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => setIsConfirmModalVisible(true)}
-        >
-          <Feather name="chevron-left" size={24} color={COLORS.peach} />
-          <Text style={styles.backButtonText}>Reset</Text>
-        </TouchableOpacity>
+        {isOnline ? (
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => setIsConfirmModalVisible(true)}
+          >
+            <Feather name="chevron-left" size={24} color={COLORS.peach} />
+            <Text style={styles.backButtonText}>Reset</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.backButton} />
+        )}
         
         <Text style={styles.headerTitle}>DawnoTemu</Text>
         
@@ -412,7 +491,7 @@ export default function SynthesisScreen({ navigation }) {
           </View>
         ) : (
           <FlatList
-            data={stories}
+            data={getFilteredStories()}
             renderItem={renderStoryItem}
             keyExtractor={(item) => item.id.toString()}
             contentContainerStyle={styles.storiesList}
@@ -420,11 +499,17 @@ export default function SynthesisScreen({ navigation }) {
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>
-                  Nie znaleziono bajek. Spróbuj odświeżyć.
+                  {!isOnline 
+                    ? 'Brak dostępnych bajek offline. Połącz się z internetem, aby pobrać bajki.'
+                    : 'Nie znaleziono bajek. Spróbuj odświeżyć.'}
                 </Text>
                 <TouchableOpacity
-                  style={styles.refreshButton}
+                  style={[
+                    styles.refreshButton,
+                    !isOnline && styles.disabledButton
+                  ]}
                   onPress={handleRefresh}
+                  disabled={!isOnline}
                 >
                   <Text style={styles.refreshButtonText}>Odśwież</Text>
                 </TouchableOpacity>
@@ -558,6 +643,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 8,
+  },
+  disabledButton: {
+    backgroundColor: COLORS.text.tertiary,
+    opacity: 0.7,
   },
   refreshButtonText: {
     fontFamily: 'Quicksand-Medium',

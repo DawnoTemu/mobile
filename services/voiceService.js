@@ -1,3 +1,4 @@
+// Enhanced voiceService.js with seamless offline capabilities
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
@@ -18,11 +19,16 @@ const API_BASE_URL = ENV.DEV;
 const STORAGE_KEYS = {
   VOICE_ID: 'voice_id',
   PENDING_OPERATIONS: 'voice_service_pending_ops',
-  DOWNLOADED_AUDIO: 'voice_service_downloaded_audio'
+  DOWNLOADED_AUDIO: 'voice_service_downloaded_audio',
+  CACHED_STORIES: 'voice_service_cached_stories', // For story caching
+  LAST_STORIES_FETCH: 'voice_service_last_stories_fetch'
 };
 
 // Request timeout in milliseconds
 const REQUEST_TIMEOUT = 30000;
+
+// Cache expiration time (24 hours in milliseconds)
+const CACHE_EXPIRATION = 24 * 60 * 60 * 1000; 
 
 // HELPER FUNCTIONS
 /**
@@ -53,6 +59,15 @@ const createFormData = async (audioUri, fileName = 'audio.wav') => {
 };
 
 /**
+ * Checks network status
+ * @returns {Promise<boolean>} Whether device is online
+ */
+const isOnline = async () => {
+  const networkState = await NetInfo.fetch();
+  return networkState.isConnected === true;
+};
+
+/**
  * Performs an API request with timeout, cancellation support, and connection check
  * @param {string} endpoint - API endpoint to call
  * @param {Object} options - Fetch options
@@ -62,8 +77,8 @@ const createFormData = async (audioUri, fileName = 'audio.wav') => {
 const apiRequest = async (endpoint, options = {}, signal = null) => {
   try {
     // Check for internet connection
-    const networkState = await NetInfo.fetch();
-    if (!networkState.isConnected) {
+    const online = await isOnline();
+    if (!online) {
       throw new Error('NO_CONNECTION');
     }
 
@@ -257,127 +272,99 @@ export const getCurrentVoice = async () => {
   }
 };
 
-/**
- * Clones a voice from an audio sample
- * @param {string} audioUri - URI to the audio file
- * @param {Function} progressCallback - Optional callback for upload progress
- * @param {AbortSignal} signal - Optional abort signal for cancellation
- * @returns {Promise<Object>} Result with voice ID or error
- */
-export const cloneVoice = async (audioUri, progressCallback = null, signal = null) => {
-  try {
-    const formData = await createFormData(audioUri);
-    
-    // Create a unique identifier for this upload
-    const uploadId = `voice_upload_${Date.now()}`;
-    
-    // Set up upload with progress tracking
-    const uploadOptions = {
-      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-      fieldName: 'file',
-      mimeType: 'audio/wav',
-      parameters: {},
-    };
-    
-    if (progressCallback) {
-      uploadOptions.progressInterval = 100;
-      uploadOptions.progressCallback = ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
-        const progress = totalBytesWritten / totalBytesExpectedToWrite;
-        progressCallback(progress);
-      };
-    }
-    
-    // Upload file using Expo's FileSystem
-    const uploadResult = await FileSystem.uploadAsync(
-      `${API_BASE_URL}/clone`,
-      audioUri,
-      uploadOptions
-    );
-    
-    if (uploadResult.status !== 200) {
-      throw new Error(uploadResult.body || 'Upload failed');
-    }
-    
-    // Parse response
-    const responseData = JSON.parse(uploadResult.body);
-    
-    // Store voice ID for later use
-    if (responseData.voice_id) {
-      await setCurrentVoice(responseData.voice_id);
-    }
-    
-    return {
-      success: true,
-      voiceId: responseData.voice_id,
-    };
-  } catch (error) {
-    console.error('Voice cloning error:', error);
-    return {
-      success: false,
-      error: error.message || 'Unknown error during voice cloning',
-      code: 'CLONE_ERROR'
-    };
-  }
-};
-
-/**
- * Deletes a cloned voice
- * @param {string} voiceId - ID of the voice to delete
- * @returns {Promise<Object>} Success or error result
- */
-export const deleteVoice = async (voiceId) => {
-  // If no voiceId provided, try to get current one
-  if (!voiceId) {
-    const current = await getCurrentVoice();
-    if (!current.success || !current.voiceId) {
-      return {
-        success: false,
-        error: 'No voice ID specified or stored',
-        code: 'MISSING_VOICE_ID'
-      };
-    }
-    voiceId = current.voiceId;
-  }
-  
-  const result = await apiRequest(`/voices/${voiceId}`, {
-    method: 'DELETE'
-  });
-  
-  if (result.success) {
-    // Clear stored voice ID if it matches the deleted one
-    const current = await getCurrentVoice();
-    if (current.success && current.voiceId === voiceId) {
-      await AsyncStorage.removeItem(STORAGE_KEYS.VOICE_ID);
-    }
-    
-    // Also clear any downloaded audio for this voice
-    await clearVoiceAudio(voiceId);
-  }
-  
-  return result;
-};
-
 // STORY MANAGEMENT
 
 /**
- * Gets available stories
- * @returns {Promise<Object>} List of stories or error
+ * Caches stories in AsyncStorage
+ * @param {Array} stories - List of story objects
  */
-export const getStories = async () => {
-  const result = await apiRequest('/stories');
-  
-  if (result.success) {
-    return {
-      success: true,
-      stories: result.data || [],
+const cacheStories = async (stories) => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.CACHED_STORIES, JSON.stringify(stories));
+    await AsyncStorage.setItem(STORAGE_KEYS.LAST_STORIES_FETCH, Date.now().toString());
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to cache stories:', error);
+    return { 
+      success: false, 
+      error: error.message,
+      code: 'STORAGE_ERROR'
     };
   }
+};
+
+/**
+ * Gets cached stories from AsyncStorage
+ * @returns {Promise<Array>} Cached stories or empty array
+ */
+const getCachedStories = async () => {
+  try {
+    const storiesString = await AsyncStorage.getItem(STORAGE_KEYS.CACHED_STORIES);
+    return storiesString ? JSON.parse(storiesString) : [];
+  } catch (error) {
+    console.error('Failed to get cached stories:', error);
+    return [];
+  }
+};
+
+/**
+ * Checks if cached stories are still valid (not expired)
+ * @returns {Promise<boolean>} Whether cache is valid
+ */
+const isCacheValid = async () => {
+  try {
+    const lastFetchString = await AsyncStorage.getItem(STORAGE_KEYS.LAST_STORIES_FETCH);
+    if (!lastFetchString) return false;
+    
+    const lastFetch = parseInt(lastFetchString);
+    const now = Date.now();
+    
+    // Cache is valid if less than CACHE_EXPIRATION old
+    return now - lastFetch < CACHE_EXPIRATION;
+  } catch (error) {
+    console.error('Failed to check cache validity:', error);
+    return false;
+  }
+};
+
+/**
+ * Gets available stories
+ * @param {boolean} forceRefresh - Whether to force a network refresh
+ * @returns {Promise<Object>} List of stories or error
+ */
+export const getStories = async (forceRefresh = false) => {
+  // Check if online
+  const online = await isOnline();
+  
+  // If online and either force refresh or cache is not valid, try to fetch from network
+  if (online && (forceRefresh || !(await isCacheValid()))) {
+    try {
+      const result = await apiRequest('/stories');
+      
+      if (result.success) {
+        // Cache the stories for offline use
+        await cacheStories(result.data || []);
+        
+        return {
+          success: true,
+          stories: result.data || [],
+          fromCache: false
+        };
+      }
+    } catch (error) {
+      console.error('Error fetching stories from network:', error);
+      // Fall through to use cache
+    }
+  }
+  
+  // If we're here, we're either offline or the network request failed
+  // Get stories from cache
+  const cachedStories = await getCachedStories();
   
   return {
-    success: false,
-    error: result.error || 'Failed to get stories',
-    code: result.code || 'API_ERROR',
-    stories: [],
+    success: true,
+    stories: cachedStories,
+    fromCache: true
   };
 };
 
@@ -397,26 +384,35 @@ export const checkAudioExists = async (voiceId, storyId) => {
       return {
         success: true,
         exists: true,
-        localUri: audioInfo.localUri
+        localUri: audioInfo.localUri,
+        fromCache: true
       };
     }
   }
   
-  // If not in local storage, check API
-  const result = await apiRequest(`/audio/exists/${voiceId}/${storyId}`);
-  
-  if (result.success) {
-    return {
-      success: true,
-      exists: result.data?.exists || false
-    };
+  // If we're online, check the server
+  const online = await isOnline();
+  if (online) {
+    try {
+      const result = await apiRequest(`/audio/exists/${voiceId}/${storyId}`);
+      
+      if (result.success) {
+        return {
+          success: true,
+          exists: result.data?.exists || false,
+          fromCache: false
+        };
+      }
+    } catch (error) {
+      console.error('Error checking audio exists on server:', error);
+      // Fall through to return false
+    }
   }
   
+  // If we're here, we're either offline or the server check failed
   return {
-    success: false,
-    exists: false,
-    error: result.error,
-    code: result.code
+    success: true,
+    exists: false
   };
 };
 
@@ -428,6 +424,16 @@ export const checkAudioExists = async (voiceId, storyId) => {
  * @returns {Promise<Object>} Result with audio URL or error
  */
 export const generateStoryAudio = async (voiceId, storyId, statusCallback = null) => {
+  // Check if online
+  const online = await isOnline();
+  if (!online) {
+    return {
+      success: false,
+      error: 'Cannot generate audio without internet connection',
+      code: 'OFFLINE'
+    };
+  }
+
   // If no voiceId provided, try to get current one
   if (!voiceId) {
     const current = await getCurrentVoice();
@@ -562,6 +568,50 @@ const getStoredAudioInfo = async (voiceId, storyId) => {
 };
 
 /**
+ * Gets all stored audio info for a voice
+ * @param {string} voiceId - Voice ID 
+ * @returns {Promise<Object>} Map of story IDs to audio info
+ */
+export const getStoredAudioForVoice = async (voiceId) => {
+  try {
+    const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
+    if (!infoString) return {};
+    
+    const audioInfo = JSON.parse(infoString);
+    return audioInfo[voiceId] || {};
+  } catch (error) {
+    console.error('Failed to get stored audio for voice:', error);
+    return {};
+  }
+};
+
+/**
+ * Marks stories with local audio availability
+ * @param {string} voiceId - Voice ID
+ * @param {Array} stories - Stories array
+ * @returns {Promise<Array>} Stories with hasLocalAudio flag
+ */
+export const markStoriesWithLocalAudio = async (voiceId, stories) => {
+  try {
+    const voiceAudio = await getStoredAudioForVoice(voiceId);
+    
+    return stories.map(story => {
+      const storyId = story.id;
+      const audioInfo = voiceAudio[storyId];
+      
+      return {
+        ...story,
+        hasLocalAudio: !!audioInfo,
+        localAudioUri: audioInfo?.localUri
+      };
+    });
+  } catch (error) {
+    console.error('Failed to mark stories with local audio:', error);
+    return stories;
+  }
+};
+
+/**
  * Clears stored audio for a specific voice
  * @param {string} voiceId - Voice ID
  */
@@ -625,6 +675,16 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
       }
     }
   
+    // Check if online
+    const online = await isOnline();
+    if (!online) {
+      return {
+        success: false,
+        error: 'Cannot download audio without internet connection',
+        code: 'OFFLINE'
+      };
+    }
+
     // Generate unique filename
     const fileName = `voice-${voiceId}-story-${storyId}-${Date.now()}.mp3`;
     const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
@@ -689,19 +749,34 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
  * @returns {Promise<Object>} Result with local URI or error
  */
 export const getAudio = async (voiceId, storyId, progressCallback = null, signal = null) => {
-  // Check if audio exists
-  const checkResult = await checkAudioExists(voiceId, storyId);
-  
-  // If local URI is available, return it
-  if (checkResult.success && checkResult.exists && checkResult.localUri) {
+  // Check if audio exists locally first
+  const audioInfo = await getStoredAudioInfo(voiceId, storyId);
+  if (audioInfo && audioInfo.localUri) {
+    // Verify file exists
+    const fileInfo = await FileSystem.getInfoAsync(audioInfo.localUri);
+    if (fileInfo.exists) {
+      return {
+        success: true,
+        uri: audioInfo.localUri,
+        fromCache: true
+      };
+    }
+  }
+
+  // Check if online
+  const online = await isOnline();
+  if (!online) {
     return {
-      success: true,
-      uri: checkResult.localUri,
-      fromCache: true
+      success: false,
+      error: 'Cannot retrieve audio without internet connection',
+      code: 'OFFLINE'
     };
   }
   
-  // If audio exists on server but not locally, download it
+  // Check if audio exists on server
+  const checkResult = await checkAudioExists(voiceId, storyId);
+  
+  // If audio exists on server, download it
   if (checkResult.success && checkResult.exists) {
     const audioUrl = `${API_BASE_URL}/audio/${voiceId}/${storyId}.mp3?t=${Date.now()}`;
     return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal);
@@ -734,15 +809,6 @@ export const getAudio = async (voiceId, storyId, progressCallback = null, signal
   );
 };
 
-// Set up a listener for connectivity changes to process offline queue
-NetInfo.addEventListener(state => {
-  if (state.isConnected) {
-    processOfflineQueue().catch(err => 
-      console.error('Failed to process offline queue:', err)
-    );
-  }
-});
-
 /**
  * Gets the URL for a story cover image
  * @param {string|number} storyId - Story ID
@@ -750,6 +816,176 @@ NetInfo.addEventListener(state => {
  */
 export const getStoryCoverUrl = (storyId) => {
   return `${API_BASE_URL}/stories/${storyId}/cover.png`;
+};
+
+/**
+ * Clones a voice from an audio sample
+ * @param {string} audioUri - URI to the audio file
+ * @param {Function} progressCallback - Optional callback for upload progress
+ * @param {AbortSignal} signal - Optional abort signal for cancellation
+ * @returns {Promise<Object>} Result with voice ID or error
+ */
+export const cloneVoice = async (audioUri, progressCallback = null, signal = null) => {
+  try {
+    // First, check if we have an internet connection
+    const online = await isOnline();
+    if (!online) {
+      return {
+        success: false,
+        error: 'Nie można sklonować głosu bez połączenia z internetem. Połącz się z internetem i spróbuj ponownie.',
+        code: 'OFFLINE'
+      };
+    }
+
+    const formData = await createFormData(audioUri);
+    
+    // Create a unique identifier for this upload
+    const uploadId = `voice_upload_${Date.now()}`;
+    
+    // Set up upload with progress tracking
+    const uploadOptions = {
+      uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+      fieldName: 'file',
+      mimeType: 'audio/wav',
+      parameters: {},
+    };
+    
+    if (progressCallback) {
+      uploadOptions.progressInterval = 100;
+      uploadOptions.progressCallback = ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
+        const progress = totalBytesWritten / totalBytesExpectedToWrite;
+        progressCallback(progress);
+      };
+    }
+    
+    // Upload file using Expo's FileSystem
+    const uploadResult = await FileSystem.uploadAsync(
+      `${API_BASE_URL}/clone`,
+      audioUri,
+      uploadOptions
+    );
+    
+    if (uploadResult.status !== 200) {
+      throw new Error(uploadResult.body || 'Upload failed');
+    }
+    
+    // Parse response
+    const responseData = JSON.parse(uploadResult.body);
+    
+    // Store voice ID for later use
+    if (responseData.voice_id) {
+      await setCurrentVoice(responseData.voice_id);
+    }
+    
+    return {
+      success: true,
+      voiceId: responseData.voice_id,
+    };
+  } catch (error) {
+    console.error('Voice cloning error:', error);
+    
+    // Check if it's a network error
+    if (!await isOnline()) {
+      return {
+        success: false,
+        error: 'Utracono połączenie internetowe podczas klonowania głosu. Połącz się z internetem i spróbuj ponownie.',
+        code: 'OFFLINE'
+      };
+    }
+    
+    return {
+      success: false,
+      error: error.message || 'Unknown error during voice cloning',
+      code: 'CLONE_ERROR'
+    };
+  }
+};
+
+/**
+ * Deletes a cloned voice
+ * @param {string} voiceId - ID of the voice to delete
+ * @returns {Promise<Object>} Success or error result
+ */
+export const deleteVoice = async (voiceId) => {
+  // If no voiceId provided, try to get current one
+  if (!voiceId) {
+    const current = await getCurrentVoice();
+    if (!current.success || !current.voiceId) {
+      return {
+        success: false,
+        error: 'No voice ID specified or stored',
+        code: 'MISSING_VOICE_ID'
+      };
+    }
+    voiceId = current.voiceId;
+  }
+  
+  // Check if we're online
+  const online = await isOnline();
+  
+  // Regardless of online status, always clean up local files
+  try {
+    // Clean up locally downloaded audio files for this voice
+    await clearVoiceAudio(voiceId);
+  } catch (error) {
+    console.error('Error clearing local voice audio:', error);
+    // Continue with other operations - this is not critical
+  }
+  
+  // Clear the voice ID from storage
+  await AsyncStorage.removeItem(STORAGE_KEYS.VOICE_ID);
+  
+  // If offline, queue the delete operation for later
+  if (!online) {
+    try {
+      // Queue the delete operation
+      await queueOperationIfOffline(`/voices/${voiceId}`, {
+        method: 'DELETE'
+      });
+      
+      return {
+        success: true,
+        message: 'Voice deleted locally. Server deletion will be performed when back online.',
+        code: 'OFFLINE_QUEUED'
+      };
+    } catch (queueError) {
+      console.error('Error queueing voice deletion:', queueError);
+      // Still return success since local cleanup was done
+      return {
+        success: true,
+        message: 'Voice deleted locally. Server deletion may fail.',
+        code: 'OFFLINE_PARTIAL'
+      };
+    }
+  }
+  
+  // If online, delete from server
+  try {
+    const result = await apiRequest(`/voices/${voiceId}`, {
+      method: 'DELETE'
+    });
+    
+    return result.success ? 
+      { 
+        success: true, 
+        message: 'Voice deleted successfully' 
+      } : 
+      {
+        success: false,
+        error: result.error || 'Failed to delete voice from server',
+        code: result.code || 'DELETE_ERROR'
+      };
+  } catch (error) {
+    console.error('Error deleting voice from server:', error);
+    
+    // We've already done local cleanup, so this is a partial success
+    return {
+      success: true,
+      message: 'Voice deleted locally but server deletion failed',
+      error: error.message,
+      code: 'SERVER_DELETE_FAILED'
+    };
+  }
 };
 
 // Export default object with all functions
@@ -764,5 +1000,8 @@ export default {
   checkAudioExists,
   getAudio,
   processOfflineQueue,
-  getStoryCoverUrl
-}
+  getStoryCoverUrl,
+  getStoredAudioForVoice,
+  markStoriesWithLocalAudio,
+  isOnline
+};

@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import RecordingModal from '../components/Modals/RecordingModal';
 import ConfirmModal from '../components/Modals/ConfirmModal';
 import { useToast } from '../components/StatusToast';
@@ -28,7 +29,7 @@ export default function CloneScreen({ navigation }) {
   const [isConfirmModalVisible, setIsConfirmModalVisible] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [hasExistingVoice, setHasExistingVoice] = useState(false);
-  const [pwaInstallable, setPwaInstallable] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
   
   // Audio recorder hook
   const {
@@ -42,10 +43,26 @@ export default function CloneScreen({ navigation }) {
     handleAudioFileUpload,
   } = useAudioRecorder();
   
-  // Check for existing voice clone on mount
+  // Check for existing voice clone and network status on mount
   useEffect(() => {
     checkExistingVoice();
+    setupNetworkListener();
   }, []);
+  
+  // Set up network status listener
+  const setupNetworkListener = () => {
+    // Check initial status
+    NetInfo.fetch().then(state => {
+      setIsOnline(state.isConnected === true);
+    });
+    
+    // Subscribe to network changes
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOnline(state.isConnected === true);
+    });
+    
+    return () => unsubscribe();
+  };
   
   // Check if user has an existing voice clone
   const checkExistingVoice = async () => {
@@ -64,6 +81,12 @@ export default function CloneScreen({ navigation }) {
   
   // Start recording flow
   const handleStartRecording = async () => {
+    // Check if online
+    if (!isOnline) {
+      showToast('Klonowanie głosu wymaga połączenia z internetem. Połącz się z internetem i spróbuj ponownie.', 'ERROR');
+      return;
+    }
+    
     // Check if user already has a voice, show confirm dialog if needed
     if (hasExistingVoice) {
       setIsConfirmModalVisible(true);
@@ -115,6 +138,12 @@ export default function CloneScreen({ navigation }) {
   // Handle audio file upload
   const handleFileUpload = async () => {
     try {
+      // Check if online
+      if (!isOnline) {
+        showToast('Klonowanie głosu wymaga połączenia z internetem. Połącz się z internetem i spróbuj ponownie.', 'ERROR');
+        return;
+      }
+      
       // Check if user already has a voice, show confirm dialog if needed
       if (hasExistingVoice) {
         setIsConfirmModalVisible(true);
@@ -133,7 +162,7 @@ export default function CloneScreen({ navigation }) {
       const fileUri = result.assets[0].uri;
       showToast('Plik audio wybrany pomyślnie', 'SUCCESS');
       
-      // Show the modal before processing (THIS LINE IS MISSING)
+      // Show the modal before processing
       setIsModalVisible(true);
       
       // Process the file for voice cloning
@@ -145,36 +174,40 @@ export default function CloneScreen({ navigation }) {
   };
   
   // Process audio (either recorded or uploaded) for voice cloning
-const processAudioForCloning = async (uri) => {
-  try {
-    // Keep the modal visible but switch to processing state
-    setIsProcessing(true);
-    
-    // API call to clone voice
-    const result = await cloneVoice(uri);
-    
-    // Hide modals at the end
-    setIsProcessing(false);
-    setIsModalVisible(false);
-    
-    if (result.success) {
-      // Save voice ID to AsyncStorage
-      await AsyncStorage.setItem('voice_id', result.voiceId);
+  const processAudioForCloning = async (uri) => {
+    try {
+      // Keep the modal visible but switch to processing state
+      setIsProcessing(true);
       
-      showToast('Głos sklonowany pomyślnie!', 'SUCCESS');
+      // API call to clone voice
+      const result = await cloneVoice(uri);
       
-      // Navigate to synthesis screen
-      navigation.replace('Synthesis');
-    } else {
-      showToast(`Błąd klonowania głosu: ${result.error}`, 'ERROR');
+      // Hide modals at the end
+      setIsProcessing(false);
+      setIsModalVisible(false);
+      
+      if (result.success) {
+        // Save voice ID to AsyncStorage
+        await AsyncStorage.setItem('voice_id', result.voiceId);
+        
+        showToast('Głos sklonowany pomyślnie!', 'SUCCESS');
+        
+        // Navigate to synthesis screen
+        navigation.replace('Synthesis');
+      } else {
+        if (result.code === 'OFFLINE') {
+          showToast('Klonowanie głosu wymaga połączenia z internetem. Połącz się z internetem i spróbuj ponownie.', 'ERROR');
+        } else {
+          showToast(`Błąd klonowania głosu: ${result.error}`, 'ERROR');
+        }
+      }
+    } catch (error) {
+      console.error('Error processing audio:', error);
+      setIsProcessing(false);
+      setIsModalVisible(false);
+      showToast('Wystąpił problem podczas przetwarzania audio. Spróbuj ponownie.', 'ERROR');
     }
-  } catch (error) {
-    console.error('Error processing audio:', error);
-    setIsProcessing(false);
-    setIsModalVisible(false);
-    showToast('Wystąpił problem podczas przetwarzania audio. Spróbuj ponownie.', 'ERROR');
-  }
-};
+  };
   
   // Reset voice clone (after confirmation)
   const handleResetVoice = async () => {
@@ -209,6 +242,16 @@ const processAudioForCloning = async (uri) => {
             <Text style={styles.title}>DawnoTemu</Text>
           </View>
           
+          {!isOnline && (
+            <View style={styles.offlineMessage}>
+              <Feather name="wifi-off" size={20} color={COLORS.text.secondary} />
+              <Text style={styles.offlineText}>
+                Klonowanie głosu wymaga połączenia z internetem.
+                Połącz się z internetem i spróbuj ponownie.
+              </Text>
+            </View>
+          )}
+          
           <View style={styles.optionsContainer}>
             <View style={styles.recordSection}>
               <View style={styles.emojiContainer}>
@@ -221,9 +264,13 @@ const processAudioForCloning = async (uri) => {
                 Przeczytaj na głos fragment wiersza, który zaraz zobaczysz
               </Text>
               <TouchableOpacity
-                style={styles.recordButton}
+                style={[
+                  styles.recordButton,
+                  !isOnline && styles.disabledButton
+                ]}
                 onPress={handleStartRecording}
                 activeOpacity={0.8}
+                disabled={!isOnline}
               >
                 <Text style={styles.buttonText}>Rozpocznij nagrywanie</Text>
               </TouchableOpacity>
@@ -237,9 +284,13 @@ const processAudioForCloning = async (uri) => {
             
             <View style={styles.uploadSection}>
               <TouchableOpacity
-                style={styles.uploadButton}
+                style={[
+                  styles.uploadButton,
+                  !isOnline && styles.disabledButton
+                ]}
                 onPress={handleFileUpload}
                 activeOpacity={0.8}
+                disabled={!isOnline}
               >
                 <Text style={styles.buttonText}>Prześlij plik audio</Text>
               </TouchableOpacity>
@@ -360,6 +411,10 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'center',
   },
+  disabledButton: {
+    backgroundColor: COLORS.text.tertiary,
+    opacity: 0.5,
+  },
   buttonText: {
     fontFamily: 'Quicksand-Medium',
     fontSize: 16,
@@ -384,19 +439,19 @@ const styles = StyleSheet.create({
   uploadSection: {
     marginBottom: 8,
   },
-  installButton: {
-    position: 'absolute',
-    right: 16,
-    backgroundColor: COLORS.peach,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  offlineMessage: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
+    backgroundColor: 'rgba(255, 181, 167, 0.2)',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+  },
+  offlineText: {
+    flex: 1,
+    marginLeft: 8,
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 14,
+    color: COLORS.text.secondary,
   },
 });
