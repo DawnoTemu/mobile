@@ -1,25 +1,36 @@
 {
   "expo": {
-    "name": "my-app",
-    "slug": "my-app",
+    "name": "DawnoTemu",
+    "slug": "dawnotemu",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "dawnotemu",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.dawnotemu.mobile",
       "infoPlist": {
-        "UIBackgroundModes": ["audio"]
+        "NSMicrophoneUsageDescription": "Aplikacja potrzebuje dostępu do mikrofonu aby nagrać Twój głos",
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
-    
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      }
+        "foregroundImage": "./assets/images/logo.png",
+        "backgroundColor": "#D4C1EC"
+      },
+      "permissions": [
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "package": "com.yourcompany.dawnotemu"
     },
     "web": {
       "bundler": "metro",
@@ -27,6 +38,12 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Aplikacja potrzebuje dostępu do mikrofonu aby nagrać Twój głos"
+        }
+      ],
       "expo-router",
       [
         "expo-splash-screen",
@@ -40,6 +57,12 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "9e719385-ec85-4354-a7dd-c1e4d8b3e35b"
+      }
+    },
+    "owner": "szymonpaluch"
   }
 }
