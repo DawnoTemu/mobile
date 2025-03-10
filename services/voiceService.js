@@ -9,7 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const ENV = {
   DEV: 'http://192.168.1.108:8000/api',
   STAGING: 'https://staging-story-voice.herokuapp.com/api',
-  PROD: 'https://story-voice-47d650d68bd6.herokuapp.com/api'
+  PROD: 'https://api.dawnotemu.app'
 };
 
 // Use environment variable or default to development
