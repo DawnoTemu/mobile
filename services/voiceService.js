@@ -7,8 +7,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // CONFIGURATION
 // Environment-based URL selection
 const ENV = {
-  DEV: 'http://192.168.1.108:8000/api',
-  STAGING: 'https://staging-story-voice.herokuapp.com/api',
+  DEV: 'http://192.168.1.108:8000',
+  STAGING: 'https://staging-story-voice.herokuapp.com',
   PROD: 'https://api.dawnotemu.app'
 };
 
@@ -652,7 +652,7 @@ const clearVoiceAudio = async (voiceId) => {
 
 /**
  * Downloads an audio file with progress tracking
- * @param {string} url - URL to download from
+ * @param {string} url - URL to download from (now will be a presigned S3 URL)
  * @param {string} voiceId - Voice ID (for storage)
  * @param {string} storyId - Story ID (for storage)
  * @param {Function} progressCallback - Optional callback for download progress
@@ -661,7 +661,7 @@ const clearVoiceAudio = async (voiceId) => {
  */
 export const downloadAudio = async (url, voiceId, storyId, progressCallback = null, signal = null) => {
   try {
-    // Check if already downloaded
+    // Check if already downloaded (no changes here)
     const existingInfo = await getStoredAudioInfo(voiceId, storyId);
     if (existingInfo && existingInfo.localUri) {
       // Verify file exists
@@ -675,7 +675,7 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
       }
     }
   
-    // Check if online
+    // Check if online (no changes here)
     const online = await isOnline();
     if (!online) {
       return {
@@ -685,11 +685,13 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
       };
     }
 
-    // Generate unique filename
+    // Generate unique filename (no changes here)
     const fileName = `voice-${voiceId}-story-${storyId}-${Date.now()}.mp3`;
     const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
     
-    // Set up download with progress tracking
+    // Set up download with progress tracking 
+    // No changes here - Expo's FileSystem.createDownloadResumable works with both
+    // presigned URLs and regular URLs without any changes
     const downloadResumable = FileSystem.createDownloadResumable(
       url,
       fileUri,
@@ -702,17 +704,17 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
       }
     );
     
-    // Add abort handler if signal provided
+    // Add abort handler if signal provided (no changes here)
     if (signal) {
       signal.addEventListener('abort', () => {
         downloadResumable.cancelAsync();
       });
     }
     
-    // Start download
+    // Start download (no changes here)
     const { uri } = await downloadResumable.downloadAsync();
     
-    // Store audio info for future reference
+    // Store audio info for future reference (no changes here)
     await storeAudioInfo(voiceId, storyId, uri);
     
     return {
@@ -723,7 +725,7 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
   } catch (error) {
     console.error('Download error:', error);
     
-    // Handle AbortError specifically
+    // Handle AbortError specifically (no changes here)
     if (error.name === 'AbortError') {
       return {
         success: false,
@@ -749,7 +751,7 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
  * @returns {Promise<Object>} Result with local URI or error
  */
 export const getAudio = async (voiceId, storyId, progressCallback = null, signal = null) => {
-  // Check if audio exists locally first
+  // Check if audio exists locally first (no changes here)
   const audioInfo = await getStoredAudioInfo(voiceId, storyId);
   if (audioInfo && audioInfo.localUri) {
     // Verify file exists
@@ -763,7 +765,7 @@ export const getAudio = async (voiceId, storyId, progressCallback = null, signal
     }
   }
 
-  // Check if online
+  // Check if online (no changes here)
   const online = await isOnline();
   if (!online) {
     return {
@@ -776,13 +778,31 @@ export const getAudio = async (voiceId, storyId, progressCallback = null, signal
   // Check if audio exists on server
   const checkResult = await checkAudioExists(voiceId, storyId);
   
-  // If audio exists on server, download it
+  // If audio exists on server, get a presigned URL and download directly from S3
   if (checkResult.success && checkResult.exists) {
-    const audioUrl = `${API_BASE_URL}/audio/${voiceId}/${storyId}.mp3?t=${Date.now()}`;
-    return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal);
+    try {
+      // Get a presigned URL from our new endpoint
+      const presignedResponse = await fetch(`${API_BASE_URL}/audio/url/${voiceId}/${storyId}`);
+      const presignedData = await presignedResponse.json();
+      
+      if (presignedResponse.ok && presignedData.url) {
+        // Use the presigned URL to download directly from S3
+        return downloadAudio(presignedData.url, voiceId, storyId, progressCallback, signal);
+      }
+      
+      // Fall back to old method if presigned URL fails
+      console.log('Falling back to proxy method - presigned URL unavailable');
+      const audioUrl = `${API_BASE_URL}/audio/${voiceId}/${storyId}.mp3?t=${Date.now()}`;
+      return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal);
+    } catch (error) {
+      console.error('Error getting presigned URL:', error);
+      // Fall back to the old method
+      const audioUrl = `${API_BASE_URL}/audio/${voiceId}/${storyId}.mp3?t=${Date.now()}`;
+      return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal);
+    }
   }
   
-  // If audio doesn't exist, try to generate it
+  // If audio doesn't exist, try to generate it (this part won't change much)
   const generateResult = await generateStoryAudio(
     voiceId, 
     storyId, 
@@ -797,7 +817,8 @@ export const getAudio = async (voiceId, storyId, progressCallback = null, signal
     return generateResult;
   }
   
-  // Download the generated audio
+  // The generateStoryAudio should now return a presigned URL directly
+  // Download the generated audio using the presigned URL
   return downloadAudio(
     generateResult.audioUrl, 
     voiceId, 
