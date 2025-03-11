@@ -234,7 +234,7 @@ export default function SynthesisScreen({ navigation }) {
     
     // Set as selected story
     setSelectedStory(story);
-    
+
     // Check if already has locally saved audio
     if (story.localAudioUri) {
       // Load local audio with auto-play

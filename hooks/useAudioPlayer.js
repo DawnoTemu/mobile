@@ -53,6 +53,7 @@ export default function useAudioPlayer() {
       });
       
       // Create and load the sound
+      console.log(uri);
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri },
         { shouldPlay: autoPlay },

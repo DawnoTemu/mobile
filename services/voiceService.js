@@ -783,7 +783,9 @@ export const getAudio = async (voiceId, storyId, progressCallback = null, signal
     try {
       // Get a presigned URL from our new endpoint
       const presignedResponse = await fetch(`${API_BASE_URL}/audio/url/${voiceId}/${storyId}`);
+      console.log(presignedResponse);
       const presignedData = await presignedResponse.json();
+      console.log(presignedData);
       
       if (presignedResponse.ok && presignedData.url) {
         // Use the presigned URL to download directly from S3
