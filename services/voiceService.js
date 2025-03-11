@@ -789,16 +789,8 @@ export const getAudio = async (voiceId, storyId, progressCallback = null, signal
         // Use the presigned URL to download directly from S3
         return downloadAudio(presignedData.url, voiceId, storyId, progressCallback, signal);
       }
-      
-      // Fall back to old method if presigned URL fails
-      console.log('Falling back to proxy method - presigned URL unavailable');
-      const audioUrl = `${API_BASE_URL}/audio/${voiceId}/${storyId}.mp3?t=${Date.now()}`;
-      return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal);
     } catch (error) {
       console.error('Error getting presigned URL:', error);
-      // Fall back to the old method
-      const audioUrl = `${API_BASE_URL}/audio/${voiceId}/${storyId}.mp3?t=${Date.now()}`;
-      return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal);
     }
   }
   
@@ -836,7 +828,7 @@ export const getAudio = async (voiceId, storyId, progressCallback = null, signal
  * @returns {string} Cover image URL
  */
 export const getStoryCoverUrl = (storyId) => {
-  return `${API_BASE_URL}/stories/${storyId}/cover.png`;
+  return `${API_BASE_URL}/stories/${storyId}/cover`;
 };
 
 /**
