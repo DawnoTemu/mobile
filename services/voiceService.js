@@ -472,7 +472,7 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
   // Start polling for audio availability
   if (statusCallback) statusCallback('processing', 0);
   
-  const audioUrl = `${API_BASE_URL}/audio/${voiceId}/${storyId}.mp3`;
+  const audioUrl = `${API_BASE_URL}/audio/url/${voiceId}/${storyId}`;
   let audioReady = false;
   let attempts = 0;
   const maxAttempts = 24; // 2 minutes with 5 second intervals
