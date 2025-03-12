@@ -1,19 +1,19 @@
 // Colors based on the web app's CSS variables
 export const COLORS = {
     // Main theme colors
-    peach: '#FFB5A7',
-    lavender: '#D4C1EC',
-    mint: '#B8E0D2',
-    softYellow: '#FAE8B0',
+    peach: '#rgb(251, 190, 159)',
+    lavender: 'rgb(218, 143, 255)',
+    mint: 'rgb(99, 230, 226)',
+    softYellow: 'rgb(250, 232, 176)',
     
     // Background colors
-    background: '#F8F9FD',
+    background: '#F9FAFC',
     white: '#FFFFFF',
     
     // Text colors
     text: {
-      primary: '#1F2937',   // gray-800
-      secondary: '#4B5563', // gray-600
+      primary: '#2D3047',   // gray-800
+      secondary: '#6C6F93', // gray-600
       tertiary: '#9CA3AF',  // gray-400
     },
     
@@ -28,9 +28,9 @@ export const COLORS = {
     
     // Gradients (will be used with LinearGradient)
     gradients: {
-      lavenderToMint: ['#D4C1EC', '#B8E0D2'],
-      peachToWhite: ['rgba(255, 181, 167, 1)', 'rgba(255, 255, 255, 1)'],
-      lavenderToWhite: ['rgba(212, 193, 236, 1)', 'rgba(255, 255, 255, 1)'],
-      mintToWhite: ['rgba(184, 224, 210, 1)', 'rgba(255, 255, 255, 1)'],
+      lavenderToMint: ['rgb(218, 143, 255)', 'rgb(251, 190, 159)'],
+      peachToWhite: ['rgb(251, 190, 159)', 'rgba(255, 255, 255, 1)'],
+      lavenderToWhite: ['rgb(218, 143, 255)', 'rgba(255, 255, 255, 1)'],
+      mintToWhite: ['rgb(99, 230, 226)', 'rgba(255, 255, 255, 1)'],
     }
   };
