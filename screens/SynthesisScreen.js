@@ -70,13 +70,15 @@ export default function SynthesisScreen({ navigation }) {
   // Load stories and voice ID on mount
   useEffect(() => {
     fetchStoriesAndVoiceId(false, true);
-    setupNetworkListener();
+    const unsubscribe = setupNetworkListener();
     
     // Clean up on unmount
     return () => {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+      // Clean up network listener
+      unsubscribe();
     };
   }, []);
   
@@ -95,9 +97,8 @@ export default function SynthesisScreen({ navigation }) {
       if (newIsOnline !== isOnline) {
         setIsOnline(newIsOnline);
         
-        // If we just came back online, try to process the queue
+        // If we just came back online, process queue and refresh stories
         if (newIsOnline) {
-          // Don't show a toast for reconnection - keep it seamless
           processOfflineQueue();
         }
       }
@@ -111,13 +112,15 @@ export default function SynthesisScreen({ navigation }) {
     if (!isOnline) return;
     
     try {
+      // Process any queued operations first
       const result = await voiceService.processOfflineQueue();
-      if (result.success && result.processed > 0) {
-        // Refresh stories silently after processing queue
-        fetchStoriesAndVoiceId(true);
-      }
+      
+      // Always refresh stories when coming back online, regardless of queue processing
+      fetchStoriesAndVoiceId(true);
     } catch (error) {
       console.error('Error processing offline queue:', error);
+      // Still try to fetch stories even if queue processing fails
+      fetchStoriesAndVoiceId(true);
     }
   };
   
