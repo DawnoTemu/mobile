@@ -69,7 +69,7 @@ export default function SynthesisScreen({ navigation }) {
   
   // Load stories and voice ID on mount
   useEffect(() => {
-    fetchStoriesAndVoiceId();
+    fetchStoriesAndVoiceId(false, true);
     setupNetworkListener();
     
     // Clean up on unmount
@@ -136,7 +136,7 @@ export default function SynthesisScreen({ navigation }) {
   );
   
   // Fetch stories and voice ID
-  const fetchStoriesAndVoiceId = async (silent = false) => {
+  const fetchStoriesAndVoiceId = async (silent = false, forceRefresh = false) => {
     try {
       if (!silent) {
         setIsLoading(true);
@@ -154,7 +154,7 @@ export default function SynthesisScreen({ navigation }) {
       setVoiceId(currentVoiceId);
       
       // Fetch available stories
-      const storiesResult = await voiceService.getStories();
+      const storiesResult = await voiceService.getStories(forceRefresh);
       
       if (storiesResult.success) {
         let storiesData = storiesResult.stories;
@@ -427,7 +427,7 @@ export default function SynthesisScreen({ navigation }) {
       return;
     }
     
-    fetchStoriesAndVoiceId();
+    fetchStoriesAndVoiceId(false, true);
   };
   
   // Render story item

@@ -4,7 +4,7 @@
     "slug": "dawnotemu",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/logo.png",
     "scheme": "dawnotemu",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -57,7 +57,7 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#000000"
         }
       ]
     ],

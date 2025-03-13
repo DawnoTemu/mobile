@@ -103,7 +103,7 @@ const styles = StyleSheet.create({
     width: 70,
     height: 70,
     borderRadius: 8,
-    backgroundColor: COLORS.lavender + '30', // 30% opacity
+    backgroundColor: COLORS.gradients.lavenderToPeach + '30', // 30% opacity
   },
   content: {
     flex: 1,
