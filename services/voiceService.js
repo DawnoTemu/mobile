@@ -378,7 +378,7 @@ export const checkAudioExists = async (voiceId, storyId) => {
   // First check local storage
   const audioInfo = await getStoredAudioInfo(voiceId, storyId);
   if (audioInfo && audioInfo.localUri) {
-    // Verify file still exists
+    // Verify file still exists (getStoredAudioInfo already does this but adding for clarity)
     const fileInfo = await FileSystem.getInfoAsync(audioInfo.localUri);
     if (fileInfo.exists) {
       return {
@@ -389,7 +389,7 @@ export const checkAudioExists = async (voiceId, storyId) => {
       };
     }
   }
-  
+
   // If we're online, check the server
   const online = await isOnline();
   if (online) {
@@ -554,18 +554,57 @@ const storeAudioInfo = async (voiceId, storyId, localUri) => {
  * @param {string} storyId - Story ID
  * @returns {Promise<Object|null>} Audio info or null if not found
  */
-const getStoredAudioInfo = async (voiceId, storyId) => {
-  try {
-    const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
-    if (!infoString) return null;
-    
-    const audioInfo = JSON.parse(infoString);
-    return audioInfo[voiceId]?.[storyId] || null;
-  } catch (error) {
-    console.error('Failed to get audio info:', error);
-    return null;
-  }
-};
+  const getStoredAudioInfo = async (voiceId, storyId) => {
+    try {
+      const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
+      if (!infoString) return null;
+      
+      const audioInfo = JSON.parse(infoString);
+      const storedInfo = audioInfo[voiceId]?.[storyId] || null;
+      
+      // Add file existence verification
+      if (storedInfo && storedInfo.localUri) {
+        // Verify the file still exists
+        const fileInfo = await FileSystem.getInfoAsync(storedInfo.localUri);
+        if (!fileInfo.exists) {
+          // File no longer exists, remove reference from storage
+          console.log(`File no longer exists: ${storedInfo.localUri}, removing reference`);
+          await removeAudioReference(voiceId, storyId);
+          return null;
+        }
+      }
+      
+      return storedInfo;
+    } catch (error) {
+      console.error('Failed to get audio info:', error);
+      return null;
+    }
+  };
+
+  const removeAudioReference = async (voiceId, storyId) => {
+    try {
+      const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
+      if (!infoString) return;
+      
+      const audioInfo = JSON.parse(infoString);
+      if (!audioInfo[voiceId]) return;
+      
+      // Remove reference to the deleted file
+      if (audioInfo[voiceId][storyId]) {
+        delete audioInfo[voiceId][storyId];
+      }
+      
+      // Clean up empty objects if needed
+      if (Object.keys(audioInfo[voiceId]).length === 0) {
+        delete audioInfo[voiceId];
+      }
+      
+      // Save updated info
+      await AsyncStorage.setItem(STORAGE_KEYS.DOWNLOADED_AUDIO, JSON.stringify(audioInfo));
+    } catch (error) {
+      console.error('Failed to remove audio reference:', error);
+    }
+  };
 
 /**
  * Gets all stored audio info for a voice
@@ -578,7 +617,25 @@ export const getStoredAudioForVoice = async (voiceId) => {
     if (!infoString) return {};
     
     const audioInfo = JSON.parse(infoString);
-    return audioInfo[voiceId] || {};
+    const voiceAudioInfo = audioInfo[voiceId] || {};
+    
+    // Validate that all files still exist
+    const validatedInfo = {};
+    for (const storyId in voiceAudioInfo) {
+      const info = voiceAudioInfo[storyId];
+      if (info && info.localUri) {
+        // Check if file exists
+        const fileInfo = await FileSystem.getInfoAsync(info.localUri);
+        if (fileInfo.exists) {
+          validatedInfo[storyId] = info;
+        } else {
+          // Remove reference to non-existent file
+          await removeAudioReference(voiceId, storyId);
+        }
+      }
+    }
+    
+    return validatedInfo;
   } catch (error) {
     console.error('Failed to get stored audio for voice:', error);
     return {};
