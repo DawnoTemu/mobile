@@ -32,8 +32,8 @@ export default function RecordingModal({
     if (visible && isRecording) {
       // Start automatic scrolling animation - much slower now
       Animated.timing(scrollY, {
-        toValue: -300, // Less scrolling distance to keep text visible
-        duration: 45000, // 3 minutes - very slow scrolling
+        toValue: -1200, // Less scrolling distance to keep text visible
+        duration: 140000, // 3 minutes - very slow scrolling
         easing: Easing.linear,
         useNativeDriver: true,
       }).start();
@@ -51,7 +51,7 @@ export default function RecordingModal({
   useEffect(() => {
     Animated.timing(modalAnimation, {
       toValue: visible ? 1 : 0,
-      duration: 300,
+      duration: 1200,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
@@ -126,11 +126,17 @@ export default function RecordingModal({
                 ]}
               >
                 <Text style={styles.recordingText}>
-                  Był spokojny, ciepły wieczór. Słońce powoli chowało się za horyzontem, malując niebo odcieniami pomarańczu i różu. Anna usiadła wygodnie w fotelu przy oknie, trzymając w dłoniach filiżankę herbaty. 
+                  Był spokojny, ciepły wieczór. Słońce powoli chowało się za horyzontem, malując niebo odcieniami pomarańczu i różu. Anna usiadła wygodnie w fotelu przy oknie, trzymając w dłoniach filiżankę herbaty. Ciepło ostatnich promieni przenikało przez szybę, nadając wnętrzu miękki, złocisty blask.
                   {'\n\n'}
-                  Powietrze pachniało letnim deszczem, który niedawno przeszedł przez miasto. W oddali słychać było śmiech dzieci bawiących się na podwórku i cichy szum liści poruszanych wiatrem. 
+                  W miarę jak niebo przechodziło od intensywnych barw zachodu do stonowanej granatowej głębi, Anna zanurzała się w refleksjach. Myśli niesione delikatnym powiewem wiatru przenosiły ją do czasów dzieciństwa, pełnych beztroskich zabaw na świeżym powietrzu i przygód, które zdawały się trwać wiecznie. Wspomnienia te miały w sobie coś czarującego, jak zapach świeżo skoszonej trawy po letniej ulewie.
                   {'\n\n'}
-                  Kot, zwinięty w kłębek na parapecie, leniwie otworzył jedno oko, jakby chciał sprawdzić, czy wszystko jest w porządku. Anna wzięła głęboki oddech i uśmiechnęła się. To był idealny moment, by na chwilę zatrzymać się i po prostu cieszyć się chwilą.
+                  Powietrze pachniało letnim deszczem, który niedawno przeszedł przez miasto. Krople, jeszcze odbijające blask księżyca, zdobiły liście drzew, tworząc naturalne koronkowe wzory na gałęziach. W oddali słychać było cichy śmiech dzieci bawiących się na podwórku oraz delikatny szum liści poruszanych przez lekki wiatr. Każdy dźwięk tej spokojnej symfonii zdawał się przypominać, że nawet w ciszy kryje się cała paleta emocji i wspomnień.
+                  {'\n\n'}
+                  Kot, zwinięty w kłębek na parapecie, leniwie otworzył jedno oko, jakby chciał sprawdzić, czy wszystko jest w porządku. Jego spokojne spojrzenie i niewzruszony wyraz twarzy budziły w Annie poczucie bezpieczeństwa i ciepła domowego ogniska. Przez chwilę obserwowała swojego futrzanego towarzysza, przypominając sobie, jak często właśnie te małe, codzienne momenty potrafią nadać życiu niespodziewanego blasku.
+                  {'\n\n'}
+                  Zamykając oczy na moment, Anna wsłuchiwała się w ciche dźwięki wieczoru. W tle dało się słyszeć delikatne szmery rozmów przechodniów oraz odległe echo muzyki płynącej z pobliskiej kawiarni. Każdy dźwięk, każda migawka światła tworzyły pejzaż, w którym łączyły się teraźniejszość i minione chwile, wzbudzając uczucie, że czas zwalnia w najpiękniejszych momentach.
+                  {'\n\n'}
+                  Z filiżanką herbaty w dłoniach i sercem otwartym na to, co przynosi kolejna chwila, Anna czuła, że wieczór ten jest darem – chwilą zatrzymania się, refleksji i wyciszenia. W tej magicznej ciszy, gdzie szept liści mieszał się z echem dawnych wspomnień, każdy oddech stawał się celebracją życia. Gdy patrzyła na rozgwieżdżone niebo, wiedziała, że to właśnie te drobne, niemal niezauważalne momenty tworzą najpiękniejszą mozaikę codzienności, skłaniając ją do głębszych przemyśleń i cieszenia się każdą, nawet najcichszą chwilą.
                 </Text>
               </Animated.View>
             </View>
@@ -192,9 +198,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
-    backgroundColor: `${COLORS.peach}10`, // 10% opacity
+    backgroundColor: `${COLORS.background}10`, // 10% opacity
     borderBottomWidth: 1,
-    borderBottomColor: `${COLORS.peach}20`, // 20% opacity
+    borderBottomColor: `${COLORS.background}20`, // 20% opacity
   },
   headerTitle: {
     fontFamily: 'Comfortaa-Regular',
@@ -204,10 +210,10 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   scrollingContainer: {
-    height: 320, // Increased height for more text
+    height: 340, // Increased height for more text
     overflow: 'hidden',
     position: 'relative',
-    backgroundColor: `${COLORS.mint}05`, // 5% opacity
+    backgroundColor: `${COLORS.white}`, // 5% opacity
   },
   textContainer: {
     padding: 24,
@@ -220,7 +226,7 @@ const styles = StyleSheet.create({
     color: COLORS.text.primary,
     flexWrap: 'wrap', // Ensure text wraps properly
     width: '100%', // Full width
-    height: 1000,
+    height: 4000,
   },
   processingContainer: {
     height: 320, // Match height with scrollingContainer

@@ -42,7 +42,7 @@ export default function useAudioRecorder() {
     
     if (isRecording) {
       // Reset to 30 when recording starts
-      setRecordingDuration(30);
+      setRecordingDuration(120);
       setProgress(0);
       
       interval = setInterval(() => {
@@ -69,13 +69,13 @@ export default function useAudioRecorder() {
           }
           
           // Update progress based on remaining time (30 seconds to 0)
-          setProgress(((30 - newDuration) / 30) * 100);
+          setProgress(((120 - newDuration) / 120) * 100);
           return newDuration;
         });
       }, 1000);
     } else {
       // Reset to 30 when not recording
-      setRecordingDuration(30);
+      setRecordingDuration(120);
     }
     
     return () => {

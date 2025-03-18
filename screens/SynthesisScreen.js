@@ -607,8 +607,7 @@ const styles = StyleSheet.create({
   avatar: {
     width: 32,
     height: 32,
-    borderRadius: 16,
-    backgroundColor: COLORS.lavender,
+    borderRadius: 16
   },
   content: {
     flex: 1,

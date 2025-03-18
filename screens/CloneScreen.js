@@ -235,11 +235,10 @@ export default function CloneScreen({ navigation }) {
         <View style={styles.card}>
           <View style={styles.logoContainer}>
             <Image 
-              source={require('../assets/images/logo.png')} 
+              source={require('../assets/images/logo-stacked.png')} 
               style={styles.logo}
               resizeMode="contain"
             />
-            <Text style={styles.title}>DawnoTemu</Text>
           </View>
           
           {!isOnline && (
@@ -254,9 +253,6 @@ export default function CloneScreen({ navigation }) {
           
           <View style={styles.optionsContainer}>
             <View style={styles.recordSection}>
-              <View style={styles.emojiContainer}>
-                <Text style={styles.emoji}>👦👧</Text>
-              </View>
               <Text style={styles.sectionTitle}>
                 Stwórz próbkę swojego głosu
               </Text>
@@ -339,6 +335,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     padding: 16,
+    alignItems: 'center', // Centers horizontally
   },
   card: {
     backgroundColor: COLORS.white,
@@ -356,9 +353,9 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   logo: {
-    width: 40,
-    height: 40,
-    marginBottom: 8,
+    width: 128,
+    height: 62,
+    marginTop: 32,
   },
   title: {
     fontFamily: 'Comfortaa-Regular',
@@ -367,19 +364,13 @@ const styles = StyleSheet.create({
     color: COLORS.text.primary,
   },
   optionsContainer: {
-    marginTop: 8,
+    marginTop: 32,
   },
   recordSection: {
-    backgroundColor: `${COLORS.peach}10`, // 10% opacity
-    padding: 24,
+    backgroundColor: `${COLORS.white}`, // 10% opacity
+    padding: 0,
     borderRadius: 12,
     alignItems: 'center',
-  },
-  emojiContainer: {
-    marginBottom: 16,
-  },
-  emoji: {
-    fontSize: 36,
   },
   sectionTitle: {
     fontFamily: 'Quicksand-Medium',

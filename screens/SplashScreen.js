@@ -22,13 +22,13 @@ export default function SplashScreen({ navigation }) {
     >
       <View style={styles.content}>
         <Image 
-          source={require('../assets/images/logo.png')} 
+          source={require('../assets/images/logo-stacked-white.png')} 
           style={styles.logo}
           resizeMode="contain"
         />
-        <Text style={styles.title}>DawnoTemu</Text>
         <Text style={styles.subtitle}>
-          Tu, baśnie nabierają{'\n'}czarodziejskiej mocy
+        Twój głos opowiada baśnie,
+        {'\n'}zawsze gdy potrzebujesz
         </Text>
       </View>
     </LinearGradient>
@@ -45,8 +45,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   logo: {
-    width: 64,
-    height: 64,
+    width: 192,
+    height: 93,
   },
   title: {
     fontFamily: 'Comfortaa-Regular',
