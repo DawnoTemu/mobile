@@ -32,7 +32,7 @@ export default function RecordingModal({
     if (visible && isRecording) {
       // Start automatic scrolling animation - much slower now
       Animated.timing(scrollY, {
-        toValue: -1200, // Less scrolling distance to keep text visible
+        toValue: -1600, // Less scrolling distance to keep text visible
         duration: 140000, // 3 minutes - very slow scrolling
         easing: Easing.linear,
         useNativeDriver: true,
@@ -232,7 +232,7 @@ const styles = StyleSheet.create({
     height: 320, // Match height with scrollingContainer
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: `${COLORS.mint}05`, // 5% opacity
+    backgroundColor: `${COLORS.background}`, // 5% opacity
   },
   processingIndicator: {
     marginBottom: 16,

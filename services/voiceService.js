@@ -7,13 +7,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // CONFIGURATION
 // Environment-based URL selection
 const ENV = {
-  DEV: 'http://192.168.1.108:8000',
+  DEV: 'http://192.168.1.107:8000',
   STAGING: 'https://staging-story-voice.herokuapp.com',
   PROD: 'https://api.dawnotemu.app'
 };
 
 // Use environment variable or default to development
-const API_BASE_URL = ENV.PROD;
+const API_BASE_URL = ENV.DEV;
 
 // STORAGE KEYS
 const STORAGE_KEYS = {
