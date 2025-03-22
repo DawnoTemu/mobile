@@ -100,10 +100,10 @@ export default function CloneScreen({ navigation }) {
   
   // Start recording (called after instructions and countdown)
   const handleStartRecording = async () => {
-    // Pass handleStopRecording as the callback for auto-stop
-    const success = await startRecording((audioUri) => {
-      // This function will be called automatically when recording stops after 60 seconds
-      processAudioForCloning(audioUri);
+    // Instead of auto-submitting, we now just stop recording automatically
+    const success = await startRecording((uri) => {
+      // This will be called when recording stops after 60 seconds
+      // The UI will transition to review state due to audioUri being set
     });
     
     if (!success) {
@@ -112,17 +112,12 @@ export default function CloneScreen({ navigation }) {
     }
   };
   
-  // Stop recording and process audio
+  // Stop recording manually (if user presses stop before time limit)
   const handleStopRecording = async () => {
     if (!isRecording) return;
     
-    const uri = await stopRecording();
-    if (uri) {
-      processAudioForCloning(uri);
-    } else {
-      setIsModalVisible(false);
-      showToast('Wystąpił problem z nagraniem. Spróbuj ponownie.', 'ERROR');
-    }
+    await stopRecording();
+    // UI will transition to review state automatically due to audioUri being set
   };
 
   // Cancel recording modal
@@ -137,6 +132,12 @@ export default function CloneScreen({ navigation }) {
     
     setIsModalVisible(false);
     setIsProcessing(false);
+  };
+  
+  // Handle re-record from review state
+  const handleReRecord = async () => {
+    // Clear the audio URI by stopping the recording
+    await stopRecording();
   };
   
   // Handle audio file upload
@@ -166,10 +167,7 @@ export default function CloneScreen({ navigation }) {
       const fileUri = result.assets[0].uri;
       showToast('Plik audio wybrany pomyślnie', 'SUCCESS');
       
-      // Show the modal before processing
-      setIsModalVisible(true);
-      
-      // Process the file for voice cloning
+      // Process the file for voice cloning (no review needed for uploaded files)
       processAudioForCloning(fileUri);
     } catch (error) {
       console.error('Error picking document:', error);
@@ -180,7 +178,12 @@ export default function CloneScreen({ navigation }) {
   // Process audio (either recorded or uploaded) for voice cloning
   const processAudioForCloning = async (uri) => {
     try {
-      // Keep the modal visible but switch to processing state
+      // For uploaded files, show the modal with processing state
+      if (!isModalVisible) {
+        setIsModalVisible(true);
+      }
+      
+      // Switch to processing state
       setIsProcessing(true);
       
       // API call to clone voice
@@ -299,7 +302,7 @@ export default function CloneScreen({ navigation }) {
         </View>
       </ScrollView>
       
-      {/* Recording Modal */}
+      {/* Recording Modal with enhanced functionality */}
       <RecordingModal
         visible={isModalVisible}
         isRecording={isRecording}
@@ -316,6 +319,9 @@ export default function CloneScreen({ navigation }) {
         onCancel={handleCancelRecording}
         formatDuration={formatDuration}
         onStartRecording={handleStartRecording}
+        audioUri={audioUri}
+        onSubmitRecording={processAudioForCloning}
+        onReRecord={handleReRecord}
       />
       
       {/* Confirmation Modal */}

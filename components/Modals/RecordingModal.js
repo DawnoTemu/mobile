@@ -12,6 +12,7 @@ import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../../styles/colors';
+import { Audio } from 'expo-av';
 
 export default function RecordingModal({
   visible,
@@ -23,22 +24,38 @@ export default function RecordingModal({
   onCancel,
   formatDuration,
   onStartRecording,
+  audioUri,
+  onSubmitRecording,
+  onReRecord,
 }) {
   const insets = useSafeAreaInsets();
   const scrollY = useRef(new Animated.Value(0)).current;
   const modalAnimation = useRef(new Animated.Value(0)).current;
   
   // Track recording preparation state
-  const [recordingState, setRecordingState] = useState('instructions'); // 'instructions', 'countdown', 'recording'
+  // Add 'review' state to the possible states
+  const [recordingState, setRecordingState] = useState('instructions'); // 'instructions', 'countdown', 'recording', 'review'
   
   // State for countdown
   const [countdownNumber, setCountdownNumber] = useState(3);
+  
+  // Audio playback states
+  const [sound, setSound] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackPosition, setPlaybackPosition] = useState(0);
+  const [playbackDuration, setPlaybackDuration] = useState(0);
   
   // Reset state when modal is opened/closed
   useEffect(() => {
     if (visible) {
       setRecordingState('instructions');
       setCountdownNumber(3);
+    } else {
+      // Cleanup audio when modal closes
+      if (sound) {
+        sound.unloadAsync();
+        setSound(null);
+      }
     }
   }, [visible]);
 
@@ -46,10 +63,87 @@ export default function RecordingModal({
   useEffect(() => {
     if (isRecording) {
       setRecordingState('recording');
+    } else if (audioUri && !isRecording && !isProcessing && recordingState === 'recording') {
+      // Transition to review state when recording finishes and we have an audio URI
+      setRecordingState('review');
+      loadRecordedAudio();
     }
-  }, [isRecording]);
+  }, [isRecording, audioUri, isProcessing]);
   
-  // Auto-scroll animation for the text
+  // Cleanup audio on unmount
+  useEffect(() => {
+    return () => {
+      if (sound) {
+        sound.unloadAsync();
+      }
+    };
+  }, []);
+  
+  // Load the recorded audio for playback
+  const loadRecordedAudio = async () => {
+    if (!audioUri) return;
+    
+    // Unload previous sound if it exists
+    if (sound) {
+      await sound.unloadAsync();
+    }
+    
+    try {
+      // Configure audio mode for playback
+      await Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        allowsRecordingIOS: false,
+      });
+      
+      // Create and load the sound
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        { uri: audioUri },
+        { shouldPlay: false },
+        onPlaybackStatusUpdate
+      );
+      
+      setSound(newSound);
+    } catch (error) {
+      console.error('Failed to load recorded audio:', error);
+    }
+  };
+  
+  // Callback for playback status updates
+  const onPlaybackStatusUpdate = (status) => {
+    if (status.isLoaded) {
+      setPlaybackDuration(status.durationMillis / 1000); // Convert to seconds
+      setPlaybackPosition(status.positionMillis / 1000);
+      setIsPlaying(status.isPlaying);
+      
+      // If playback finished, reset to beginning
+      if (status.didJustFinish) {
+        setIsPlaying(false);
+      }
+    }
+  };
+  
+  // Play/pause the recorded audio
+  const togglePlayback = async () => {
+    if (!sound) return;
+    
+    try {
+      if (isPlaying) {
+        await sound.pauseAsync();
+      } else {
+        // If we reached the end, start from beginning
+        const status = await sound.getStatusAsync();
+        if (status.positionMillis === status.durationMillis) {
+          await sound.setPositionAsync(0);
+        }
+        await sound.playAsync();
+      }
+    } catch (error) {
+      console.error('Error toggling playback:', error);
+    }
+  };
+  
+  // Auto-scroll animation for the text during recording
   useEffect(() => {
     if (visible && recordingState === 'recording' && isRecording) {
       // Start automatic scrolling animation - slower to match 60-second recording
@@ -103,7 +197,47 @@ export default function RecordingModal({
     }, 1000);
   };
   
+  // Handle re-recording
+  const handleReRecord = () => {
+    // Clean up audio playback
+    if (sound) {
+      sound.unloadAsync();
+      setSound(null);
+    }
+    
+    // Reset to instructions state
+    setRecordingState('instructions');
+    
+    // Call the parent component's re-record handler
+    if (onReRecord) {
+      onReRecord();
+    }
+  };
+  
+  // Handle submitting the recording
+  const handleSubmitRecording = () => {
+    // Clean up audio playback
+    if (sound) {
+      sound.unloadAsync();
+      setSound(null);
+    }
+    
+    // Call the parent component's submit handler
+    if (onSubmitRecording) {
+      onSubmitRecording(audioUri);
+    }
+  };
+  
   if (!visible) return null;
+  
+  // Format time (seconds to MM:SS)
+  const formatTime = (seconds) => {
+    if (!seconds && seconds !== 0) return '0:00';
+    
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
   
   // Render different views based on the current state
   const renderContent = () => {
@@ -131,6 +265,46 @@ export default function RecordingModal({
           <Text style={styles.processingText}>
             Trwa Analizowanie Twojego Głosu...
           </Text>
+        </View>
+      );
+    } else if (recordingState === 'review') {
+      // Review Recording View
+      return (
+        <View style={styles.reviewContainer}>
+          <Text style={styles.reviewTitle}>Odsłuchaj swoje nagranie</Text>
+          
+          <Text style={styles.reviewDescription}>
+            Posłuchaj nagrania i zdecyduj czy chcesz je wysłać, czy nagrać ponownie.
+          </Text>
+          
+          {/* Audio Player */}
+          <View style={styles.playerContainer}>
+            {/* Play/Pause Button */}
+            <TouchableOpacity 
+              style={styles.playPauseButton}
+              onPress={togglePlayback}
+            >
+              <Feather 
+                name={isPlaying ? 'pause' : 'play'} 
+                size={32} 
+                color={COLORS.white} 
+              />
+            </TouchableOpacity>
+            
+            {/* Timer */}
+            <View style={styles.timerContainer}>
+              <Text style={styles.timerText}>
+                {formatTime(playbackPosition)} / {formatTime(playbackDuration)}
+              </Text>
+            </View>
+          </View>
+          
+          <View style={styles.reviewHintContainer}>
+            <Feather name="info" size={16} color={COLORS.lavender} style={styles.reviewHintIcon} />
+            <Text style={styles.reviewHint}>
+              Upewnij się, że Twój głos jest wyraźny i nie ma zakłóceń w tle.
+            </Text>
+          </View>
         </View>
       );
     } else if (recordingState === 'instructions') {
@@ -166,7 +340,7 @@ export default function RecordingModal({
         <View style={styles.countdownContainer}>
           <Text style={styles.countdownLabel}>Przygotuj się, zaczynamy za...</Text>
           <Text style={styles.countdownNumber}>
-            {countdownNumber}
+            {countdownNumber === 0 ? "Start!" : countdownNumber}
           </Text>
           <Text style={styles.countdownHint}>Bądź gotów do czytania tekstu na głos</Text>
         </View>
@@ -229,7 +403,9 @@ export default function RecordingModal({
           {/* Modal Header */}
           <View style={styles.header}>
             <Feather name="mic" size={20} color={COLORS.peach} />
-            <Text style={styles.headerTitle}>Dodaj Swój Głos</Text>
+            <Text style={styles.headerTitle}>
+              {recordingState === 'review' ? 'Sprawdź Nagranie' : 'Dodaj Swój Głos'}
+            </Text>
           </View>
           
           {/* Content Area */}
@@ -248,6 +424,13 @@ export default function RecordingModal({
               </View>
             )}
             
+            {/* Processing State Message */}
+            {isProcessing && (
+              <Text style={styles.statusText}>
+                Przetwarzanie głosu...
+              </Text>
+            )}
+            
             {/* Status Text with Countdown Timer - only show when recording */}
             {recordingState === 'recording' && (
               <Text style={styles.statusText}>
@@ -257,6 +440,29 @@ export default function RecordingModal({
             
             {/* Action buttons based on state */}
             <View style={styles.footerButtonsContainer}>
+              {/* Review state buttons */}
+              {recordingState === 'review' && (
+                <>
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.reRecordButton]}
+                    onPress={handleReRecord}
+                    activeOpacity={0.7}
+                  >
+                    <Feather name="refresh-cw" size={20} color={COLORS.text.secondary} style={{marginRight: 8}} />
+                    <Text style={styles.reRecordButtonText}>Nagraj ponownie</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.submitButton]}
+                    onPress={handleSubmitRecording}
+                    activeOpacity={0.7}
+                  >
+                    <Feather name="check" size={20} color={COLORS.white} style={{marginRight: 8}} />
+                    <Text style={styles.submitButtonText}>Wyślij nagranie</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+              
               {/* Start button - only in instructions view */}
               {recordingState === 'instructions' && (
                 <TouchableOpacity
@@ -269,23 +475,25 @@ export default function RecordingModal({
                 </TouchableOpacity>
               )}
               
-              {/* Cancel Button - always show */}
-              <TouchableOpacity
-                style={[
-                  styles.cancelButton,
-                  recordingState === 'instructions' ? styles.cancelButtonSecondary : {}
-                ]}
-                onPress={onCancel}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.cancelButtonText}>
-                  {isProcessing 
-                    ? 'Anuluj przetwarzanie' 
-                    : recordingState === 'recording'
-                      ? 'Przerwij nagrywanie'
-                      : 'Anuluj'}
-                </Text>
-              </TouchableOpacity>
+              {/* Cancel Button - always show except in review state */}
+              {recordingState !== 'review' && (
+                <TouchableOpacity
+                  style={[
+                    styles.cancelButton,
+                    recordingState === 'instructions' ? styles.cancelButtonSecondary : {}
+                  ]}
+                  onPress={onCancel}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.cancelButtonText}>
+                    {isProcessing 
+                      ? 'Anuluj przetwarzanie' 
+                      : recordingState === 'recording'
+                        ? 'Przerwij nagrywanie'
+                        : 'Anuluj'}
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         </Animated.View>
@@ -356,6 +564,73 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: COLORS.text.secondary,
   },
+  // Review View
+  reviewContainer: {
+    padding: 24,
+    height: 340,
+    justifyContent: 'center',
+  },
+  reviewTitle: {
+    fontFamily: 'Quicksand-Bold',
+    fontSize: 18,
+    color: COLORS.text.primary,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  reviewDescription: {
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 16,
+    color: COLORS.text.secondary,
+    marginBottom: 24,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  playerContainer: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  playPauseButton: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: COLORS.lavender,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  timerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  timerText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 14,
+    color: COLORS.text.secondary,
+  },
+  reviewHintContainer: {
+    flexDirection: 'row',
+    backgroundColor: `${COLORS.lavender}15`, // 15% opacity
+    padding: 16,
+    borderRadius: 8,
+    marginTop: 16,
+  },
+  reviewHintIcon: {
+    marginRight: 12,
+    marginTop: 2,
+  },
+  reviewHint: {
+    flex: 1,
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 14,
+    lineHeight: 20,
+    color: COLORS.text.secondary,
+  },
+  // Start button
   startButton: {
     flexDirection: 'row',
     backgroundColor: COLORS.peach,
@@ -484,6 +759,35 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 16,
   },
+  // Action buttons for review state
+  actionButton: {
+    flexDirection: 'row',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+  },
+  reRecordButton: {
+    backgroundColor: '#F3F4F6',
+    marginRight: 8,
+  },
+  reRecordButtonText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 14,
+    color: COLORS.text.secondary,
+  },
+  submitButton: {
+    backgroundColor: COLORS.peach,
+    marginLeft: 8,
+  },
+  submitButtonText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 14,
+    color: COLORS.white,
+  },
+  // Cancel button
   cancelButton: {
     backgroundColor: '#F3F4F6',
     paddingVertical: 12,
