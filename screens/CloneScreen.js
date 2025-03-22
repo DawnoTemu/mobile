@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
+import { Feather } from '@expo/vector-icons';
 import RecordingModal from '../components/Modals/RecordingModal';
 import ConfirmModal from '../components/Modals/ConfirmModal';
 import { useToast } from '../components/StatusToast';
@@ -79,8 +80,8 @@ export default function CloneScreen({ navigation }) {
     }
   };
   
-  // Start recording flow
-  const handleStartRecording = async () => {
+  // Show recording modal flow
+  const handleShowRecordingModal = async () => {
     // Check if online
     if (!isOnline) {
       showToast('Klonowanie głosu wymaga połączenia z internetem. Połącz się z internetem i spróbuj ponownie.', 'ERROR');
@@ -93,12 +94,15 @@ export default function CloneScreen({ navigation }) {
       return;
     }
     
-    // Show recording modal and start recording
+    // Show recording modal with instructions first (actual recording starts on button press)
     setIsModalVisible(true);
-    
+  };
+  
+  // Start recording (called after instructions and countdown)
+  const handleStartRecording = async () => {
     // Pass handleStopRecording as the callback for auto-stop
     const success = await startRecording((audioUri) => {
-      // This function will be called automatically when recording stops after 30 seconds
+      // This function will be called automatically when recording stops after 60 seconds
       processAudioForCloning(audioUri);
     });
     
@@ -264,7 +268,7 @@ export default function CloneScreen({ navigation }) {
                   styles.recordButton,
                   !isOnline && styles.disabledButton
                 ]}
-                onPress={handleStartRecording}
+                onPress={handleShowRecordingModal}
                 activeOpacity={0.8}
                 disabled={!isOnline}
               >
@@ -311,6 +315,7 @@ export default function CloneScreen({ navigation }) {
         }
         onCancel={handleCancelRecording}
         formatDuration={formatDuration}
+        onStartRecording={handleStartRecording}
       />
       
       {/* Confirmation Modal */}
