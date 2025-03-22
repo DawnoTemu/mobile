@@ -30,10 +30,10 @@ export default function RecordingModal({
   // Auto-scroll animation for the text
   useEffect(() => {
     if (visible && isRecording) {
-      // Start automatic scrolling animation - much slower now
+      // Start automatic scrolling animation - slower to match 60-second recording
       Animated.timing(scrollY, {
         toValue: -1600, // Less scrolling distance to keep text visible
-        duration: 140000, // 3 minutes - very slow scrolling
+        duration: 190000, // Increased duration for slower scrolling (about 3.3 minutes)
         easing: Easing.linear,
         useNativeDriver: true,
       }).start();
@@ -221,7 +221,7 @@ const styles = StyleSheet.create({
   },
   recordingText: {
     fontFamily: 'Quicksand-Regular',
-    fontSize: 16, // Large text size
+    fontSize: 18, // Slightly increased text size for better readability
     lineHeight: 32, // Increased line height
     color: COLORS.text.primary,
     flexWrap: 'wrap', // Ensure text wraps properly

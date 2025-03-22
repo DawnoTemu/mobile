@@ -7,7 +7,7 @@ import { Platform } from 'react-native';
 export default function useAudioRecorder() {
   const [recording, setRecording] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(30); // Start at 30 seconds
+  const [recordingDuration, setRecordingDuration] = useState(60); // Start at 30 seconds
   const [audioUri, setAudioUri] = useState(null);
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [progress, setProgress] = useState(0);
@@ -17,7 +17,6 @@ export default function useAudioRecorder() {
   
   // Add ref to store the auto-stop callback
   const autoStopCallbackRef = useRef(null);
-  
   // Request permissions on mount
   useEffect(() => {
     (async () => {
@@ -42,7 +41,7 @@ export default function useAudioRecorder() {
     
     if (isRecording) {
       // Reset to 30 when recording starts
-      setRecordingDuration(120);
+      setRecordingDuration(recordingDuration);
       setProgress(0);
       
       interval = setInterval(() => {
@@ -69,13 +68,13 @@ export default function useAudioRecorder() {
           }
           
           // Update progress based on remaining time (30 seconds to 0)
-          setProgress(((120 - newDuration) / 120) * 100);
+          setProgress(((recordingDuration - newDuration) / recordingDuration) * 100);
           return newDuration;
         });
       }, 1000);
     } else {
       // Reset to 30 when not recording
-      setRecordingDuration(120);
+      setRecordingDuration(recordingDuration);
     }
     
     return () => {
@@ -147,7 +146,7 @@ export default function useAudioRecorder() {
         await newRecording.startAsync();
         setRecording(newRecording);
         setIsRecording(true);
-        setRecordingDuration(30); // Initialize to 30 seconds
+        setRecordingDuration(60); // Initialize to 30 seconds
         setProgress(0);
         
         return true;
