@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Image,
   Animated,
   Dimensions,
+  SafeAreaView,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
@@ -25,9 +26,9 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
   const [isConfirmLogoutVisible, setIsConfirmLogoutVisible] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   
-  // Animations
-  const slideAnim = useState(new Animated.Value(isVisible ? 0 : width))[0];
-  const fadeAnim = useState(new Animated.Value(isVisible ? 1 : 0))[0];
+  // Animation values
+  const slideAnim = useRef(new Animated.Value(-width)).current; // Use useRef for animation values
+  const fadeAnim = useRef(new Animated.Value(0)).current;
   
   // Get user info
   useEffect(() => {
@@ -43,34 +44,33 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
   
   // Handle animations when visibility changes
   useEffect(() => {
-    if (isVisible) {
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-      ]).start();
+    // Ensure animation value is reset before animating
+    if (!isVisible) {
+      // Reset to starting position when menu is not visible
+      slideAnim.setValue(-width);
+      fadeAnim.setValue(0);
     } else {
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: width,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      // Make sure we start from the left
+      slideAnim.setValue(-width);
+      fadeAnim.setValue(0);
+      
+      // Slide in from left (with a slight delay to ensure reset happens)
+      setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(slideAnim, {
+            toValue: 0, // Slide to visible position (0)
+            duration: 300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ]).start();
+      }, 10);
     }
-  }, [isVisible, slideAnim, fadeAnim]);
+  }, [isVisible, slideAnim, fadeAnim, width]);
   
   // Handle logout
   const handleLogout = async () => {
@@ -90,10 +90,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
         
         // Navigate to login screen
         setTimeout(() => {
-          navigation.reset({
-            index: 0,
-            routes: [{ name: 'Login' }],
-          });
+          navigation.reset('Splash');
         }, 500);
       } else {
         showToast('Wystąpił błąd podczas wylogowywania. Spróbuj ponownie.', 'ERROR');
@@ -106,39 +103,68 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
     }
   };
 
-  if (!isVisible) return null;
+  // Handle close animation with callback
+  const handleClose = () => {
+    // Run the close animation before actually closing
+    Animated.parallel([
+      Animated.timing(slideAnim, {
+        toValue: -width,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      // Call the parent's onClose after animation completes
+      onClose();
+    });
+  };
 
+  // If not visible and not animating out, don't render
+  if (!isVisible) return null;
+  
+  // Rendered component
   return (
     <Modal
       transparent
-      visible={isVisible}
+      visible={true}
       animationType="none"
-      onRequestClose={onClose}
+      onRequestClose={handleClose}
     >
       <View style={styles.container}>
-        {/* Background overlay */}
-        <TouchableOpacity 
-          style={styles.overlay} 
-          activeOpacity={1} 
-          onPress={onClose}
+        {/* Background overlay with blur */}
+        <Animated.View 
+          style={[
+            styles.overlay,
+            { opacity: fadeAnim }
+          ]}
         >
-          <BlurView intensity={20} style={StyleSheet.absoluteFill} />
-        </TouchableOpacity>
+          <TouchableOpacity 
+            style={StyleSheet.absoluteFill} 
+            activeOpacity={1} 
+            onPress={handleClose}
+          >
+            <BlurView intensity={20} style={StyleSheet.absoluteFill} />
+          </TouchableOpacity>
+        </Animated.View>
         
-        {/* Menu panel */}
+        {/* Menu panel sliding from left */}
         <Animated.View 
           style={[
             styles.menuPanel,
             {
               transform: [{ translateX: slideAnim }],
-              opacity: fadeAnim,
             }
           ]}
         >
+          <SafeAreaView style={{ flex: 1 }}>
           {/* Close button */}
           <TouchableOpacity 
             style={styles.closeButton}
-            onPress={onClose}
+            onPress={handleClose}
           >
             <Feather name="x" size={24} color={COLORS.text.secondary} />
           </TouchableOpacity>
@@ -160,7 +186,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
             <TouchableOpacity 
               style={styles.menuItem}
               onPress={() => {
-                onClose();
+                handleClose();
                 // Navigate to account settings screen
                 // navigation.navigate('AccountSettings');
               }}
@@ -172,7 +198,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
             <TouchableOpacity 
               style={styles.menuItem}
               onPress={() => {
-                onClose();
+                handleClose();
                 // Navigate to voice library
                 // navigation.navigate('VoiceLibrary');
               }}
@@ -184,7 +210,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
             <TouchableOpacity 
               style={styles.menuItem}
               onPress={() => {
-                onClose();
+                handleClose();
                 // Navigate to settings
                 // navigation.navigate('Settings');
               }}
@@ -216,6 +242,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
               resizeMode="contain"
             />
           </View>
+          </SafeAreaView>
         </Animated.View>
         
         {/* Confirm Logout Modal */}
@@ -227,6 +254,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
           cancelText="Anuluj"
           onConfirm={handleLogout}
           onCancel={() => setIsConfirmLogoutVisible(false)}
+          isLoading={isLoggingOut}
         />
       </View>
     </Modal>
@@ -244,30 +272,28 @@ const styles = StyleSheet.create({
   menuPanel: {
     position: 'absolute',
     top: 0,
-    right: 0,
+    left: 0,
     width: width * 0.8,
     maxWidth: 320,
     height: '100%',
     backgroundColor: COLORS.white,
-    paddingTop: 40,
     paddingHorizontal: 24,
-    paddingBottom: 40,
     shadowColor: '#000',
-    shadowOffset: { width: -2, height: 0 },
+    shadowOffset: { width: 2, height: 0 },
     shadowOpacity: 0.1,
     shadowRadius: 10,
     elevation: 5,
   },
   closeButton: {
     position: 'absolute',
-    top: 16,
-    right: 16,
+    top: 50, // Increased to account for safe area
+    right: 8,
     padding: 8,
     zIndex: 10,
   },
   userInfoContainer: {
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: 80, // Increased to account for safe area and close button
     marginBottom: 32,
   },
   avatarContainer: {

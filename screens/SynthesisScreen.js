@@ -21,6 +21,7 @@ import { useToast } from '../components/StatusToast';
 import useAudioPlayer from '../hooks/useAudioPlayer';
 import voiceService from '../services/voiceService';
 import { COLORS } from '../styles/colors';
+import AppMenu from '../components/AppMenu';
 
 export default function SynthesisScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -52,6 +53,8 @@ export default function SynthesisScreen({ navigation }) {
   const [isProgressModalVisible, setIsProgressModalVisible] = useState(false);
   const [progressData, setProgressData] = useState({ progress: 0, status: '' });
   const [isOnline, setIsOnline] = useState(true);
+  const [isMenuVisible, setIsMenuVisible] = useState(false);
+  
   
   // Abort controller ref for cancellable operations
   const abortControllerRef = useRef(null);
@@ -463,13 +466,21 @@ export default function SynthesisScreen({ navigation }) {
       {/* Header */}
       <View style={styles.header}>
         {isOnline ? (
-          <TouchableOpacity
+          // <TouchableOpacity
+          //   style={styles.backButton}
+          //   onPress={() => setIsConfirmModalVisible(true)}
+          // >
+          //   <Feather name="chevron-left" size={24} color={COLORS.peach} />
+          //   <Text style={styles.backButtonText}>Reset</Text>
+          // </TouchableOpacity>
+          <TouchableOpacity 
+            // style={{ position: 'absolute', top: 40, right: 20, zIndex: 100 }}
             style={styles.backButton}
-            onPress={() => setIsConfirmModalVisible(true)}
+            onPress={() => setIsMenuVisible(true)}
           >
-            <Feather name="chevron-left" size={24} color={COLORS.peach} />
-            <Text style={styles.backButtonText}>Reset</Text>
+            <Feather name="menu" size={24} color={COLORS.text.primary} />
           </TouchableOpacity>
+        
         ) : (
           <View style={styles.backButton} />
         )}
@@ -556,6 +567,11 @@ export default function SynthesisScreen({ navigation }) {
         status={progressData.status}
         onCancel={handleCancelOperation}
       />
+      <AppMenu 
+          navigation={navigation}
+          isVisible={isMenuVisible}
+          onClose={() => setIsMenuVisible(false)}
+        />
     </View>
   );
 }

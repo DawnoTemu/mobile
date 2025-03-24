@@ -915,6 +915,7 @@ export const getStoryCoverUrl = (storyId) => {
  * @param {AbortSignal} signal - Optional abort signal for cancellation
  * @returns {Promise<Object>} Result with voice ID or error
  */
+// Modified cloneVoice function to include authentication token
 export const cloneVoice = async (audioUri, progressCallback = null, signal = null) => {
   try {
     // First, check if we have an internet connection
@@ -924,6 +925,16 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
         success: false,
         error: 'Nie można sklonować głosu bez połączenia z internetem. Połącz się z internetem i spróbuj ponownie.',
         code: 'OFFLINE'
+      };
+    }
+
+    // Get authentication token - THIS IS THE IMPORTANT FIX
+    const token = await authService.getAccessToken();
+    if (!token) {
+      return {
+        success: false,
+        error: 'Brak autoryzacji. Zaloguj się ponownie.',
+        code: 'AUTH_ERROR'
       };
     }
 
@@ -938,6 +949,9 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
       fieldName: 'file',
       mimeType: 'audio/wav',
       parameters: {},
+      headers: {
+        'Authorization': `Bearer ${token}`  // Add authorization header
+      }
     };
     
     if (progressCallback) {
