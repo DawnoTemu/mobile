@@ -1,0 +1,340 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Modal,
+  Image,
+  Animated,
+  Dimensions,
+} from 'react-native';
+import { BlurView } from 'expo-blur';
+import { Feather } from '@expo/vector-icons';
+import { useToast } from '../components/StatusToast';
+import authService from '../services/authService';
+import { COLORS } from '../styles/colors';
+import ConfirmModal from '../components/Modals/ConfirmModal';
+
+const { width, height } = Dimensions.get('window');
+
+export default function AppMenu({ navigation, isVisible, onClose }) {
+  const { showToast } = useToast();
+  
+  const [user, setUser] = useState(null);
+  const [isConfirmLogoutVisible, setIsConfirmLogoutVisible] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  
+  // Animations
+  const slideAnim = useState(new Animated.Value(isVisible ? 0 : width))[0];
+  const fadeAnim = useState(new Animated.Value(isVisible ? 1 : 0))[0];
+  
+  // Get user info
+  useEffect(() => {
+    const fetchUserInfo = async () => {
+      const userData = await authService.getCurrentUser();
+      setUser(userData);
+    };
+    
+    if (isVisible) {
+      fetchUserInfo();
+    }
+  }, [isVisible]);
+  
+  // Handle animations when visibility changes
+  useEffect(() => {
+    if (isVisible) {
+      Animated.parallel([
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(slideAnim, {
+          toValue: width,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+        Animated.timing(fadeAnim, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [isVisible, slideAnim, fadeAnim]);
+  
+  // Handle logout
+  const handleLogout = async () => {
+    try {
+      setIsLoggingOut(true);
+      
+      const success = await authService.logout();
+      
+      setIsLoggingOut(false);
+      setIsConfirmLogoutVisible(false);
+      
+      if (success) {
+        showToast('Wylogowano pomyślnie', 'SUCCESS');
+        
+        // Close menu
+        onClose();
+        
+        // Navigate to login screen
+        setTimeout(() => {
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'Login' }],
+          });
+        }, 500);
+      } else {
+        showToast('Wystąpił błąd podczas wylogowywania. Spróbuj ponownie.', 'ERROR');
+      }
+    } catch (error) {
+      setIsLoggingOut(false);
+      setIsConfirmLogoutVisible(false);
+      showToast('Wystąpił problem podczas wylogowywania. Spróbuj ponownie.', 'ERROR');
+      console.error('Logout error:', error);
+    }
+  };
+
+  if (!isVisible) return null;
+
+  return (
+    <Modal
+      transparent
+      visible={isVisible}
+      animationType="none"
+      onRequestClose={onClose}
+    >
+      <View style={styles.container}>
+        {/* Background overlay */}
+        <TouchableOpacity 
+          style={styles.overlay} 
+          activeOpacity={1} 
+          onPress={onClose}
+        >
+          <BlurView intensity={20} style={StyleSheet.absoluteFill} />
+        </TouchableOpacity>
+        
+        {/* Menu panel */}
+        <Animated.View 
+          style={[
+            styles.menuPanel,
+            {
+              transform: [{ translateX: slideAnim }],
+              opacity: fadeAnim,
+            }
+          ]}
+        >
+          {/* Close button */}
+          <TouchableOpacity 
+            style={styles.closeButton}
+            onPress={onClose}
+          >
+            <Feather name="x" size={24} color={COLORS.text.secondary} />
+          </TouchableOpacity>
+          
+          {/* User info */}
+          <View style={styles.userInfoContainer}>
+            <View style={styles.avatarContainer}>
+              <Text style={styles.avatarText}>
+                {user?.email ? user.email.charAt(0).toUpperCase() : '?'}
+              </Text>
+            </View>
+            <Text style={styles.userEmail}>{user?.email || 'Użytkownik'}</Text>
+          </View>
+          
+          <View style={styles.separator} />
+          
+          {/* Menu items */}
+          <View style={styles.menuItems}>
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => {
+                onClose();
+                // Navigate to account settings screen
+                // navigation.navigate('AccountSettings');
+              }}
+            >
+              <Feather name="user" size={20} color={COLORS.text.secondary} />
+              <Text style={styles.menuItemText}>Moje konto</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => {
+                onClose();
+                // Navigate to voice library
+                // navigation.navigate('VoiceLibrary');
+              }}
+            >
+              <Feather name="mic" size={20} color={COLORS.text.secondary} />
+              <Text style={styles.menuItemText}>Moje głosy</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => {
+                onClose();
+                // Navigate to settings
+                // navigation.navigate('Settings');
+              }}
+            >
+              <Feather name="settings" size={20} color={COLORS.text.secondary} />
+              <Text style={styles.menuItemText}>Ustawienia</Text>
+            </TouchableOpacity>
+          </View>
+          
+          <View style={styles.separator} />
+          
+          {/* Logout button */}
+          <TouchableOpacity 
+            style={styles.logoutButton}
+            onPress={() => setIsConfirmLogoutVisible(true)}
+          >
+            <Feather name="log-out" size={20} color={COLORS.text.secondary} />
+            <Text style={styles.logoutText}>Wyloguj się</Text>
+          </TouchableOpacity>
+          
+          {/* App version */}
+          <Text style={styles.versionText}>Wersja 1.0.0</Text>
+          
+          {/* Logo */}
+          <View style={styles.logoContainer}>
+            <Image
+              source={require('../assets/images/logo.png')}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+          </View>
+        </Animated.View>
+        
+        {/* Confirm Logout Modal */}
+        <ConfirmModal
+          visible={isConfirmLogoutVisible}
+          title="Potwierdzenie wylogowania"
+          message="Czy na pewno chcesz się wylogować?"
+          confirmText="Wyloguj"
+          cancelText="Anuluj"
+          onConfirm={handleLogout}
+          onCancel={() => setIsConfirmLogoutVisible(false)}
+        />
+      </View>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  menuPanel: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: width * 0.8,
+    maxWidth: 320,
+    height: '100%',
+    backgroundColor: COLORS.white,
+    paddingTop: 40,
+    paddingHorizontal: 24,
+    paddingBottom: 40,
+    shadowColor: '#000',
+    shadowOffset: { width: -2, height: 0 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    padding: 8,
+    zIndex: 10,
+  },
+  userInfoContainer: {
+    alignItems: 'center',
+    marginTop: 24,
+    marginBottom: 32,
+  },
+  avatarContainer: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: COLORS.lavender,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  avatarText: {
+    fontFamily: 'Quicksand-Bold',
+    fontSize: 28,
+    color: COLORS.white,
+  },
+  userEmail: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 16,
+    color: COLORS.text.primary,
+    textAlign: 'center',
+  },
+  separator: {
+    height: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    marginVertical: 16,
+  },
+  menuItems: {
+    marginBottom: 16,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginBottom: 8,
+  },
+  menuItemText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 16,
+    color: COLORS.text.primary,
+    marginLeft: 16,
+  },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginBottom: 32,
+  },
+  logoutText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 16,
+    color: COLORS.text.secondary,
+    marginLeft: 16,
+  },
+  versionText: {
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 12,
+    color: COLORS.text.tertiary,
+    textAlign: 'center',
+    marginTop: 'auto',
+    marginBottom: 16,
+  },
+  logoContainer: {
+    alignItems: 'center',
+  },
+  logo: {
+    width: 40,
+    height: 40,
+  },
+});

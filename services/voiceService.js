@@ -1,26 +1,27 @@
-// Enhanced voiceService.js with seamless offline capabilities
+// Enhanced voiceService.js aligned with the API documentation
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import authService from './authService';
 
 // CONFIGURATION
 // Environment-based URL selection
 const ENV = {
-  DEV: 'http://192.168.1.107:8000',
+  DEV: 'http://Szymons-MacBook-Pro-2:8000',
   STAGING: 'https://staging-story-voice.herokuapp.com',
   PROD: 'https://api.dawnotemu.app'
 };
 
-// Use environment variable or default to development
-const API_BASE_URL = ENV.PROD;
+// Use environment variable or default to production
+const API_BASE_URL = ENV.DEV;
 
 // STORAGE KEYS
 const STORAGE_KEYS = {
   VOICE_ID: 'voice_id',
   PENDING_OPERATIONS: 'voice_service_pending_ops',
   DOWNLOADED_AUDIO: 'voice_service_downloaded_audio',
-  CACHED_STORIES: 'voice_service_cached_stories', // For story caching
+  CACHED_STORIES: 'voice_service_cached_stories',
   LAST_STORIES_FETCH: 'voice_service_last_stories_fetch'
 };
 
@@ -90,8 +91,8 @@ const apiRequest = async (endpoint, options = {}, signal = null) => {
     const timeoutId = controller ? 
       setTimeout(() => controller.abort(), REQUEST_TIMEOUT) : null;
     
-    // Add authentication if available
-    const token = await AsyncStorage.getItem('auth_token');
+    // Add authentication if available using authService
+    const token = await authService.getAccessToken();
     if (token) {
       options.headers = {
         ...options.headers,
@@ -111,6 +112,15 @@ const apiRequest = async (endpoint, options = {}, signal = null) => {
     // Handle different response statuses
     if (response.status === 204) {
       return { success: true };
+    }
+    
+    // For 401 Unauthorized, try to refresh token
+    if (response.status === 401) {
+      const refreshed = await authService.refreshToken();
+      if (refreshed) {
+        // Retry the request with the new token
+        return apiRequest(endpoint, options, signal);
+      }
     }
     
     // For other responses, try to parse JSON
@@ -161,9 +171,13 @@ const apiRequest = async (endpoint, options = {}, signal = null) => {
  */
 const queueOperationIfOffline = async (endpoint, options) => {
   // Only queue certain operations
-  const queueableOperations = ['clone', 'synthesize'];
+  const queueableOperations = ['/voices', '/voices/*/stories/*/audio'];
   
-  const isQueueable = queueableOperations.some(op => endpoint.includes(op));
+  const isQueueable = queueableOperations.some(op => {
+    // Convert wildcard pattern to regex for matching
+    const regex = new RegExp(op.replace(/\*/g, '[^/]+'));
+    return regex.test(endpoint);
+  });
   
   if (!isQueueable) return;
   
@@ -378,7 +392,7 @@ export const checkAudioExists = async (voiceId, storyId) => {
   // First check local storage
   const audioInfo = await getStoredAudioInfo(voiceId, storyId);
   if (audioInfo && audioInfo.localUri) {
-    // Verify file still exists (getStoredAudioInfo already does this but adding for clarity)
+    // Verify file still exists
     const fileInfo = await FileSystem.getInfoAsync(audioInfo.localUri);
     if (fileInfo.exists) {
       return {
@@ -390,19 +404,21 @@ export const checkAudioExists = async (voiceId, storyId) => {
     }
   }
 
-  // If we're online, check the server
+  // If we're online, check the server using the updated endpoint
   const online = await isOnline();
   if (online) {
     try {
-      const result = await apiRequest(`/audio/exists/${voiceId}/${storyId}`);
+      // Use HEAD request to check if audio exists
+      const result = await apiRequest(`/voices/${voiceId}/stories/${storyId}/audio`, {
+        method: 'HEAD'
+      });
       
-      if (result.success) {
-        return {
-          success: true,
-          exists: result.data?.exists || false,
-          fromCache: false
-        };
-      }
+      // If we get a 200 response, the audio exists
+      return {
+        success: true,
+        exists: result.success,
+        fromCache: false
+      };
     } catch (error) {
       console.error('Error checking audio exists on server:', error);
       // Fall through to return false
@@ -448,70 +464,81 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
   }
   
   try {
-    // Start synthesis request
-    const result = await apiRequest('/synthesize', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        voice_id: voiceId,
-        story_id: storyId,
-      }),
+    // Start synthesis request using updated endpoint
+    if (statusCallback) statusCallback('processing', 0.1);
+    
+    const result = await apiRequest(`/voices/${voiceId}/stories/${storyId}/audio`, {
+      method: 'POST'
     });
     
     if (!result.success) {
-      console.warn('Synthesis request failed. Proceeding to poll for audio availability anyway.');
-      // Continue polling even if synthesis request fails - matches web app behavior
-    }
-  } catch (error) {
-    console.warn('Synthesis request error:', error.message);
-    // Continue to polling even if synthesis request throws an error
-  }
-  
-  // Start polling for audio availability
-  if (statusCallback) statusCallback('processing', 0);
-  
-  const audioUrl = `${API_BASE_URL}/audio/url/${voiceId}/${storyId}`;
-  let audioReady = false;
-  let attempts = 0;
-  const maxAttempts = 24; // 2 minutes with 5 second intervals
-  
-  while (!audioReady && attempts < maxAttempts) {
-    if (statusCallback) {
-      statusCallback('processing', attempts / maxAttempts);
+      return result;
     }
     
-    // Wait between polling attempts
+    if (statusCallback) statusCallback('processing', 0.5);
+    
+    // Check if audio is now available
+    const isAvailable = await pollForAudioAvailability(voiceId, storyId, statusCallback);
+    
+    if (!isAvailable) {
+      return {
+        success: false,
+        error: 'Audio generation timed out',
+        code: 'GENERATION_TIMEOUT'
+      };
+    }
+    
+    if (statusCallback) statusCallback('complete', 1);
+    
+    // Return the URL for the generated audio
+    return {
+      success: true,
+      audioUrl: `${API_BASE_URL}/voices/${voiceId}/stories/${storyId}/audio?redirect=true`,
+    };
+  } catch (error) {
+    console.error('Error generating audio:', error);
+    return {
+      success: false,
+      error: error.message || 'Unknown error generating audio',
+      code: 'GENERATION_ERROR'
+    };
+  }
+};
+
+/**
+ * Polls for audio availability
+ * @param {string} voiceId - Voice ID
+ * @param {string} storyId - Story ID
+ * @param {Function} statusCallback - Optional callback for status updates
+ * @returns {Promise<boolean>} Whether audio is available
+ */
+const pollForAudioAvailability = async (voiceId, storyId, statusCallback = null) => {
+  let attempts = 0;
+  const maxAttempts = 24; // 2 minutes with 5-second intervals
+  
+  while (attempts < maxAttempts) {
+    if (statusCallback) {
+      const progress = 0.5 + (attempts / maxAttempts) * 0.3; // Progress from 50% to 80%
+      statusCallback('processing', progress);
+    }
+    
+    // Wait between polls
     await new Promise(resolve => setTimeout(resolve, 5000));
     
     try {
-      // Check if audio is ready with more robust error handling
       const checkResult = await checkAudioExists(voiceId, storyId);
-      audioReady = checkResult.success && checkResult.exists;
+      if (checkResult.success && checkResult.exists) {
+        return true;
+      }
     } catch (error) {
       console.warn(`Poll attempt ${attempts + 1} failed:`, error.message);
-      // Continue polling even if a check fails
     }
     
     attempts++;
   }
   
-  if (!audioReady) {
-    return {
-      success: false,
-      error: 'Audio generation timed out',
-      code: 'GENERATION_TIMEOUT'
-    };
-  }
-  
-  if (statusCallback) statusCallback('complete', 1);
-  
-  return {
-    success: true,
-    audioUrl,
-  };
-}
+  return false;
+};
 
 // AUDIO FILE MANAGEMENT
 
@@ -554,57 +581,62 @@ const storeAudioInfo = async (voiceId, storyId, localUri) => {
  * @param {string} storyId - Story ID
  * @returns {Promise<Object|null>} Audio info or null if not found
  */
-  const getStoredAudioInfo = async (voiceId, storyId) => {
-    try {
-      const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
-      if (!infoString) return null;
-      
-      const audioInfo = JSON.parse(infoString);
-      const storedInfo = audioInfo[voiceId]?.[storyId] || null;
-      
-      // Add file existence verification
-      if (storedInfo && storedInfo.localUri) {
-        // Verify the file still exists
-        const fileInfo = await FileSystem.getInfoAsync(storedInfo.localUri);
-        if (!fileInfo.exists) {
-          // File no longer exists, remove reference from storage
-          console.log(`File no longer exists: ${storedInfo.localUri}, removing reference`);
-          await removeAudioReference(voiceId, storyId);
-          return null;
-        }
+const getStoredAudioInfo = async (voiceId, storyId) => {
+  try {
+    const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
+    if (!infoString) return null;
+    
+    const audioInfo = JSON.parse(infoString);
+    const storedInfo = audioInfo[voiceId]?.[storyId] || null;
+    
+    // Add file existence verification
+    if (storedInfo && storedInfo.localUri) {
+      // Verify the file still exists
+      const fileInfo = await FileSystem.getInfoAsync(storedInfo.localUri);
+      if (!fileInfo.exists) {
+        // File no longer exists, remove reference from storage
+        console.log(`File no longer exists: ${storedInfo.localUri}, removing reference`);
+        await removeAudioReference(voiceId, storyId);
+        return null;
       }
-      
-      return storedInfo;
-    } catch (error) {
-      console.error('Failed to get audio info:', error);
-      return null;
     }
-  };
+    
+    return storedInfo;
+  } catch (error) {
+    console.error('Failed to get audio info:', error);
+    return null;
+  }
+};
 
-  const removeAudioReference = async (voiceId, storyId) => {
-    try {
-      const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
-      if (!infoString) return;
-      
-      const audioInfo = JSON.parse(infoString);
-      if (!audioInfo[voiceId]) return;
-      
-      // Remove reference to the deleted file
-      if (audioInfo[voiceId][storyId]) {
-        delete audioInfo[voiceId][storyId];
-      }
-      
-      // Clean up empty objects if needed
-      if (Object.keys(audioInfo[voiceId]).length === 0) {
-        delete audioInfo[voiceId];
-      }
-      
-      // Save updated info
-      await AsyncStorage.setItem(STORAGE_KEYS.DOWNLOADED_AUDIO, JSON.stringify(audioInfo));
-    } catch (error) {
-      console.error('Failed to remove audio reference:', error);
+/**
+ * Removes reference to an audio file
+ * @param {string} voiceId - Voice ID
+ * @param {string} storyId - Story ID
+ */
+const removeAudioReference = async (voiceId, storyId) => {
+  try {
+    const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
+    if (!infoString) return;
+    
+    const audioInfo = JSON.parse(infoString);
+    if (!audioInfo[voiceId]) return;
+    
+    // Remove reference to the deleted file
+    if (audioInfo[voiceId][storyId]) {
+      delete audioInfo[voiceId][storyId];
     }
-  };
+    
+    // Clean up empty objects if needed
+    if (Object.keys(audioInfo[voiceId]).length === 0) {
+      delete audioInfo[voiceId];
+    }
+    
+    // Save updated info
+    await AsyncStorage.setItem(STORAGE_KEYS.DOWNLOADED_AUDIO, JSON.stringify(audioInfo));
+  } catch (error) {
+    console.error('Failed to remove audio reference:', error);
+  }
+};
 
 /**
  * Gets all stored audio info for a voice
@@ -709,7 +741,7 @@ const clearVoiceAudio = async (voiceId) => {
 
 /**
  * Downloads an audio file with progress tracking
- * @param {string} url - URL to download from (now will be a presigned S3 URL)
+ * @param {string} url - URL to download from
  * @param {string} voiceId - Voice ID (for storage)
  * @param {string} storyId - Story ID (for storage)
  * @param {Function} progressCallback - Optional callback for download progress
@@ -718,7 +750,7 @@ const clearVoiceAudio = async (voiceId) => {
  */
 export const downloadAudio = async (url, voiceId, storyId, progressCallback = null, signal = null) => {
   try {
-    // Check if already downloaded (no changes here)
+    // Check if already downloaded
     const existingInfo = await getStoredAudioInfo(voiceId, storyId);
     if (existingInfo && existingInfo.localUri) {
       // Verify file exists
@@ -732,7 +764,7 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
       }
     }
   
-    // Check if online (no changes here)
+    // Check if online
     const online = await isOnline();
     if (!online) {
       return {
@@ -742,13 +774,11 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
       };
     }
 
-    // Generate unique filename (no changes here)
+    // Generate unique filename
     const fileName = `voice-${voiceId}-story-${storyId}-${Date.now()}.mp3`;
     const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
     
-    // Set up download with progress tracking 
-    // No changes here - Expo's FileSystem.createDownloadResumable works with both
-    // presigned URLs and regular URLs without any changes
+    // Set up download with progress tracking
     const downloadResumable = FileSystem.createDownloadResumable(
       url,
       fileUri,
@@ -761,17 +791,17 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
       }
     );
     
-    // Add abort handler if signal provided (no changes here)
+    // Add abort handler if signal provided
     if (signal) {
       signal.addEventListener('abort', () => {
         downloadResumable.cancelAsync();
       });
     }
     
-    // Start download (no changes here)
+    // Start download
     const { uri } = await downloadResumable.downloadAsync();
     
-    // Store audio info for future reference (no changes here)
+    // Store audio info for future reference
     await storeAudioInfo(voiceId, storyId, uri);
     
     return {
@@ -782,7 +812,7 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
   } catch (error) {
     console.error('Download error:', error);
     
-    // Handle AbortError specifically (no changes here)
+    // Handle AbortError specifically
     if (error.name === 'AbortError') {
       return {
         success: false,
@@ -808,7 +838,7 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
  * @returns {Promise<Object>} Result with local URI or error
  */
 export const getAudio = async (voiceId, storyId, progressCallback = null, signal = null) => {
-  // Check if audio exists locally first (no changes here)
+  // Check if audio exists locally first
   const audioInfo = await getStoredAudioInfo(voiceId, storyId);
   if (audioInfo && audioInfo.localUri) {
     // Verify file exists
@@ -822,7 +852,7 @@ export const getAudio = async (voiceId, storyId, progressCallback = null, signal
     }
   }
 
-  // Check if online (no changes here)
+  // Check if online
   const online = await isOnline();
   if (!online) {
     return {
@@ -835,25 +865,14 @@ export const getAudio = async (voiceId, storyId, progressCallback = null, signal
   // Check if audio exists on server
   const checkResult = await checkAudioExists(voiceId, storyId);
   
-  // If audio exists on server, get a presigned URL and download directly from S3
+  // If audio exists on server, download it
   if (checkResult.success && checkResult.exists) {
-    try {
-      // Get a presigned URL from our new endpoint
-      const presignedResponse = await fetch(`${API_BASE_URL}/audio/url/${voiceId}/${storyId}`);
-      console.log(presignedResponse);
-      const presignedData = await presignedResponse.json();
-      console.log(presignedData);
-      
-      if (presignedResponse.ok && presignedData.url) {
-        // Use the presigned URL to download directly from S3
-        return downloadAudio(presignedData.url, voiceId, storyId, progressCallback, signal);
-      }
-    } catch (error) {
-      console.error('Error getting presigned URL:', error);
-    }
+    // URL for downloading the audio with redirect
+    const audioUrl = `${API_BASE_URL}/voices/${voiceId}/stories/${storyId}/audio?redirect=true`;
+    return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal);
   }
   
-  // If audio doesn't exist, try to generate it (this part won't change much)
+  // If audio doesn't exist, try to generate it
   const generateResult = await generateStoryAudio(
     voiceId, 
     storyId, 
@@ -868,8 +887,7 @@ export const getAudio = async (voiceId, storyId, progressCallback = null, signal
     return generateResult;
   }
   
-  // The generateStoryAudio should now return a presigned URL directly
-  // Download the generated audio using the presigned URL
+  // Download the generated audio
   return downloadAudio(
     generateResult.audioUrl, 
     voiceId, 
@@ -930,9 +948,9 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
       };
     }
     
-    // Upload file using Expo's FileSystem
+    // Upload file using Expo's FileSystem with updated endpoint
     const uploadResult = await FileSystem.uploadAsync(
-      `${API_BASE_URL}/clone`,
+      `${API_BASE_URL}/voices`,
       audioUri,
       uploadOptions
     );
@@ -1010,7 +1028,7 @@ export const deleteVoice = async (voiceId) => {
   // If offline, queue the delete operation for later
   if (!online) {
     try {
-      // Queue the delete operation
+      // Queue the delete operation with updated endpoint
       await queueOperationIfOffline(`/voices/${voiceId}`, {
         method: 'DELETE'
       });
@@ -1031,7 +1049,7 @@ export const deleteVoice = async (voiceId) => {
     }
   }
   
-  // If online, delete from server
+  // If online, delete from server using updated endpoint
   try {
     const result = await apiRequest(`/voices/${voiceId}`, {
       method: 'DELETE'
