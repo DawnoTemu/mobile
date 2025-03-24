@@ -15,8 +15,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useToast } from '../components/StatusToast';
 import authService from '../services/authService';
+import voiceService from '../services/voiceService'; 
 import { COLORS } from '../styles/colors';
-
 export default function LoginScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { showToast } = useToast();
@@ -40,12 +40,20 @@ export default function LoginScreen({ navigation }) {
       // Call login API
       const result = await authService.login(email, password);
       
-      setIsLoading(false);
-      
       if (result.success) {
         showToast('Zalogowano pomyślnie', 'SUCCESS');
-        // Navigate to main app flow
-        navigation.replace('Clone');
+        
+        // Verify if user has a valid voice on the server
+        const voiceResult = await voiceService.verifyVoiceExists();
+        
+        // Navigate to appropriate screen based on voice existence
+        if (voiceResult.exists) {
+          // User has a valid voice, go to Synthesis screen
+          navigation.replace('Synthesis');
+        } else {
+          // User doesn't have a voice, go to Clone screen
+          navigation.replace('Clone');
+        }
       } else {
         let errorMessage = 'Błąd logowania. Spróbuj ponownie.';
         
@@ -62,6 +70,7 @@ export default function LoginScreen({ navigation }) {
         }
         
         showToast(errorMessage, 'ERROR');
+        setIsLoading(false);
       }
     } catch (error) {
       setIsLoading(false);

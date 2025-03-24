@@ -1,8 +1,7 @@
 import React, { useEffect } from 'react';
 import { View, Text, Image, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation } from '@react-navigation/native';
+import voiceService from '../services/voiceService'; 
 import authService from '../services/authService';
 import { COLORS } from '../styles/colors';
 
@@ -23,12 +22,11 @@ export default function SplashScreen({ navigation }) {
         }
         
         // User is logged in, check for voice ID
-        const voiceId = await AsyncStorage.getItem('voice_id');
+        const voiceResult = await voiceService.verifyVoiceExists();
         
         // Navigate to appropriate screen based on voice ID existence
         setTimeout(() => {
-          
-          navigation.replace(voiceId ? 'Synthesis' : 'Clone');
+          navigation.replace(voiceResult.exists ? 'Synthesis' : 'Clone');
         }, 2000);
       } catch (error) {
         console.error('Error in initialization:', error);

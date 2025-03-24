@@ -19,6 +19,7 @@ import ConfirmModal from '../components/Modals/ConfirmModal';
 import { useToast } from '../components/StatusToast';
 import useAudioRecorder from '../hooks/useAudioRecorder';
 import { cloneVoice } from '../services/voiceService';
+import voiceService from '../services/voiceService'; 
 import { COLORS } from '../styles/colors';
 
 export default function CloneScreen({ navigation }) {
@@ -68,11 +69,12 @@ export default function CloneScreen({ navigation }) {
   // Check if user has an existing voice clone
   const checkExistingVoice = async () => {
     try {
-      const voiceId = await AsyncStorage.getItem('voice_id');
-      setHasExistingVoice(!!voiceId);
+      // Use the new verification function
+      const voiceResult = await voiceService.verifyVoiceExists();
+      setHasExistingVoice(voiceResult.exists);
       
       // If user already has a voice clone, navigate to synthesis screen
-      if (voiceId) {
+      if (voiceResult.exists) {
         navigation.replace('Synthesis');
       }
     } catch (error) {

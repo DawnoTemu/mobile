@@ -1006,6 +1006,144 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
 };
 
 /**
+ * Verifies if the user has a valid voice on the server
+ * @returns {Promise<Object>} Result with voice ID if available and valid
+ */
+export const verifyVoiceExists = async () => {
+  try {
+    // First check if we have a voice ID stored locally
+    const voiceId = await AsyncStorage.getItem(STORAGE_KEYS.VOICE_ID);
+    
+    // Check if we're online
+    const online = await isOnline();
+    if (!online) {
+      // If offline, rely on local storage
+      return { 
+        success: true, 
+        exists: !!voiceId,
+        voiceId,
+        verified: false, // Flag indicating we couldn't verify with server
+        message: 'Offline - using cached voice ID'
+      };
+    }
+    
+    // If online, verify voice with server by fetching user's voices
+    const result = await apiRequest('/voices');
+    
+    if (!result.success) {
+      console.log('Failed to verify voice with server:', result.error);
+      // If API call failed but we have a local voice ID, return it with a warning
+      return {
+        success: true,
+        exists: !!voiceId,
+        voiceId,
+        verified: false,
+        message: 'Failed to verify with server, using cached voice ID'
+      };
+    }
+    
+    // Check the voices from server
+    const voices = result.data || [];
+    
+    // If we have no voices on server
+    if (voices.length === 0) {
+      // Clear any existing voice ID in storage
+      if (voiceId) {
+        await AsyncStorage.removeItem(STORAGE_KEYS.VOICE_ID);
+      }
+      
+      return {
+        success: true,
+        exists: false,
+        message: 'No voices found on server'
+      };
+    }
+    
+    // If we have voices on server but no local voice ID, 
+    // store the first voice ID
+    if (!voiceId && voices.length > 0) {
+      // Get the first voice ID (either direct ID or elevenlabs_voice_id)
+      const firstVoiceId = voices[0].elevenlabs_voice_id || voices[0].id;
+      
+      // Store it locally
+      await AsyncStorage.setItem(STORAGE_KEYS.VOICE_ID, firstVoiceId);
+      
+      return {
+        success: true,
+        exists: true,
+        voiceId: firstVoiceId,
+        verified: true,
+        message: 'Found voice on server, stored in local storage'
+      };
+    }
+    
+    // If we have both local ID and server voices, check if local ID exists on server
+    if (voiceId) {
+      const voiceExists = voices.some(voice => 
+        voice.id === voiceId || voice.elevenlabs_voice_id === voiceId
+      );
+      
+      if (voiceExists) {
+        return {
+          success: true,
+          exists: true,
+          voiceId,
+          verified: true,
+          message: 'Voice verified with server'
+        };
+      } else {
+        // Voice doesn't exist on server, replace with first server voice
+        const firstVoiceId = voices[0].elevenlabs_voice_id || voices[0].id;
+        
+        // Update local storage
+        await AsyncStorage.setItem(STORAGE_KEYS.VOICE_ID, firstVoiceId);
+        
+        return {
+          success: true,
+          exists: true,
+          voiceId: firstVoiceId,
+          verified: true,
+          message: 'Local voice ID not found on server, updated with server voice'
+        };
+      }
+    }
+    
+    // This shouldn't be reached, but handle just in case
+    return {
+      success: true,
+      exists: voices.length > 0,
+      voiceId: voices.length > 0 ? (voices[0].elevenlabs_voice_id || voices[0].id) : null,
+      verified: true,
+      message: 'Voice verification completed'
+    };
+  } catch (error) {
+    console.error('Error verifying voice:', error);
+    
+    // Get local voice ID as fallback
+    try {
+      const voiceId = await AsyncStorage.getItem(STORAGE_KEYS.VOICE_ID);
+      
+      return {
+        success: false,
+        exists: !!voiceId,
+        voiceId,
+        error: error.message,
+        code: 'VERIFICATION_ERROR',
+        message: 'Error verifying voice, using cached data as fallback'
+      };
+    } catch (storageError) {
+      return {
+        success: false,
+        exists: false,
+        error: error.message,
+        code: 'VERIFICATION_ERROR',
+        message: 'Error verifying voice and accessing local storage'
+      };
+    }
+  }
+};
+
+/**
  * Deletes a cloned voice
  * @param {string} voiceId - ID of the voice to delete
  * @returns {Promise<Object>} Success or error result
@@ -1095,6 +1233,7 @@ export const deleteVoice = async (voiceId) => {
 // Export default object with all functions
 export default {
   cloneVoice,
+  verifyVoiceExists,
   deleteVoice,
   getStories,
   generateStoryAudio,
