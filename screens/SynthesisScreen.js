@@ -22,6 +22,12 @@ import useAudioPlayer from '../hooks/useAudioPlayer';
 import voiceService from '../services/voiceService';
 import { COLORS } from '../styles/colors';
 import AppMenu from '../components/AppMenu';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
+
+const STORAGE_KEYS = {
+  DOWNLOADED_AUDIO: 'voice_service_downloaded_audio'
+};
 
 export default function SynthesisScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -260,7 +266,7 @@ export default function SynthesisScreen({ navigation }) {
   };
   
   // Get story audio with progress tracking
-  const getStoryAudio = async (story) => {
+  const getStoryAudio = async (story, forceDownload = false) => {
     try {
       // Check if online - if offline and no local audio, show message
       if (!isOnline) {
@@ -278,7 +284,7 @@ export default function SynthesisScreen({ navigation }) {
       // Create abort signal for cancellation
       const signal = createAbortController();
       
-      // Use the combined getAudio function that handles both generation and download
+      // Get current audio (with forceDownload parameter)
       const result = await voiceService.getAudio(
         voiceId,
         story.id,
@@ -294,7 +300,8 @@ export default function SynthesisScreen({ navigation }) {
             status: statusText
           });
         },
-        signal
+        signal,
+        forceDownload  // Pass the forceDownload parameter
       );
       
       // Hide progress modal
@@ -369,7 +376,9 @@ export default function SynthesisScreen({ navigation }) {
       // First make sure audioControlsVisible is set to true before loading audio
       setAudioControlsVisible(true);
       
-      const success = await loadAudio(audioUri, autoPlay);
+      // Pass a callback to handle corrupted files
+      const success = await loadAudio(audioUri, autoPlay, handleCorruptedAudio);
+      
       if (!success) {
         showToast('Nie udało się załadować audio. Spróbuj ponownie.', 'ERROR');
         // If loading failed, hide the controls
@@ -379,6 +388,102 @@ export default function SynthesisScreen({ navigation }) {
       console.error('Error loading audio:', error);
       showToast('Wystąpił problem podczas ładowania audio.', 'ERROR');
       setAudioControlsVisible(false);
+    }
+  };
+
+  // This function handles corrupted audio files
+  const handleCorruptedAudio = async (corruptedUri) => {
+    console.log('Handling corrupted audio file:', corruptedUri);
+    
+    // First hide audio controls and reset audio state
+    await handleResetAudio();
+    
+    // Check which story this corrupted audio belongs to
+    const matchingStory = stories.find(story => 
+      story.localAudioUri === corruptedUri || story.localUri === corruptedUri
+    );
+    
+    if (!matchingStory) {
+      showToast('Plik audio jest uszkodzony. Spróbuj pobrać historię ponownie.', 'ERROR');
+      return;
+    }
+    
+    // Show toast to inform user
+    showToast('Plik audio uszkodzony. Ponowne pobieranie...', 'INFO');
+    
+    try {
+      // Remove the audio reference from storage
+      const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
+      const audioInfo = infoString ? JSON.parse(infoString) : {};
+      
+      // Clean up the reference
+      if (audioInfo[voiceId]) {
+        for (const storyId in audioInfo[voiceId]) {
+          if (audioInfo[voiceId][storyId]?.localUri === corruptedUri) {
+            delete audioInfo[voiceId][storyId];
+          }
+        }
+        
+        await AsyncStorage.setItem(STORAGE_KEYS.DOWNLOADED_AUDIO, JSON.stringify(audioInfo));
+      }
+      
+      // Try to delete the corrupted file
+      try {
+        await FileSystem.deleteAsync(corruptedUri, { idempotent: true });
+      } catch (deleteError) {
+        console.error('Error deleting corrupted file:', deleteError);
+        // Continue even if deletion fails
+      }
+      
+      // Show progress modal
+      setProgressData({ progress: 0, status: 'Ponowne pobieranie audio...' });
+      setIsProgressModalVisible(true);
+      
+      // Get a fresh copy of the audio
+      const signal = createAbortController();
+      
+      const result = await voiceService.getAudio(
+        voiceId,
+        matchingStory.id,
+        (progress) => {
+          setProgressData({
+            progress: progress * 100,
+            status: 'Ponowne pobieranie audio...'
+          });
+        },
+        signal,
+        true // Force fresh download
+      );
+      
+      // Hide progress modal
+      setIsProgressModalVisible(false);
+      
+      if (result.success) {
+        // Load the audio with auto-play
+        setSelectedStory(matchingStory); // Re-set selected story
+        await loadStoryAudio(result.uri, true);
+        
+        // Update story in the list
+        setStories(currentStories =>
+          currentStories.map(s => 
+            s.id === matchingStory.id ? { 
+              ...s, 
+              hasAudio: true, 
+              localUri: result.uri,
+              hasLocalAudio: true,
+              localAudioUri: result.uri
+            } : s
+          )
+        );
+        
+        showToast('Audio ponownie pobrane pomyślnie', 'SUCCESS');
+      } else {
+        handleApiError(result, 'Nie udało się ponownie pobrać audio:');
+      }
+    } catch (error) {
+      console.error('Error recovering from corrupted audio:', error);
+      showToast('Nie udało się ponownie pobrać audio. Spróbuj ponownie.', 'ERROR');
+      setIsProgressModalVisible(false);
     }
   };
 

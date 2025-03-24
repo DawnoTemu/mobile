@@ -35,7 +35,7 @@ export default function useAudioPlayer() {
   };
   
   // Load an audio file
-  const loadAudio = async (uri, autoPlay = true) => {
+  const loadAudio = async (uri, autoPlay = true, onCorruptedFile = null) => {
     try {
       setIsLoading(true);
       setError(null);
@@ -53,7 +53,7 @@ export default function useAudioPlayer() {
       });
       
       // Create and load the sound
-      console.log(uri);
+      console.log('Loading audio from:', uri);
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri },
         { shouldPlay: autoPlay },
@@ -66,7 +66,21 @@ export default function useAudioPlayer() {
       return true;
     } catch (error) {
       console.error('Error loading audio:', error);
-      setError('Failed to load audio file');
+      
+      // Check for corruption errors (AVFoundationErrorDomain error -11849)
+      const isCorrupted = error.message && (
+        error.message.includes('damaged') || 
+        error.message.includes('AVFoundationErrorDomain') ||
+        error.message.includes('-11849')
+      );
+      
+      if (isCorrupted && onCorruptedFile) {
+        // Call the corruption handler with the URI
+        onCorruptedFile(uri);
+      } else {
+        setError('Failed to load audio file');
+      }
+      
       setIsLoading(false);
       return false;
     }
@@ -107,14 +121,6 @@ export default function useAudioPlayer() {
     } catch (error) {
       console.error('Error toggling play/pause:', error);
       setError('Failed to control playback');
-
-      if (audioElement?.src) {
-        try {
-          await loadAudio(audioElement.src);
-        } catch (reloadError) {
-          console.error('Failed to reload audio:', reloadError);
-        }
-      }
     }
   };
   

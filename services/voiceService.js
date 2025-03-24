@@ -845,20 +845,30 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
  * @param {string} storyId - Story ID
  * @param {Function} progressCallback - Optional callback for download progress
  * @param {AbortSignal} signal - Optional abort signal for cancellation
+ * @param {boolean} forceDownload - Whether to force a fresh download
  * @returns {Promise<Object>} Result with local URI or error
  */
-export const getAudio = async (voiceId, storyId, progressCallback = null, signal = null) => {
-  // Check if audio exists locally first
-  const audioInfo = await getStoredAudioInfo(voiceId, storyId);
-  if (audioInfo && audioInfo.localUri) {
-    // Verify file exists
-    const fileInfo = await FileSystem.getInfoAsync(audioInfo.localUri);
-    if (fileInfo.exists) {
-      return {
-        success: true,
-        uri: audioInfo.localUri,
-        fromCache: true
-      };
+export const getAudio = async (
+  voiceId, 
+  storyId, 
+  progressCallback = null, 
+  signal = null,
+  forceDownload = false  // Add forceDownload parameter
+) => {
+  // Skip the local check if force download is requested
+  if (!forceDownload) {
+    // Check if audio exists locally first
+    const audioInfo = await getStoredAudioInfo(voiceId, storyId);
+    if (audioInfo && audioInfo.localUri) {
+      // Verify file exists
+      const fileInfo = await FileSystem.getInfoAsync(audioInfo.localUri);
+      if (fileInfo.exists) {
+        return {
+          success: true,
+          uri: audioInfo.localUri,
+          fromCache: true
+        };
+      }
     }
   }
 
