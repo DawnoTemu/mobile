@@ -2,6 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
+import * as SecureStore from 'expo-secure-store';
 import { router } from 'expo-router'; // For Expo Router navigation
 
 // CONFIGURATION
@@ -170,8 +171,8 @@ export const login = async (email, password) => {
   if (result.success && result.data) {
     // Store tokens and user data
     await Promise.all([
-      AsyncStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, result.data.access_token),
-      AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, result.data.refresh_token),
+      SecureStore.setItemAsync(STORAGE_KEYS.ACCESS_TOKEN, result.data.access_token),
+      SecureStore.setItemAsync(STORAGE_KEYS.REFRESH_TOKEN, result.data.refresh_token),
       AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.data.user))
     ]);
   }
@@ -184,7 +185,7 @@ export const login = async (email, password) => {
  * @returns {Promise<string|null>} Access token or null
  */
 export const getAccessToken = async () => {
-  return AsyncStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+  return SecureStore.getItemAsync(STORAGE_KEYS.ACCESS_TOKEN);
 };
 
 /**
@@ -192,7 +193,7 @@ export const getAccessToken = async () => {
  * @returns {Promise<string|null>} Refresh token or null
  */
 export const getRefreshToken = async () => {
-  return AsyncStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+  return SecureStore.getItemAsync(STORAGE_KEYS.REFRESH_TOKEN);
 };
 
 /**
@@ -226,7 +227,7 @@ export const refreshToken = async () => {
     const data = await response.json();
     
     if (data.access_token) {
-      await AsyncStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
+      await SecureStore.setItemAsync(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
       return true;
     }
     
@@ -244,8 +245,8 @@ export const refreshToken = async () => {
 export const logout = async () => {
   try {
     await Promise.all([
-      AsyncStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN),
-      AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN),
+      SecureStore.deleteItemAsync(STORAGE_KEYS.ACCESS_TOKEN),
+      SecureStore.deleteItemAsync(STORAGE_KEYS.REFRESH_TOKEN),
       AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA),
       AsyncStorage.removeItem('voice_id') // Also remove voice_id
     ]);

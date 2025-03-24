@@ -161,17 +161,22 @@ export default function useAudioPlayer() {
   
   // Unload the current sound
   const unloadAudio = async () => {
-    if (!sound) return;
-    
-    try {
-      await sound.unloadAsync();
-      setSound(null);
-      setDuration(0);
-      setPosition(0);
-      setIsPlaying(false);
-    } catch (error) {
-      console.error('Error unloading audio:', error);
+    if (positionInterval.current) {
+      clearInterval(positionInterval.current);
+      positionInterval.current = null;
     }
+    if (sound) {
+      try {
+        await sound.stopAsync();
+        await sound.unloadAsync();
+        setSound(null);
+      } catch (error) {
+        console.error('Error unloading audio:', error);
+      }
+    }
+    setPosition(0);
+    setDuration(0);
+    setIsPlaying(false);
   };
   
   return {

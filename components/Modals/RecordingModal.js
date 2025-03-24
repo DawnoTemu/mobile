@@ -463,8 +463,8 @@ export default function RecordingModal({
                 </>
               )}
               
-              {/* Start button - only in instructions view */}
-              {recordingState === 'instructions' && (
+              {/* Start button - only in instructions view AND not processing */}
+              {recordingState === 'instructions' && !isProcessing && (
                 <TouchableOpacity
                   style={styles.startButtonFooter}
                   onPress={startCountdown}
@@ -480,7 +480,7 @@ export default function RecordingModal({
                 <TouchableOpacity
                   style={[
                     styles.cancelButton,
-                    recordingState === 'instructions' ? styles.cancelButtonSecondary : {}
+                    recordingState === 'instructions' && !isProcessing ? styles.cancelButtonSecondary : {}
                   ]}
                   onPress={onCancel}
                   activeOpacity={0.7}

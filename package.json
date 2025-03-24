@@ -51,7 +51,8 @@
     "expo-file-system": "~18.0.11",
     "@react-native-community/netinfo": "11.4.1",
     "lottie-react-native": "7.1.0",
-    "expo-updates": "~0.27.1"
+    "expo-updates": "~0.27.1",
+    "expo-secure-store": "~14.0.1"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
