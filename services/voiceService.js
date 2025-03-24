@@ -471,15 +471,16 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
       method: 'POST'
     });
     
-    if (!result.success) {
-      return result;
+    // Continue polling even if initial request timed out but likely started processing
+    if (!result.success && result.code !== 'TIMEOUT') {
+      return result;  // Only return for non-timeout errors
     }
     
     if (statusCallback) statusCallback('processing', 0.5);
-    
-    // Check if audio is now available
+        
+    // Always attempt to poll, even after a timeout
     const isAvailable = await pollForAudioAvailability(voiceId, storyId, statusCallback);
-    
+
     if (!isAvailable) {
       return {
         success: false,
@@ -748,7 +749,7 @@ const clearVoiceAudio = async (voiceId) => {
  * @param {AbortSignal} signal - Optional abort signal for cancellation
  * @returns {Promise<Object>} Result with local URI or error
  */
-export const downloadAudio = async (url, voiceId, storyId, progressCallback = null, signal = null) => {
+export const downloadAudio = async (url, voiceId, storyId, progressCallback = null, signal = null, ) => {
   try {
     // Check if already downloaded
     const existingInfo = await getStoredAudioInfo(voiceId, storyId);
@@ -778,11 +779,20 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
     const fileName = `voice-${voiceId}-story-${storyId}-${Date.now()}.mp3`;
     const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
     
-    // Set up download with progress tracking
+    // Get authentication token if available
+    const token = await authService.getAccessToken();
+    const options = token 
+      ? { 
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        } 
+      : {};
+
     const downloadResumable = FileSystem.createDownloadResumable(
       url,
       fileUri,
-      {},
+      options,
       (downloadProgress) => {
         if (progressCallback) {
           const progress = downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite;
@@ -867,9 +877,17 @@ export const getAudio = async (voiceId, storyId, progressCallback = null, signal
   
   // If audio exists on server, download it
   if (checkResult.success && checkResult.exists) {
+    // Get authentication token
+    const token = await authService.getAccessToken();
+    
     // URL for downloading the audio with redirect
     const audioUrl = `${API_BASE_URL}/voices/${voiceId}/stories/${storyId}/audio?redirect=true`;
-    return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal);
+    
+    // Create headers with authorization token
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    
+    // Pass headers to downloadAudio function
+    return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal, headers);
   }
   
   // If audio doesn't exist, try to generate it

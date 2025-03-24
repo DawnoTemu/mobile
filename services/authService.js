@@ -253,7 +253,7 @@ export const logout = async () => {
     // Use Expo Router navigation if available, otherwise return true and handle navigation in components
     if (typeof router !== 'undefined' && router.replace) {
       // Navigate to login screen using Expo Router
-      router.replace("login");
+      router.replace('/');
     }
     
     return true;

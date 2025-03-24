@@ -16,6 +16,7 @@ import { useToast } from '../components/StatusToast';
 import authService from '../services/authService';
 import { COLORS } from '../styles/colors';
 import ConfirmModal from '../components/Modals/ConfirmModal';
+import { router } from 'expo-router'; 
 
 const { width, height } = Dimensions.get('window');
 
@@ -88,10 +89,10 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
         // Close menu
         onClose();
         
-        // Navigate to login screen
-        setTimeout(() => {
-          navigation.reset('Splash');
-        }, 500);
+        // // Navigate to login screen
+        // setTimeout(() => {
+        //   router.replace('/')
+        // }, 500);
       } else {
         showToast('Wystąpił błąd podczas wylogowywania. Spróbuj ponownie.', 'ERROR');
       }
