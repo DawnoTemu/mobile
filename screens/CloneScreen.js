@@ -158,7 +158,7 @@ export default function CloneScreen({ navigation }) {
       }
       
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['audio/mpeg', 'audio/wav'],
+        type: ['audio/mpeg', 'audio/wav', 'audio/x-m4a', 'audio/m4a'],
         copyToCacheDirectory: true,
       });
       

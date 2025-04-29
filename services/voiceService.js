@@ -38,7 +38,7 @@ const CACHE_EXPIRATION = 24 * 60 * 60 * 1000;
  * @param {string} fileName - Optional filename (default: 'audio.wav')
  * @returns {Promise<FormData>} FormData object ready for upload
  */
-const createFormData = async (audioUri, fileName = 'audio.wav') => {
+const createFormData = async (audioUri, fileName = null) => {
   const formData = new FormData();
   
   // Handle different URI formats between iOS and Android
@@ -49,10 +49,28 @@ const createFormData = async (audioUri, fileName = 'audio.wav') => {
   // Get file info to determine size
   const fileInfo = await FileSystem.getInfoAsync(audioUri);
   
+  // Extract file name from URI if not provided
+  if (!fileName) {
+    fileName = audioUri.split('/').pop();
+  }
+  
+  // Extract file extension
+  const fileExtension = fileName.split('.').pop().toLowerCase();
+  
+  // Map file extensions to MIME types
+  const mimeTypes = {
+    'mp3': 'audio/mpeg',
+    'wav': 'audio/wav',
+    'm4a': 'audio/x-m4a',
+  };
+  
+  // Use the mapped MIME type or default to audio/wav
+  const mimeType = mimeTypes[fileExtension] || 'audio/wav';
+  
   formData.append('file', {
     uri: fileUri,
     name: fileName,
-    type: fileName.endsWith('.mp3') ? 'audio/mpeg' : 'audio/wav',
+    type: mimeType,
     size: fileInfo.size,
   });
   
