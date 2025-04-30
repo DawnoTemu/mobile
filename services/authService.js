@@ -14,7 +14,7 @@ const ENV = {
   };
   
   // Use environment variable or default to production
-  const API_BASE_URL = ENV.PROD;
+  const API_BASE_URL = ENV.DEV;
   
 // Storage keys
 const STORAGE_KEYS = {

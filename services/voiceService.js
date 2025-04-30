@@ -14,7 +14,7 @@ const ENV = {
 };
 
 // Use environment variable or default to production
-const API_BASE_URL = ENV.PROD;
+const API_BASE_URL = ENV.DEV;
 
 // STORAGE KEYS
 const STORAGE_KEYS = {
@@ -961,7 +961,6 @@ export const getStoryCoverUrl = (storyId) => {
  * @param {AbortSignal} signal - Optional abort signal for cancellation
  * @returns {Promise<Object>} Result with voice ID or error
  */
-// Modified cloneVoice function to include authentication token
 export const cloneVoice = async (audioUri, progressCallback = null, signal = null) => {
   try {
     // First, check if we have an internet connection
@@ -974,7 +973,7 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
       };
     }
 
-    // Get authentication token - THIS IS THE IMPORTANT FIX
+    // Get authentication token
     const token = await authService.getAccessToken();
     if (!token) {
       return {
@@ -996,41 +995,61 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
       mimeType: 'audio/wav',
       parameters: {},
       headers: {
-        'Authorization': `Bearer ${token}`  // Add authorization header
+        'Authorization': `Bearer ${token}`
       }
     };
     
     if (progressCallback) {
       uploadOptions.progressInterval = 100;
       uploadOptions.progressCallback = ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
-        const progress = totalBytesWritten / totalBytesExpectedToWrite;
+        // Only use 10% of the progress for the upload
+        const progress = (totalBytesWritten / totalBytesExpectedToWrite) * 0.1;
         progressCallback(progress);
       };
     }
     
-    // Upload file using Expo's FileSystem with updated endpoint
+    // Upload file using Expo's FileSystem
     const uploadResult = await FileSystem.uploadAsync(
       `${API_BASE_URL}/voices`,
       audioUri,
       uploadOptions
     );
     
-    if (uploadResult.status !== 200) {
+    if (uploadResult.status !== 200 && uploadResult.status !== 202) {
       throw new Error(uploadResult.body || 'Upload failed');
     }
     
     // Parse response
     const responseData = JSON.parse(uploadResult.body);
     
-    // Store voice ID for later use
-    if (responseData.voice_id) {
-      await setCurrentVoice(responseData.voice_id);
+    // Check if we received a voice ID (database ID) - needed for polling
+    if (!responseData.id) {
+      return {
+        success: false,
+        error: 'No voice ID received from server',
+        code: 'INVALID_RESPONSE'
+      };
     }
     
-    return {
-      success: true,
-      voiceId: responseData.voice_id,
-    };
+    // Start polling for voice completion
+    const pollResult = await pollForVoiceCompletion(
+      responseData.id, 
+      progressCallback
+    );
+    
+    // If polling was successful, store the voice ID
+    if (pollResult.success && pollResult.voiceId) {
+      await setCurrentVoice(pollResult.voiceId);
+      
+      return {
+        success: true,
+        voiceId: pollResult.voiceId,
+        name: pollResult.name || responseData.name
+      };
+    } else {
+      // If polling failed, return the error
+      return pollResult;
+    }
   } catch (error) {
     console.error('Voice cloning error:', error);
     
@@ -1274,6 +1293,71 @@ export const deleteVoice = async (voiceId) => {
       code: 'SERVER_DELETE_FAILED'
     };
   }
+};
+
+/**
+ * Polls for voice cloning completion
+ * @param {string} voiceId - Database ID of the voice
+ * @param {Function} statusCallback - Optional callback for status updates
+ * @returns {Promise<boolean>} Whether voice cloning completed successfully
+ */
+const pollForVoiceCompletion = async (voiceId, statusCallback = null) => {
+  let attempts = 0;
+  const maxAttempts = 36; // 3 minutes with 5-second intervals
+  
+  while (attempts < maxAttempts) {
+    if (statusCallback) {
+      const progress = 0.1 + (attempts / maxAttempts) * 0.8; // Progress from 10% to 90%
+      statusCallback(progress);
+    }
+    
+    // Wait between polls
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    try {
+      // Make a request to get voice status
+      const result = await apiRequest(`/voices/${voiceId}`, {
+        method: 'GET'
+      });
+      
+      if (result.success && result.data) {
+        // Check voice status
+        const status = result.data.status;
+        
+        // If voice is ready, return success
+        if (status === 'ready') {
+          return {
+            success: true,
+            voiceId: result.data.elevenlabs_voice_id,
+            name: result.data.name
+          };
+        }
+        
+        // If voice has error status, return failure
+        if (status === 'error') {
+          return {
+            success: false,
+            error: 'Voice cloning failed on server',
+            code: 'CLONE_ERROR'
+          };
+        }
+        
+        // Otherwise, continue polling
+      }
+    } catch (error) {
+      console.warn(`Poll attempt ${attempts + 1} failed:`, error.message);
+      // Continue polling despite errors
+    }
+    
+    attempts++;
+  }
+  
+  // If we've reached max attempts, return timeout error
+  return {
+    success: false,
+    error: 'Voice cloning timed out',
+    code: 'CLONE_TIMEOUT'
+  };
 };
 
 // Export default object with all functions

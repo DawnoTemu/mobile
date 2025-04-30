@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -32,6 +32,10 @@ export default function CloneScreen({ navigation }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [hasExistingVoice, setHasExistingVoice] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
+  const [progressData, setProgressData] = useState({ progress: 0, status: '' });
+  
+  // Reference for handling abort operations
+  const abortControllerRef = useRef(null);
   
   // Audio recorder hook
   const {
@@ -49,6 +53,13 @@ export default function CloneScreen({ navigation }) {
   useEffect(() => {
     checkExistingVoice();
     setupNetworkListener();
+    
+    // Cleanup on unmount
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, []);
   
   // Set up network status listener
@@ -84,6 +95,9 @@ export default function CloneScreen({ navigation }) {
   
   // Show recording modal flow
   const handleShowRecordingModal = async () => {
+    // Create new abort controller
+    abortControllerRef.current = new AbortController();
+    
     // Check if online
     if (!isOnline) {
       showToast('Klonowanie głosu wymaga połączenia z internetem. Połącz się z internetem i spróbuj ponownie.', 'ERROR');
@@ -95,6 +109,9 @@ export default function CloneScreen({ navigation }) {
       setIsConfirmModalVisible(true);
       return;
     }
+    
+    // Reset progress data
+    setProgressData({ progress: 0, status: '' });
     
     // Show recording modal with instructions first (actual recording starts on button press)
     setIsModalVisible(true);
@@ -129,11 +146,24 @@ export default function CloneScreen({ navigation }) {
     }
     
     if (isProcessing) {
-      // Consider adding logic to cancel in-progress API calls
+      // Cancel any in-progress API calls
+      handleCancelCloning();
     }
     
     setIsModalVisible(false);
     setIsProcessing(false);
+  };
+  
+  // Cancel cloning process
+  const handleCancelCloning = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
+    setIsProcessing(false);
+    setIsModalVisible(false);
+    showToast('Klonowanie głosu anulowane', 'INFO');
   };
   
   // Handle re-record from review state
@@ -145,6 +175,9 @@ export default function CloneScreen({ navigation }) {
   // Handle audio file upload
   const handleFileUpload = async () => {
     try {
+      // Create new abort controller
+      abortControllerRef.current = new AbortController();
+      
       // Check if online
       if (!isOnline) {
         showToast('Klonowanie głosu wymaga połączenia z internetem. Połącz się z internetem i spróbuj ponownie.', 'ERROR');
@@ -188,8 +221,36 @@ export default function CloneScreen({ navigation }) {
       // Switch to processing state
       setIsProcessing(true);
       
-      // API call to clone voice
-      const result = await cloneVoice(uri);
+      // Set initial progress and status message
+      setProgressData({
+        progress: 0,
+        status: 'Rozpoczynanie klonowania głosu...'
+      });
+      
+      // API call to clone voice with progress callback
+      const result = await cloneVoice(
+        uri,
+        (progress) => {
+          // Update progress state
+          let statusText = 'Przetwarzanie głosu...';
+          
+          if (progress < 0.1) {
+            statusText = 'Wysyłanie nagrania...';
+          } else if (progress < 0.3) {
+            statusText = 'Analizowanie próbki głosu...';
+          } else if (progress < 0.7) {
+            statusText = 'Trenowanie modelu głosu...';
+          } else {
+            statusText = 'Finalizowanie...';
+          }
+          
+          setProgressData({
+            progress: progress * 100,
+            status: statusText
+          });
+        },
+        abortControllerRef.current?.signal
+      );
       
       // Hide modals at the end
       setIsProcessing(false);
@@ -206,6 +267,8 @@ export default function CloneScreen({ navigation }) {
       } else {
         if (result.code === 'OFFLINE') {
           showToast('Klonowanie głosu wymaga połączenia z internetem. Połącz się z internetem i spróbuj ponownie.', 'ERROR');
+        } else if (result.code === 'CLONE_TIMEOUT') {
+          showToast('Klonowanie głosu trwało zbyt długo. Spróbuj ponownie.', 'ERROR');
         } else {
           showToast(`Błąd klonowania głosu: ${result.error}`, 'ERROR');
         }
@@ -309,11 +372,11 @@ export default function CloneScreen({ navigation }) {
         visible={isModalVisible}
         isRecording={isRecording}
         isProcessing={isProcessing}
-        progress={progress}
+        progress={isProcessing ? progressData.progress : progress}
         recordingDuration={recordingDuration}
         statusText={
           isProcessing
-            ? 'Przetwarzanie głosu...'
+            ? progressData.status
             : isRecording
             ? `Pozostało: ${formatDuration(recordingDuration)}`
             : 'Rozpocznij mówić'

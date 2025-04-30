@@ -242,9 +242,10 @@ export default function RecordingModal({
   // Render different views based on the current state
   const renderContent = () => {
     if (isProcessing) {
-      // Processing View
+      // Processing View with more detailed status
       return (
         <View style={styles.processingContainer}>
+          {/* Animated spinner */}
           <Animated.View
             style={[
               styles.processingIndicator,
@@ -262,8 +263,31 @@ export default function RecordingModal({
           >
             <Feather name="loader" size={32} color={COLORS.peach} />
           </Animated.View>
+          
+          {/* Status text */}
           <Text style={styles.processingText}>
-            Trwa Analizowanie Twojego Głosu...
+            {statusText || 'Trwa Analizowanie Twojego Głosu...'}
+          </Text>
+          
+          {/* Progress bar for more visual feedback */}
+          <View style={styles.progressBarContainer}>
+            <View style={styles.progressBar}>
+              <View 
+                style={[
+                  styles.progressFill, 
+                  { width: `${Math.floor(progress)}%` }
+                ]} 
+              />
+            </View>
+            <Text style={styles.progressPercentage}>
+              {Math.floor(progress)}%
+            </Text>
+          </View>
+          
+          {/* Additional informational text */}
+          <Text style={styles.processingInfoText}>
+            Proces klonowania głosu może potrwać kilka minut.
+            Twój głos jest analizowany i przetwarzany na serwerze.
           </Text>
         </View>
       );
@@ -413,8 +437,8 @@ export default function RecordingModal({
           
           {/* Footer */}
           <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
-            {/* Progress Bar - only show when recording or processing */}
-            {(recordingState === 'recording' || isProcessing) && (
+            {/* Progress Bar - only show when recording (not when processing) */}
+            {recordingState === 'recording' && !isProcessing && (
               <View style={styles.progressBarContainer}>
                 <View style={styles.progressBar}>
                   <View
@@ -424,15 +448,8 @@ export default function RecordingModal({
               </View>
             )}
             
-            {/* Processing State Message */}
-            {isProcessing && (
-              <Text style={styles.statusText}>
-                Przetwarzanie głosu...
-              </Text>
-            )}
-            
             {/* Status Text with Countdown Timer - only show when recording */}
-            {recordingState === 'recording' && (
+            {recordingState === 'recording' && !isProcessing && (
               <Text style={styles.statusText}>
                 {statusText || (isRecording ? `Pozostało: ${formatDuration(recordingDuration)}` : 'Rozpocznij mówić')}
               </Text>
@@ -718,15 +735,46 @@ const styles = StyleSheet.create({
     height: 340, // Match height with scrollingContainer
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: `${COLORS.background}`, // 5% opacity
+    padding: 24,
   },
   processingIndicator: {
     marginBottom: 16,
   },
   processingText: {
     fontFamily: 'Quicksand-Medium',
-    fontSize: 16,
+    fontSize: 18,
+    color: COLORS.text.primary,
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  progressBarContainer: {
+    width: '100%',
+    marginBottom: 16,
+  },
+  progressBar: {
+    height: 8,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: COLORS.peach,
+  },
+  progressPercentage: {
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 12,
     color: COLORS.text.secondary,
+    textAlign: 'center',
+  },
+  processingInfoText: {
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 14,
+    color: COLORS.text.secondary,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginTop: 16,
   },
   footer: {
     padding: 16,
@@ -737,19 +785,6 @@ const styles = StyleSheet.create({
   footerButtonsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-  },
-  progressBarContainer: {
-    marginBottom: 16,
-  },
-  progressBar: {
-    height: 8,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: COLORS.peach,
   },
   statusText: {
     fontFamily: 'Quicksand-Regular',
