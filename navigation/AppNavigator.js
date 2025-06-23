@@ -45,23 +45,20 @@ export default function AppNavigator() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        // Run both the auth check and a 3-second delay concurrently.
-        const [isLoggedIn] = await Promise.all([
-          authService.isLoggedIn(),
-          new Promise(resolve => setTimeout(resolve, 3000))
-        ]);
-        setIsAuthenticated(isLoggedIn);
-      } catch (error) {
-        console.error('Auth check error:', error);
-        setIsAuthenticated(false);
-      } finally {
-        setIsLoading(false);
-      }
+    console.log('Starting minimal auth check...');
+    
+    // Minimal delay then show login - no async operations that could hang
+    const timer = setTimeout(() => {
+      console.log('Timer completed, setting loading false and showing login');
+      setIsAuthenticated(false); // Always show login for now
+      setIsLoading(false);
+    }, 3000);
+    
+    // Cleanup timer
+    return () => {
+      console.log('Cleaning up timer');
+      clearTimeout(timer);
     };
-  
-    checkAuth();
   }, []);
 
   // Common options for all screens
@@ -70,20 +67,21 @@ export default function AppNavigator() {
     cardStyle: { backgroundColor: COLORS.background },
   };
 
-  // Determine initial route based on loading and auth state
-  let initialRouteName = "Splash";
-  if (!isLoading) {
-    initialRouteName = isAuthenticated ? "Synthesis" : "Login";
+  // Show splash screen while loading
+  if (isLoading) {
+    return (
+      <Stack.Navigator screenOptions={screenOptions}>
+        <Stack.Screen name="Splash" component={SplashScreen} />
+      </Stack.Navigator>
+    );
   }
 
+  // Show main app after loading
   return (
     <Stack.Navigator 
-      initialRouteName={initialRouteName}
+      initialRouteName={isAuthenticated ? "Synthesis" : "Login"}
       screenOptions={screenOptions}
     >
-      {/* Splash Screen */}
-      <Stack.Screen name="Splash" component={SplashScreen} />
-
       {/* Auth Screens */}
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="Register" component={RegistrationScreen} />

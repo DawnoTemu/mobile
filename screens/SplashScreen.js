@@ -1,46 +1,12 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { View, Text, Image, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import voiceService from '../services/voiceService'; 
-import authService from '../services/authService';
 import { COLORS } from '../styles/colors';
 
-export default function SplashScreen({ navigation }) {
-  useEffect(() => {
-    // Check authentication and voice state
-    const checkInitialState = async () => {
-      try {
-        // Check if user is logged in
-        const isLoggedIn = await authService.isLoggedIn();
-        
-        if (!isLoggedIn) {
-          // Navigate to Login screen after a delay
-          setTimeout(() => {
-            navigation.replace('Login');
-          }, 2000);
-          return;
-        }
-        
-        // User is logged in, check for voice ID
-        const voiceResult = await voiceService.verifyVoiceExists();
-        
-        // Navigate to appropriate screen based on voice ID existence
-        setTimeout(() => {
-          navigation.replace(voiceResult.exists ? 'Synthesis' : 'Clone');
-        }, 2000);
-      } catch (error) {
-        console.error('Error in initialization:', error);
-        
-        // Navigate to Login if there was an error
-        setTimeout(() => {
-          navigation.replace('Login');
-        }, 2000);
-      }
-    };
-    
-    checkInitialState();
-  }, [navigation]);
-
+export default function SplashScreen() {
+  // This is now just a visual component
+  // AppNavigator handles all the authentication and navigation logic
+  
   return (
     <LinearGradient
       colors={COLORS.gradients.lavenderToMint}

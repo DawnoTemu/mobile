@@ -134,17 +134,25 @@ export default function SynthesisScreen({ navigation }) {
   };
   
   // Handle back button
+  const onBackPress = useCallback(() => {
+    setIsConfirmModalVisible(true);
+    return true; // Prevent default behavior
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
-      const onBackPress = () => {
-        setIsConfirmModalVisible(true);
-        return true; // Prevent default behavior
-      };
-      
       BackHandler.addEventListener('hardwareBackPress', onBackPress);
       
-      return () => BackHandler.removeEventListener('hardwareBackPress', onBackPress);
-    }, [])
+      return () => {
+        // Add safety check to prevent errors during logout
+        try {
+          BackHandler.removeEventListener('hardwareBackPress', onBackPress);
+        } catch (error) {
+          // Silently ignore errors during cleanup (e.g., during logout)
+          console.log('BackHandler cleanup error (ignored):', error);
+        }
+      };
+    }, [onBackPress])
   );
   
   // Fetch stories and voice ID
@@ -210,6 +218,14 @@ export default function SynthesisScreen({ navigation }) {
   
   // Handle API errors with appropriate messages
   const handleApiError = (result, defaultMessage) => {
+    // Handle authentication errors - redirect to login
+    if (result.code === 'AUTH_ERROR') {
+      showToast('Sesja wygasła. Zaloguj się ponownie.', 'ERROR');
+      // Clear any local auth data and redirect to login
+      navigation.replace('Login');
+      return;
+    }
+    
     // If the app is offline, don't show errors for network operations
     if (!isOnline && result.code === 'OFFLINE') {
       return;

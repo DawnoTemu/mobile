@@ -40,9 +40,10 @@ const isOnline = async () => {
  * @param {string} endpoint - API endpoint
  * @param {Object} options - Fetch options
  * @param {AbortSignal} signal - Optional abort signal
+ * @param {boolean} isRetry - Whether this is a retry attempt
  * @returns {Promise<Object>} Response or error
  */
-const apiRequest = async (endpoint, options = {}, signal = null) => {
+const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false) => {
   try {
     // Check if online
     const online = await isOnline();
@@ -85,13 +86,21 @@ const apiRequest = async (endpoint, options = {}, signal = null) => {
     const data = await response.json().catch(() => null);
     
     if (!response.ok) {
-      // Special case for 401 Unauthorized
-      if (response.status === 401) {
-        // Try token refresh if unauthorized
+      // Special case for 401 Unauthorized - only try refresh once
+      if (response.status === 401 && !isRetry) {
+        // Try token refresh if unauthorized and this is not already a retry
         const refreshed = await refreshToken();
         if (refreshed) {
           // Retry the original request with new token
-          return apiRequest(endpoint, options);
+          return apiRequest(endpoint, options, signal, true);
+        } else {
+          // Refresh failed, logout and return error
+          await logout();
+          return { 
+            success: false, 
+            error: 'Authentication failed',
+            code: 'AUTH_ERROR'
+          };
         }
       }
       
@@ -219,8 +228,13 @@ export const refreshToken = async () => {
     });
     
     if (!response.ok) {
-      // If refresh fails, logout
-      await logout();
+      // If refresh fails, clear tokens but don't call logout() to avoid infinite loop
+      await Promise.all([
+        SecureStore.deleteItemAsync(STORAGE_KEYS.ACCESS_TOKEN),
+        SecureStore.deleteItemAsync(STORAGE_KEYS.REFRESH_TOKEN),
+        AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA),
+        AsyncStorage.removeItem('voice_id')
+      ]);
       return false;
     }
     
@@ -234,6 +248,13 @@ export const refreshToken = async () => {
     return false;
   } catch (error) {
     console.error('Token refresh failed:', error);
+    // Clear tokens on error
+    await Promise.all([
+      SecureStore.deleteItemAsync(STORAGE_KEYS.ACCESS_TOKEN),
+      SecureStore.deleteItemAsync(STORAGE_KEYS.REFRESH_TOKEN),
+      AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA),
+      AsyncStorage.removeItem('voice_id')
+    ]);
     return false;
   }
 };
@@ -311,15 +332,23 @@ export const isLoggedIn = async () => {
       return true;
     }
     
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Auth check timeout')), 3000)
+    );
+    
     // Verify token validity by making a request to /auth/me
     // Using existing apiRequest which already handles token refresh on 401
-    const result = await apiRequest('/auth/me');
+    const authCheckPromise = apiRequest('/auth/me');
+    
+    const result = await Promise.race([authCheckPromise, timeoutPromise]);
     
     // If the request was successful, the token is valid
     // If token was expired, apiRequest would have tried to refresh it
     return result.success;
   } catch (error) {
     console.error('Error checking login status:', error);
+    // On any error (timeout, network, etc.), assume not logged in
     return false;
   }
 };
@@ -380,6 +409,7 @@ export default {
   login,
   logout,
   getAccessToken,
+  getRefreshToken,
   refreshToken,
   getCurrentUser,
   updateUserData,
