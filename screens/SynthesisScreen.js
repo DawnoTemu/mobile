@@ -615,9 +615,9 @@ export default function SynthesisScreen({ navigation }) {
             resizeMode="contain"
           />
         </View>
-      </View>
-      
-      {/* Content */}
+              </View>
+        
+        {/* Content */}
       <View style={styles.content}>
         {isLoading ? (
           <View style={styles.loadingContainer}>

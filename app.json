@@ -60,7 +60,15 @@
           "backgroundColor": "#ffffff"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "project": "react-native",
+          "organization": "dawnotemu"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
