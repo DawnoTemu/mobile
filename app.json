@@ -14,26 +14,17 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Aplikacja potrzebuje dostępu do mikrofonu aby nagrać Twój głos",
         "UIBackgroundModes": [
-          "audio",
           "audio"
         ]
       }
     },
     "android": {
-      "package": "com.yourcompany.dawnotemu",
+      "package": "com.dawnotemu.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#D4C1EC"
       },
       "permissions": [
-        "RECORD_AUDIO",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "RECORD_AUDIO",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"
       ]
