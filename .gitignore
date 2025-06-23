@@ -38,3 +38,9 @@ yarn-error.*
 app-example
 
 .env.local
+
+# Sentry
+.sentryclirc
+sentry.properties
+sentry-cli.log
+.sentry/
