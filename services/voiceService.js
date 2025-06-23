@@ -14,7 +14,7 @@ const ENV = {
 };
 
 // Use environment variable or default to production
-const API_BASE_URL = ENV.PROD;
+const API_BASE_URL = ENV.DEV;
 
 // STORAGE KEYS
 const STORAGE_KEYS = {
@@ -273,7 +273,7 @@ export const processOfflineQueue = async () => {
  */
 export const setCurrentVoice = async (voiceId) => {
   try {
-    await AsyncStorage.setItem(STORAGE_KEYS.VOICE_ID, voiceId);
+    await AsyncStorage.setItem(STORAGE_KEYS.VOICE_ID, String(voiceId));
     return { success: true };
   } catch (error) {
     return { 
@@ -1131,7 +1131,7 @@ export const verifyVoiceExists = async () => {
       const firstVoiceId = voices[0].elevenlabs_voice_id || voices[0].id;
       
       // Store it locally
-      await AsyncStorage.setItem(STORAGE_KEYS.VOICE_ID, firstVoiceId);
+      await AsyncStorage.setItem(STORAGE_KEYS.VOICE_ID, String(firstVoiceId));
       
       return {
         success: true,
@@ -1161,7 +1161,7 @@ export const verifyVoiceExists = async () => {
         const firstVoiceId = voices[0].elevenlabs_voice_id || voices[0].id;
         
         // Update local storage
-        await AsyncStorage.setItem(STORAGE_KEYS.VOICE_ID, firstVoiceId);
+        await AsyncStorage.setItem(STORAGE_KEYS.VOICE_ID, String(firstVoiceId));
         
         return {
           success: true,
