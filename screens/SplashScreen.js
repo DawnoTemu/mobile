@@ -1,11 +1,45 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, Image, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '../styles/colors';
+import authService from '../services/authService';
+import { useNavigation } from '@react-navigation/native';
+import voiceService from '../services/voiceService';
 
 export default function SplashScreen({ route }) {
+  const navigation = useNavigation();
   // Extract any status passed from AppNavigator for more dynamic loading
   const status = route?.params?.status || 'loading';
+  
+  useEffect(() => {
+    const checkAuthStatus = async () => {
+      try {
+        const loggedIn = await authService.isLoggedIn();
+        
+        if (loggedIn) {
+          // If logged in, check if a voice is set up
+          const voiceResult = await voiceService.verifyVoiceExists();
+          
+          if (voiceResult.exists) {
+            navigation.replace('Synthesis');
+          } else {
+            navigation.replace('Clone');
+          }
+        } else {
+          navigation.replace('Login');
+        }
+      } catch (error) {
+        console.error('Error checking auth status:', error);
+        // On error, default to Login screen for safety
+        navigation.replace('Login');
+      }
+    };
+    
+    // Give a little delay for splash screen visibility
+    const timer = setTimeout(checkAuthStatus, 1500);
+    
+    return () => clearTimeout(timer);
+  }, [navigation]);
   
   const getStatusText = () => {
     switch (status) {
