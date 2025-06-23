@@ -629,7 +629,10 @@ export default function SynthesisScreen({ navigation }) {
             data={getFilteredStories()}
             renderItem={renderStoryItem}
             keyExtractor={(item) => item.id.toString()}
-            contentContainerStyle={styles.storiesList}
+            contentContainerStyle={[
+              styles.storiesList,
+              { paddingBottom: audioControlsVisible ? 140 : 16 },
+            ]}
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
@@ -763,7 +766,6 @@ const styles = StyleSheet.create({
   },
   storiesList: {
     paddingHorizontal: 16,
-    paddingBottom: 100, // Extra space for audio controls
   },
   emptyContainer: {
     alignItems: 'center',
