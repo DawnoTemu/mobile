@@ -215,6 +215,8 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingBottom: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   logoContainer: {
     alignItems: 'center',
@@ -226,7 +228,9 @@ const styles = StyleSheet.create({
     height: 73,
   },
   formContainer: {
-    marginHorizontal: 24,
+    width: '100%',
+    maxWidth: 400,
+    paddingHorizontal: 24,
   },
   title: {
     fontFamily: 'Comfortaa-Regular',
