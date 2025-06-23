@@ -3,10 +3,21 @@ import { View, Text, Image, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '../styles/colors';
 
-export default function SplashScreen() {
-  // This is now just a visual component
-  // AppNavigator handles all the authentication and navigation logic
+export default function SplashScreen({ route }) {
+  // Extract any status passed from AppNavigator for more dynamic loading
+  const status = route?.params?.status || 'loading';
   
+  const getStatusText = () => {
+    switch (status) {
+      case 'checking':
+        return 'Sprawdzanie autoryzacji...';
+      case 'loading':
+        return 'Ładowanie aplikacji...';
+      default:
+        return 'Ładowanie...';
+    }
+  };
+
   return (
     <LinearGradient
       colors={COLORS.gradients.lavenderToMint}
@@ -25,11 +36,16 @@ export default function SplashScreen() {
           {'\n'}zawsze gdy potrzebujesz
         </Text>
         
-        <ActivityIndicator 
-          size="small" 
-          color="rgba(255, 255, 255, 0.8)" 
-          style={styles.loader} 
-        />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator 
+            size="small" 
+            color="rgba(255, 255, 255, 0.8)" 
+            style={styles.loader} 
+          />
+          <Text style={styles.statusText}>
+            {getStatusText()}
+          </Text>
+        </View>
       </View>
     </LinearGradient>
   );
@@ -62,7 +78,19 @@ const styles = StyleSheet.create({
     marginTop: 16,
     textAlign: 'center',
   },
-  loader: {
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 32,
+  },
+  loader: {
+    // Removed marginTop since it's now applied to the container
+  },
+  statusText: {
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginLeft: 12,
   },
 });

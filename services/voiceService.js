@@ -4,32 +4,7 @@ import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from './authService';
-
-// CONFIGURATION
-// Environment-based URL selection
-const ENV = {
-  DEV: 'http://Szymons-MacBook-Pro-2:8000',
-  STAGING: 'https://staging-story-voice.herokuapp.com',
-  PROD: 'https://api.dawnotemu.app'
-};
-
-// Use environment variable or default to production
-const API_BASE_URL = ENV.PROD;
-
-// STORAGE KEYS
-const STORAGE_KEYS = {
-  VOICE_ID: 'voice_id',
-  PENDING_OPERATIONS: 'voice_service_pending_ops',
-  DOWNLOADED_AUDIO: 'voice_service_downloaded_audio',
-  CACHED_STORIES: 'voice_service_cached_stories',
-  LAST_STORIES_FETCH: 'voice_service_last_stories_fetch'
-};
-
-// Request timeout in milliseconds
-const REQUEST_TIMEOUT = 30000;
-
-// Cache expiration time (24 hours in milliseconds)
-const CACHE_EXPIRATION = 24 * 60 * 60 * 1000; 
+import { API_BASE_URL, REQUEST_TIMEOUT, STORAGE_KEYS, CACHE_EXPIRATION } from './config'; 
 
 // HELPER FUNCTIONS
 /**

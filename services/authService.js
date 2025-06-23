@@ -4,27 +4,10 @@ import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import * as SecureStore from 'expo-secure-store';
 import { router } from 'expo-router'; // For Expo Router navigation
-
-// CONFIGURATION
-// Environment-based URL selection
-const ENV = {
-    DEV: 'http:/Szymons-MacBook-Pro-2:8000',
-    STAGING: 'https://staging-story-voice.herokuapp.com',
-    PROD: 'https://api.dawnotemu.app'
-  };
-  
-  // Use environment variable or default to production
-  const API_BASE_URL = ENV.PROD;
-  
-// Storage keys
-const STORAGE_KEYS = {
-  ACCESS_TOKEN: 'auth_access_token',
-  REFRESH_TOKEN: 'auth_refresh_token',
-  USER_DATA: 'auth_user_data'
-};
+import { API_BASE_URL, REQUEST_TIMEOUT, STORAGE_KEYS } from './config';
 
 // Default request timeout
-const REQUEST_TIMEOUT = 30000;
+const REQUEST_TIMEOUT_LOCAL = REQUEST_TIMEOUT;
 
 /**
  * Check if device is online
@@ -57,7 +40,7 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
     
     // Set timeout if controller exists
     const timeoutId = controller ? 
-      setTimeout(() => controller.abort(), REQUEST_TIMEOUT) : null;
+      setTimeout(() => controller.abort(), REQUEST_TIMEOUT_LOCAL) : null;
     
     // Add authentication if available
     const token = await getAccessToken();
