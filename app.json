@@ -14,8 +14,10 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Aplikacja potrzebuje dostępu do mikrofonu aby nagrać Twój głos",
         "UIBackgroundModes": [
+          "audio",
           "audio"
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
