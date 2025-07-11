@@ -2,7 +2,7 @@
   "expo": {
     "name": "DawnoTemu",
     "slug": "dawnotemu",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "dawnotemu",
@@ -75,7 +75,7 @@
       }
     },
     "owner": "szymonpaluch",
-    "runtimeVersion": "1.0.1",
+    "runtimeVersion": "1.0.2",
     "updates": {
       "url": "https://u.expo.dev/9e719385-ec85-4354-a7dd-c1e4d8b3e35b"
     }
