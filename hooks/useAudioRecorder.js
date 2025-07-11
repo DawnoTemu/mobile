@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
-import * as Permissions from 'expo-permissions';
 import { Platform } from 'react-native';
 
 export default function useAudioRecorder() {

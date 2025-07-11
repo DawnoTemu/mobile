@@ -61,7 +61,8 @@
           "project": "react-native",
           "organization": "dawnotemu"
         }
-      ]
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true
@@ -72,9 +73,7 @@
       }
     },
     "owner": "szymonpaluch",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.0",
     "updates": {
       "url": "https://u.expo.dev/9e719385-ec85-4354-a7dd-c1e4d8b3e35b"
     }
