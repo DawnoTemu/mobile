@@ -61,5 +61,10 @@
     "jest-expo": "~53.0.9",
     "react-test-renderer": "19.0.0-rc-6230622a1a-20240610",
     "typescript": "~5.8.3"
+  },
+  "overrides": {
+    "react": "19.0.0-rc-6230622a1a-20240610",
+    "react-dom": "19.0.0-rc-6230622a1a-20240610",
+    "@types/react": "~19.0.10"
   }
 }
