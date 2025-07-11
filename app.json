@@ -2,22 +2,24 @@
   "expo": {
     "name": "DawnoTemu",
     "slug": "dawnotemu",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "dawnotemu",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.dawnotemu.mobile",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Aplikacja potrzebuje dostępu do mikrofonu aby nagrać Twój głos",
         "UIBackgroundModes": [
-          "audio",
           "audio"
         ],
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIRequiredDeviceCapabilities": [
+          "armv7"
+        ]
       }
     },
     "android": {
@@ -73,7 +75,7 @@
       }
     },
     "owner": "szymonpaluch",
-    "runtimeVersion": "1.0.0",
+    "runtimeVersion": "1.0.1",
     "updates": {
       "url": "https://u.expo.dev/9e719385-ec85-4354-a7dd-c1e4d8b3e35b"
     }
