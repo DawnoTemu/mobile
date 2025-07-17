@@ -465,8 +465,10 @@ export default function RecordingModal({
                     onPress={handleReRecord}
                     activeOpacity={0.7}
                   >
-                    <Feather name="refresh-cw" size={20} color={COLORS.text.secondary} style={{marginRight: 8}} />
-                    <Text style={styles.reRecordButtonText}>Nagraj ponownie</Text>
+                    <View style={styles.buttonContent}>
+                      <Feather name="refresh-cw" size={20} color={COLORS.text.secondary} />
+                      <Text style={styles.reRecordButtonText}>Nagraj ponownie</Text>
+                    </View>
                   </TouchableOpacity>
                   
                   <TouchableOpacity
@@ -474,8 +476,10 @@ export default function RecordingModal({
                     onPress={handleSubmitRecording}
                     activeOpacity={0.7}
                   >
-                    <Feather name="check" size={20} color={COLORS.white} style={{marginRight: 8}} />
-                    <Text style={styles.submitButtonText}>Wyślij nagranie</Text>
+                    <View style={styles.buttonContent}>
+                      <Feather name="check" size={20} color={COLORS.white} />
+                      <Text style={styles.submitButtonText}>Wyślij nagranie</Text>
+                    </View>
                   </TouchableOpacity>
                 </>
               )}
@@ -487,8 +491,10 @@ export default function RecordingModal({
                   onPress={startCountdown}
                   activeOpacity={0.7}
                 >
-                  <Feather name="play-circle" size={20} color={COLORS.white} style={{marginRight: 8}} />
-                  <Text style={styles.startButtonTextFooter}>Rozpocznij nagrywanie</Text>
+                  <View style={styles.buttonContent}>
+                    <Feather name="play-circle" size={20} color={COLORS.white} />
+                    <Text style={styles.startButtonTextFooter}>Rozpocznij nagrywanie</Text>
+                  </View>
                 </TouchableOpacity>
               )}
               
@@ -803,6 +809,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     flex: 1,
+  },
+  buttonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   reRecordButton: {
     backgroundColor: '#F3F4F6',
