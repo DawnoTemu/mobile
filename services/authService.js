@@ -18,6 +18,16 @@ const isOnline = async () => {
   return networkState.isConnected === true;
 };
 
+const mapStatusToCode = (status) => {
+  if (status === 400) return 'BAD_REQUEST';
+  if (status === 401) return 'AUTH_ERROR';
+  if (status === 402) return 'PAYMENT_REQUIRED';
+  if (status === 403) return 'FORBIDDEN';
+  if (status === 404) return 'NOT_FOUND';
+  if (status >= 500) return 'SERVER_ERROR';
+  return 'API_ERROR';
+};
+
 /**
  * Make an API request with timeout
  * @param {string} endpoint - API endpoint
@@ -27,19 +37,27 @@ const isOnline = async () => {
  * @returns {Promise<Object>} Response or error
  */
 const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false) => {
+  let controller = null;
+  let timeoutId = null;
+
   try {
     // Check if online
     const online = await isOnline();
     if (!online) {
-      throw new Error('NO_CONNECTION');
+      return {
+        success: false,
+        status: null,
+        error: 'No internet connection',
+        code: 'OFFLINE'
+      };
     }
 
     // Setup controller for timeout
-    const controller = signal ? null : new AbortController();
+    controller = signal ? null : new AbortController();
     const requestSignal = signal || controller?.signal;
     
     // Set timeout if controller exists
-    const timeoutId = controller ? 
+    timeoutId = controller ? 
       setTimeout(() => controller.abort(), REQUEST_TIMEOUT_LOCAL) : null;
     
     // Add authentication if available
@@ -50,27 +68,24 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
         'Authorization': `Bearer ${token}`
       };
     }
-
     // Make request
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
       signal: requestSignal
     });
 
-    // Clear timeout
-    if (timeoutId) clearTimeout(timeoutId);
-    
-    // Parse response based on status
-    if (response.status === 204) {
-      return { success: true };
-    }
-    
-    // For other responses, try to parse JSON
+    const status = response.status;
     const data = await response.json().catch(() => null);
-    
+
+    if (timeoutId) clearTimeout(timeoutId);
+
+    if (status === 204) {
+      return { success: true, status, data: null };
+    }
+
     if (!response.ok) {
       // Special case for 401 Unauthorized - only try refresh once
-      if (response.status === 401 && !isRetry) {
+      if (status === 401 && !isRetry) {
         // Try token refresh if unauthorized and this is not already a retry
         const refreshed = await refreshToken();
         if (refreshed) {
@@ -81,41 +96,41 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
           await logout();
           return { 
             success: false, 
+            status,
             error: 'Authentication failed',
             code: 'AUTH_ERROR'
           };
         }
       }
-      
-      throw new Error(
-        data?.error || 
-        data?.message || 
-        `Request failed with status ${response.status}`
-      );
+
+      const message = data?.error || data?.message || `Request failed with status ${status}`;
+      return {
+        success: false,
+        status,
+        error: message,
+        code: mapStatusToCode(status),
+        data
+      };
     }
-    
-    return { success: true, data };
+
+    return { success: true, status, data };
   } catch (error) {
+    if (timeoutId) clearTimeout(timeoutId);
+
     // Handle errors
     if (error.name === 'AbortError') {
       return { 
         success: false, 
+        status: null,
         error: 'Request timed out or was cancelled',
         code: 'TIMEOUT'
       };
     }
-    
-    if (error.message === 'NO_CONNECTION') {
-      return { 
-        success: false, 
-        error: 'No internet connection',
-        code: 'OFFLINE'
-      };
-    }
-    
+
     return { 
       success: false, 
       error: error.message || 'Unknown error',
+      status: null,
       code: 'API_ERROR'
     };
   }

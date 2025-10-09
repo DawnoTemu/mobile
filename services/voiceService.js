@@ -61,27 +61,47 @@ const isOnline = async () => {
   return networkState.isConnected === true;
 };
 
+const mapStatusToCode = (status) => {
+  if (status === 400) return 'BAD_REQUEST';
+  if (status === 401) return 'AUTH_ERROR';
+  if (status === 402) return 'PAYMENT_REQUIRED';
+  if (status === 403) return 'FORBIDDEN';
+  if (status === 404) return 'NOT_FOUND';
+  if (status >= 500) return 'SERVER_ERROR';
+  return 'API_ERROR';
+};
+
 /**
  * Performs an API request with timeout, cancellation support, and connection check
  * @param {string} endpoint - API endpoint to call
  * @param {Object} options - Fetch options
  * @param {AbortSignal} signal - Optional AbortSignal for cancellation
+ * @param {boolean} isRetry - Whether this call is a retry after refreshing auth
  * @returns {Promise<Object>} Response data or error
  */
-const apiRequest = async (endpoint, options = {}, signal = null) => {
+const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false) => {
+  let controller = null;
+  let timeoutId = null;
+
   try {
     // Check for internet connection
     const online = await isOnline();
     if (!online) {
-      throw new Error('NO_CONNECTION');
+      await queueOperationIfOffline(endpoint, options);
+      return {
+        success: false,
+        status: null,
+        error: 'No internet connection',
+        code: 'OFFLINE'
+      };
     }
 
     // Create AbortController if not provided
-    const controller = signal ? null : new AbortController();
+    controller = signal ? null : new AbortController();
     const requestSignal = signal || controller?.signal;
     
     // Set timeout if controller exists
-    const timeoutId = controller ? 
+    timeoutId = controller ? 
       setTimeout(() => controller.abort(), REQUEST_TIMEOUT) : null;
     
     // Add authentication if available using authService
@@ -99,40 +119,44 @@ const apiRequest = async (endpoint, options = {}, signal = null) => {
       signal: requestSignal
     });
 
-    // Clear timeout
+    const status = response.status;
+    const data = await response.json().catch(() => null);
+
     if (timeoutId) clearTimeout(timeoutId);
     
-    // Handle different response statuses
-    if (response.status === 204) {
-      return { success: true };
+    if (status === 204) {
+      return { success: true, status, data: null };
     }
     
     // For 401 Unauthorized, try to refresh token
-    if (response.status === 401) {
+    if (status === 401 && !isRetry) {
       const refreshed = await authService.refreshToken();
       if (refreshed) {
         // Retry the request with the new token
-        return apiRequest(endpoint, options, signal);
+        return apiRequest(endpoint, options, signal, true);
       }
     }
     
-    // For other responses, try to parse JSON
-    const data = await response.json().catch(() => null);
-    
     if (!response.ok) {
-      throw new Error(
-        data?.error || 
-        data?.message || 
-        `Request failed with status ${response.status}`
-      );
+      const message = data?.error || data?.message || `Request failed with status ${status}`;
+      return {
+        success: false,
+        status,
+        error: message,
+        code: mapStatusToCode(status),
+        data
+      };
     }
     
-    return { success: true, data };
+    return { success: true, status, data };
   } catch (error) {
+    if (timeoutId) clearTimeout(timeoutId);
+
     // Handle specific error cases
     if (error.name === 'AbortError') {
       return { 
         success: false, 
+        status: null,
         error: 'Request timed out or was cancelled',
         code: 'TIMEOUT'
       };
@@ -145,6 +169,7 @@ const apiRequest = async (endpoint, options = {}, signal = null) => {
       return { 
         success: false, 
         error: 'No internet connection',
+        status: null,
         code: 'OFFLINE'
       };
     }
@@ -152,6 +177,7 @@ const apiRequest = async (endpoint, options = {}, signal = null) => {
     return { 
       success: false, 
       error: error.message || 'Unknown error',
+      status: null,
       code: 'API_ERROR'
     };
   }
