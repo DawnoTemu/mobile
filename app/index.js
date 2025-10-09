@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import AppNavigator from '../navigation/AppNavigator';
 import { ToastProvider } from '../components/StatusToast';
+import { CreditProvider } from '../hooks/useCredits';
 import { useFonts } from 'expo-font';
 import { COLORS } from '../styles/colors';
 import * as Sentry from '@sentry/react-native';
@@ -44,10 +45,12 @@ function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <ToastProvider>
+        <CreditProvider>
+          <ToastProvider>
             <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
             <AppNavigator />
-        </ToastProvider>
+          </ToastProvider>
+        </CreditProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
