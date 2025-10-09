@@ -416,3 +416,5 @@ export default {
   resetPassword,
   resendConfirmationEmail
 };
+
+export { apiRequest };

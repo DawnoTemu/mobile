@@ -37,11 +37,19 @@ export const STORAGE_KEYS = {
   PENDING_OPERATIONS: 'voice_service_pending_ops',
   DOWNLOADED_AUDIO: 'voice_service_downloaded_audio',
   CACHED_STORIES: 'voice_service_cached_stories',
-  LAST_STORIES_FETCH: 'voice_service_last_stories_fetch'
+  LAST_STORIES_FETCH: 'voice_service_last_stories_fetch',
+
+  // Credits
+  CREDITS_CACHE: 'credit_service_cache',
+  CREDIT_ESTIMATES: 'credit_service_story_estimates'
 };
 
 // Cache expiration time (24 hours in milliseconds)
 export const CACHE_EXPIRATION = 24 * 60 * 60 * 1000;
+
+// Credit cache TTLs (in milliseconds)
+export const CREDIT_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+export const CREDIT_ESTIMATE_TTL = 10 * 60 * 1000; // 10 minutes
 
 export default {
   ENV,
@@ -49,5 +57,7 @@ export default {
   API_BASE_URL,
   REQUEST_TIMEOUT,
   STORAGE_KEYS,
-  CACHE_EXPIRATION
+  CACHE_EXPIRATION,
+  CREDIT_CACHE_TTL,
+  CREDIT_ESTIMATE_TTL
 }; 
