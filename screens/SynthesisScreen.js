@@ -380,16 +380,8 @@ export default function SynthesisScreen({ navigation }) {
   );
 
   const handleOpenCredits = useCallback(() => {
-    if (navigation?.navigate) {
-      try {
-        navigation.navigate('Credits');
-        return;
-      } catch (error) {
-        console.warn('Unable to navigate to Credits screen', error);
-      }
-    }
     showToast('Ekran kredytów będzie dostępny wkrótce.', 'INFO');
-  }, [navigation, showToast]);
+  }, [showToast]);
 
   const handleRefreshCreditsSummary = useCallback(async () => {
     if (!refreshCredits) return;
