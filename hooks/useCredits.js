@@ -129,6 +129,7 @@ export const CreditProvider = ({ children }) => {
   const lastFetchRef = useRef(null);
   const mountedRef = useRef(true);
   const inFlightRef = useRef(null);
+  const sessionRef = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -177,10 +178,16 @@ export const CreditProvider = ({ children }) => {
         return inFlightRef.current;
       }
 
+      const sessionId = sessionRef.current;
+
       dispatch({ type: 'LOAD_START' });
 
       const promise = (async () => {
         const result = await fetchCreditsFromService({ forceRefresh });
+        if (sessionRef.current !== sessionId) {
+          return result;
+        }
+
         if (result.success && result.data) {
           handleLoadSuccess(result);
         } else {
@@ -231,6 +238,7 @@ export const CreditProvider = ({ children }) => {
       if (event === 'LOGIN') {
         fetchCredits({ forceRefresh: true });
       } else if (event === 'LOGOUT') {
+        sessionRef.current += 1;
         dispatch({ type: 'RESET' });
         invalidateCreditsCacheService().catch(() => {});
       }

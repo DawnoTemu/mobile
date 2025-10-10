@@ -204,6 +204,70 @@ describe('useCredits', () => {
     });
   });
 
+  test('ignores stale fetch resolution after logout', async () => {
+    let authListener;
+    subscribeAuthEvents.mockImplementation((listener) => {
+      authListener = listener;
+      return jest.fn();
+    });
+
+    invalidateCreditsCache.mockResolvedValue();
+
+    let resolveFetch;
+    getCredits.mockImplementation(() => new Promise((resolve) => {
+      resolveFetch = resolve;
+    }));
+
+    let capturedState;
+
+    const TestComponent = () => {
+      capturedState = useCredits();
+      return null;
+    };
+
+    let renderer;
+    await act(async () => {
+      renderer = create(
+        <CreditProvider>
+          <TestComponent />
+        </CreditProvider>
+      );
+      await Promise.resolve();
+    });
+
+    expect(typeof resolveFetch).toBe('function');
+
+    await act(async () => {
+      authListener('LOGOUT');
+      await flushMicrotasks();
+    });
+
+    await act(async () => {
+      resolveFetch({
+        success: true,
+        data: {
+          balance: 99,
+          unitLabel: 'Story Points',
+          unitSize: 1000,
+          lots: [],
+          recentTransactions: [],
+          fetchedAt: Date.now()
+        },
+        fromCache: false,
+        stale: false,
+        cachedAt: Date.now()
+      });
+      await flushMicrotasks();
+    });
+
+    expect(capturedState.balance).toBe(0);
+    expect(capturedState.pendingAdjustments).toEqual({});
+
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+
   test('applyDebitOptimistic updates balance and rollback restores it', async () => {
     const payload = {
       balance: 10,
