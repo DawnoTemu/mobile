@@ -405,7 +405,9 @@ export default function SynthesisScreen({ navigation }) {
 
     const needsGeneration = !story.localAudioUri && !(story.hasAudio && story.localUri);
 
-    if (needsGeneration && fetchCreditsForStory) {
+    const creditStateReady = !creditsLoading && !creditsInitializing && !creditsError;
+
+    if (needsGeneration && fetchCreditsForStory && creditStateReady) {
       const creditInfo = await fetchCreditsForStory(story.id);
       const required = creditInfo?.requiredCredits;
       if (typeof required === 'number' && balance < required) {
