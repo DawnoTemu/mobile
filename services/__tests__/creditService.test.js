@@ -139,4 +139,22 @@ describe('creditService', () => {
     const stored = JSON.parse(await AsyncStorage.getItem(ESTIMATES_KEY));
     expect(Object.keys(stored)).toHaveLength(2);
   });
+
+  test('getStoryCredits allows zero-cost stories', async () => {
+    apiRequest.mockImplementation((endpoint) => {
+      if (endpoint === '/stories/77/credits') {
+        return Promise.resolve({
+          success: true,
+          status: 200,
+          data: { required_credits: 0 }
+        });
+      }
+      return Promise.reject(new Error('Unexpected endpoint'));
+    });
+
+    const result = await creditService.getStoryCredits(77, { forceRefresh: true });
+
+    expect(result.success).toBe(true);
+    expect(result.data.requiredCredits).toBe(0);
+  });
 });

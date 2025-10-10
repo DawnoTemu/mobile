@@ -16,7 +16,7 @@ jest.mock('../../services/creditService', () => ({
 }));
 
 const creditService = require('../../services/creditService');
-const { getCredits } = creditService;
+const { getCredits, invalidateCreditsCache } = creditService;
 const authService = require('../../services/authService');
 const { subscribeAuthEvents } = authService;
 
@@ -139,6 +139,64 @@ describe('useCredits', () => {
 
     expect(getCredits).toHaveBeenCalledTimes(2);
     expect(capturedState.balance).toBe(8);
+    expect(capturedState.error).toBeNull();
+
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  test('resets state when logout event fires', async () => {
+    let authListener;
+    subscribeAuthEvents.mockImplementation((listener) => {
+      authListener = listener;
+      return jest.fn();
+    });
+
+    invalidateCreditsCache.mockResolvedValue();
+
+    getCredits.mockResolvedValue({
+      success: true,
+      data: {
+        balance: 6,
+        unitLabel: 'Story Points',
+        unitSize: 1000,
+        lots: [],
+        recentTransactions: [],
+        fetchedAt: Date.now()
+      },
+      fromCache: false,
+      stale: false,
+      cachedAt: Date.now()
+    });
+
+    let capturedState;
+
+    const TestComponent = () => {
+      capturedState = useCredits();
+      return null;
+    };
+
+    let renderer;
+    await act(async () => {
+      renderer = create(
+        <CreditProvider>
+          <TestComponent />
+        </CreditProvider>
+      );
+      await flushMicrotasks();
+    });
+
+    expect(capturedState.balance).toBe(6);
+
+    await act(async () => {
+      authListener('LOGOUT');
+      await flushMicrotasks();
+    });
+
+    expect(invalidateCreditsCache).toHaveBeenCalled();
+    expect(capturedState.balance).toBe(0);
+    expect(capturedState.pendingAdjustments).toEqual({});
     expect(capturedState.error).toBeNull();
 
     await act(async () => {

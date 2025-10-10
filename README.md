@@ -12,6 +12,7 @@ DawnoTemu is a React Native mobile application that allows users to create a voi
 - **Audio Player**: Control playback with play/pause, rewind, fast-forward, and seek functionality
 - **Offline Support**: Queue operations when offline and process them when back online
 - **Caching**: Store generated audio files locally for quick access
+- **Story Points Credits**: Track balances, see per-story costs, and prevent synthesis when funds are low
 
 ## Project Structure
 
@@ -149,6 +150,10 @@ The app queues operations when offline and processes them when connectivity is r
 - Voice cloning operations
 - Story generation requests 
 - Download operations
+
+### Credits QA & Testing
+
+Refer to [docs/mobile-credits-testing.md](docs/mobile-credits-testing.md) for automated test commands and a manual checklist covering Story Points functionality.
 
 ## Troubleshooting
 
