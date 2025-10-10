@@ -35,9 +35,9 @@ const normalizeTransaction = (transaction = {}) => ({
 });
 
 const normalizeStoryCreditsPayload = (payload = {}) => {
-  const raw = Number.isFinite(payload.required_credits) ? payload.required_credits : 1;
+  const raw = Number.isFinite(payload.required_credits) ? payload.required_credits : 0;
   return {
-    requiredCredits: Math.max(1, raw),
+    requiredCredits: Math.max(0, raw),
     fetchedAt: now()
   };
 };
