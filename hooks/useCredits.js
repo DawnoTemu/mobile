@@ -16,7 +16,7 @@ import {
   invalidateStoryCredits as invalidateStoryCreditsService
 } from '../services/creditService';
 import { CREDIT_CACHE_TTL } from '../services/config';
-import { subscribeAuthEvents } from '../services/authService';
+import { subscribeAuthEvents, getAccessToken } from '../services/authService';
 
 const CreditContext = createContext(null);
 
@@ -178,11 +178,27 @@ export const CreditProvider = ({ children }) => {
         return inFlightRef.current;
       }
 
-      const sessionId = sessionRef.current;
-
-      dispatch({ type: 'LOAD_START' });
-
       const promise = (async () => {
+        const token = await getAccessToken();
+        if (!token) {
+          lastFetchRef.current = Date.now();
+          // skip hitting the API when unauthenticated to avoid logout loops
+          dispatch({
+            type: 'LOAD_ERROR',
+            payload: { error: null, code: 'AUTH_REQUIRED' }
+          });
+          return {
+            success: false,
+            status: null,
+            error: 'Authentication required',
+            code: 'AUTH_REQUIRED'
+          };
+        }
+
+        const sessionId = sessionRef.current;
+
+        dispatch({ type: 'LOAD_START' });
+
         const result = await fetchCreditsFromService({ forceRefresh });
         if (sessionRef.current !== sessionId) {
           return result;

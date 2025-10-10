@@ -9,6 +9,7 @@ import {
   Animated,
   Dimensions,
   SafeAreaView,
+  ActivityIndicator,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
@@ -17,11 +18,32 @@ import authService from '../services/authService';
 import { COLORS } from '../styles/colors';
 import ConfirmModal from '../components/Modals/ConfirmModal';
 import { router } from 'expo-router'; 
+import { useCredits } from '../hooks/useCredits';
+import * as Linking from 'expo-linking';
 
 const { width, height } = Dimensions.get('window');
 
 export default function AppMenu({ navigation, isVisible, onClose }) {
   const { showToast } = useToast();
+  const creditState = useCredits() || {};
+  const {
+    balance = 0,
+    unitLabel = 'Punkty Magii',
+    loading: creditsLoading = false,
+    initializing: creditsInitializing = false,
+    error: creditsError = null,
+    stale: creditsStale = false
+  } = creditState;
+  const showCreditsLoading = creditsLoading || creditsInitializing;
+  const displayUnitLabel =
+    typeof unitLabel === 'string' && unitLabel.toLowerCase().includes('punkty')
+      ? 'Punkty Magii'
+      : 'Punkty Magii';
+  const handleOpenCredits = () => {
+    Linking.openURL('https://www.dawnotemu.app/cennik').catch(() => {
+      showToast('Nie udało się otworzyć strony. Spróbuj ponownie.', 'ERROR');
+    });
+  };
   
   const [user, setUser] = useState(null);
   const [isConfirmLogoutVisible, setIsConfirmLogoutVisible] = useState(false);
@@ -161,88 +183,123 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
             }
           ]}
         >
-          <SafeAreaView style={{ flex: 1 }}>
-          {/* Close button */}
-          <TouchableOpacity 
-            style={styles.closeButton}
-            onPress={handleClose}
-          >
-            <Feather name="x" size={24} color={COLORS.text.secondary} />
-          </TouchableOpacity>
-          
-          {/* User info */}
-          <View style={styles.userInfoContainer}>
-            <View style={styles.avatarContainer}>
-              <Text style={styles.avatarText}>
-                {user?.email ? user.email.charAt(0).toUpperCase() : '?'}
-              </Text>
+          <SafeAreaView style={styles.safeArea}>
+            {/* Close button */}
+            <TouchableOpacity 
+              style={styles.closeButton}
+              onPress={handleClose}
+            >
+              <Feather name="x" size={24} color={COLORS.text.secondary} />
+            </TouchableOpacity>
+            
+            <View style={styles.topContent}>
+              {/* User info */}
+              <View style={styles.userInfoContainer}>
+                <View style={styles.avatarContainer}>
+                  <Text style={styles.avatarText}>
+                    {user?.email ? user.email.charAt(0).toUpperCase() : '?'}
+                  </Text>
+                </View>
+                <Text style={styles.userEmail}>{user?.email || 'Użytkownik'}</Text>
+              </View>
+              
+              <View style={styles.separator} />
+
+              {/* Menu items */}
+              <View style={styles.menuItems}>
+                <TouchableOpacity 
+                  style={styles.menuItem}
+                  onPress={() => {
+                    handleClose();
+                    // navigation.navigate('AccountSettings');
+                  }}
+                >
+                  <Feather name="user" size={20} color={COLORS.text.secondary} />
+                  <Text style={styles.menuItemText}>Moje konto</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={styles.menuItem}
+                  onPress={() => {
+                    handleClose();
+                    // navigation.navigate('VoiceLibrary');
+                  }}
+                >
+                  <Feather name="mic" size={20} color={COLORS.text.secondary} />
+                  <Text style={styles.menuItemText}>Moje głosy</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={styles.menuItem}
+                  onPress={() => {
+                    handleClose();
+                    // navigation.navigate('Settings');
+                  }}
+                >
+                  <Feather name="settings" size={20} color={COLORS.text.secondary} />
+                  <Text style={styles.menuItemText}>Ustawienia</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <Text style={styles.userEmail}>{user?.email || 'Użytkownik'}</Text>
-          </View>
-          
-          <View style={styles.separator} />
-          
-          {/* Menu items */}
-          <View style={styles.menuItems}>
-            <TouchableOpacity 
-              style={styles.menuItem}
-              onPress={() => {
-                handleClose();
-                // Navigate to account settings screen
-                // navigation.navigate('AccountSettings');
-              }}
-            >
-              <Feather name="user" size={20} color={COLORS.text.secondary} />
-              <Text style={styles.menuItemText}>Moje konto</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.menuItem}
-              onPress={() => {
-                handleClose();
-                // Navigate to voice library
-                // navigation.navigate('VoiceLibrary');
-              }}
-            >
-              <Feather name="mic" size={20} color={COLORS.text.secondary} />
-              <Text style={styles.menuItemText}>Moje głosy</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.menuItem}
-              onPress={() => {
-                handleClose();
-                // Navigate to settings
-                // navigation.navigate('Settings');
-              }}
-            >
-              <Feather name="settings" size={20} color={COLORS.text.secondary} />
-              <Text style={styles.menuItemText}>Ustawienia</Text>
-            </TouchableOpacity>
-          </View>
-          
-          <View style={styles.separator} />
-          
-          {/* Logout button */}
-          <TouchableOpacity 
-            style={styles.logoutButton}
-            onPress={() => setIsConfirmLogoutVisible(true)}
-          >
-            <Feather name="log-out" size={20} color={COLORS.text.secondary} />
-            <Text style={styles.logoutText}>Wyloguj się</Text>
-          </TouchableOpacity>
-          
-          {/* App version */}
-          <Text style={styles.versionText}>Wersja 1.0.0</Text>
-          
-          {/* Logo */}
-          <View style={styles.logoContainer}>
-            <Image
-              source={require('../assets/images/logo.png')}
-              style={styles.logo}
-              resizeMode="contain"
-            />
-          </View>
+
+            <View style={styles.bottomContent}>
+              <View style={styles.creditsContainer}>
+                <View style={styles.creditsHeader}>
+                  <Feather name="star" size={20} color={COLORS.lavender} />
+                  {showCreditsLoading ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={COLORS.lavender}
+                      style={styles.creditsLoader}
+                    />
+                  ) : (
+                    <Text style={styles.creditsBalance}>{balance}</Text>
+                  )}
+                  <Text style={styles.creditsUnitInline}>{displayUnitLabel}</Text>
+                </View>
+                {creditsStale && (
+                  <Text style={styles.creditsStatus}>
+                    Dane mogą być nieaktualne. Odświeżymy je wkrótce.
+                  </Text>
+                )}
+                {creditsError?.message && (
+                  <Text style={[styles.creditsStatus, styles.creditsError]}>
+                    {creditsError.message}
+                  </Text>
+                )}
+                <TouchableOpacity
+                  style={styles.creditsDetailButton}
+                  onPress={handleOpenCredits}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.creditsDetailText}>Szczegóły kredytów</Text>
+                  <Feather name="chevron-right" size={16} color={COLORS.lavender} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.separator} />
+              
+              {/* Logout button */}
+              <TouchableOpacity 
+                style={styles.logoutButton}
+                onPress={() => setIsConfirmLogoutVisible(true)}
+              >
+                <Feather name="log-out" size={20} color={COLORS.text.secondary} />
+                <Text style={styles.logoutText}>Wyloguj się</Text>
+              </TouchableOpacity>
+              
+              {/* App version */}
+              <Text style={styles.versionText}>Wersja 1.0.0</Text>
+              
+              {/* Logo */}
+              <View style={styles.logoContainer}>
+                <Image
+                  source={require('../assets/images/logo.png')}
+                  style={styles.logo}
+                  resizeMode="contain"
+                />
+              </View>
+            </View>
           </SafeAreaView>
         </Animated.View>
         
@@ -266,6 +323,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  safeArea: {
+    flex: 1,
+    paddingBottom: 16,
+  },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -285,6 +346,14 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 5,
   },
+  topContent: {
+    flex: 1,
+    paddingTop: 16,
+  },
+  bottomContent: {
+    marginTop: 16,
+    paddingBottom: 16,
+  },
   closeButton: {
     position: 'absolute',
     top: 50, // Increased to account for safe area
@@ -294,7 +363,7 @@ const styles = StyleSheet.create({
   },
   userInfoContainer: {
     alignItems: 'center',
-    marginTop: 80, // Increased to account for safe area and close button
+    marginTop: 64, // Space below close button
     marginBottom: 32,
   },
   avatarContainer: {
@@ -322,6 +391,58 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.05)',
     marginVertical: 16,
   },
+  creditsContainer: {
+    backgroundColor: COLORS.white,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  creditsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  creditsLoader: {
+    marginLeft: 10,
+  },
+  creditsBalance: {
+    fontFamily: 'Quicksand-Bold',
+    fontSize: 22,
+    color: COLORS.text.primary,
+    marginLeft: 10,
+  },
+  creditsUnitInline: {
+    marginLeft: 8,
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 14,
+    color: COLORS.text.secondary,
+  },
+  creditsStatus: {
+    marginTop: 8,
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 12,
+    color: COLORS.text.tertiary,
+  },
+  creditsError: {
+    color: COLORS.error,
+  },
+  creditsDetailButton: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+  },
+  creditsDetailText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 13,
+    color: COLORS.lavender,
+    marginRight: 4,
+  },
   menuItems: {
     marginBottom: 16,
   },
@@ -341,7 +462,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
-    marginBottom: 32,
+    marginTop: 8,
+    marginBottom: 16,
   },
   logoutText: {
     fontFamily: 'Quicksand-Medium',
@@ -354,11 +476,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.text.tertiary,
     textAlign: 'center',
-    marginTop: 'auto',
     marginBottom: 16,
   },
   logoContainer: {
     alignItems: 'center',
+    marginBottom: 8,
   },
   logo: {
     width: 40,

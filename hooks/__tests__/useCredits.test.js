@@ -4,7 +4,8 @@ import { AppState } from 'react-native';
 import { CreditProvider, useCredits, useCreditActions, __TESTING__ } from '../useCredits';
 
 jest.mock('../../services/authService', () => ({
-  subscribeAuthEvents: jest.fn()
+  subscribeAuthEvents: jest.fn(),
+  getAccessToken: jest.fn(() => Promise.resolve('mock-token'))
 }));
 
 jest.mock('../../services/creditService', () => ({

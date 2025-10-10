@@ -46,6 +46,7 @@ my-app/
 
 ## Tech Stack
 
+- **Expo SDK 54** on **React Native 0.81**
 - **React Native**: Cross-platform mobile framework
 - **Expo**: Development platform for React Native
 - **React Navigation**: Navigation library

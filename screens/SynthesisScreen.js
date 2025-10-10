@@ -39,7 +39,6 @@ export default function SynthesisScreen({ navigation }) {
     balance = 0,
     unitLabel = 'Story Points (Punkty Magii)',
     loading: creditsLoading = false,
-    stale: creditsStale = false,
     error: creditsError = null,
     initializing: creditsInitializing = false
   } = creditState || {};
@@ -383,18 +382,6 @@ export default function SynthesisScreen({ navigation }) {
     [fetchStoryCredits, storyCredits]
   );
 
-  const handleOpenCredits = useCallback(() => {
-    showToast('Ekran kredytów będzie dostępny wkrótce.', 'INFO');
-  }, [showToast]);
-
-  const handleRefreshCreditsSummary = useCallback(async () => {
-    if (!refreshCredits) return;
-    const result = await refreshCredits({ force: true });
-    if (!result?.success) {
-      showToast('Nie udało się odświeżyć kredytów.', 'ERROR');
-    }
-  }, [refreshCredits, showToast]);
-  
   // Handle story selection
   const handleStorySelect = async (story) => {
     // Prevent duplicate handling while processing
@@ -763,54 +750,6 @@ export default function SynthesisScreen({ navigation }) {
     return stories.filter(story => story.hasLocalAudio);
   };
 
-  const renderCreditsSummary = () => {
-    const showLoading = creditsLoading || creditsInitializing;
-
-    return (
-      <View style={styles.creditSummary}>
-        <View style={styles.creditSummaryRow}>
-          <Feather name="star" size={18} color={COLORS.lavender} />
-          {showLoading ? (
-            <ActivityIndicator style={styles.creditLoader} size="small" color={COLORS.lavender} />
-          ) : (
-            <Text style={styles.creditBalanceText}>{balance}</Text>
-          )}
-          <Text style={styles.creditUnitText}>{unitLabel}</Text>
-        </View>
-        {creditsStale && (
-          <Text style={styles.creditMetaText}>
-            Dane mogą być nieaktualne. Odśwież kredyty.
-          </Text>
-        )}
-        {creditsError && (
-          <Text style={styles.creditErrorText}>{creditsError.message}</Text>
-        )}
-        <View style={styles.creditActionsRow}>
-          <TouchableOpacity
-            style={[
-              styles.creditActionButton,
-              showLoading && styles.creditActionButtonDisabled
-            ]}
-            onPress={handleRefreshCreditsSummary}
-            disabled={showLoading}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.creditActionText}>
-              {showLoading ? 'Odświeżanie...' : 'Odśwież kredyty'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.creditActionButtonSecondary}
-            onPress={handleOpenCredits}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.creditActionSecondaryText}>Szczegóły kredytów</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-  
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
@@ -858,8 +797,6 @@ export default function SynthesisScreen({ navigation }) {
             data={getFilteredStories()}
             renderItem={renderStoryItem}
             keyExtractor={(item) => item.id.toString()}
-            ListHeaderComponent={renderCreditsSummary}
-            ListHeaderComponentStyle={styles.creditSummaryContainer}
             contentContainerStyle={[
               styles.storiesList,
               { paddingBottom: audioControlsVisible ? 140 : 16 },
@@ -995,88 +932,9 @@ const styles = StyleSheet.create({
     color: COLORS.text.secondary,
     marginTop: 12,
   },
-  creditSummaryContainer: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  creditSummary: {
-    backgroundColor: COLORS.white,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  creditSummaryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  creditLoader: {
-    marginLeft: 8,
-  },
-  creditBalanceText: {
-    fontFamily: 'Quicksand-Bold',
-    fontSize: 20,
-    color: COLORS.text.primary,
-    marginLeft: 8,
-  },
-  creditUnitText: {
-    fontFamily: 'Quicksand-Regular',
-    fontSize: 14,
-    color: COLORS.text.secondary,
-    marginLeft: 8,
-  },
-  creditMetaText: {
-    marginTop: 8,
-    fontFamily: 'Quicksand-Regular',
-    fontSize: 12,
-    color: COLORS.text.tertiary,
-  },
-  creditErrorText: {
-    marginTop: 8,
-    fontFamily: 'Quicksand-Regular',
-    fontSize: 12,
-    color: COLORS.error,
-  },
-  creditActionsRow: {
-    flexDirection: 'row',
-    marginTop: 12,
-  },
-  creditActionButton: {
-    flex: 1,
-    backgroundColor: COLORS.lavender,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  creditActionButtonDisabled: {
-    opacity: 0.6,
-  },
-  creditActionText: {
-    fontFamily: 'Quicksand-Medium',
-    fontSize: 13,
-    color: COLORS.white,
-  },
-  creditActionButtonSecondary: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: COLORS.lavender,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginLeft: 8,
-  },
-  creditActionSecondaryText: {
-    fontFamily: 'Quicksand-Medium',
-    fontSize: 13,
-    color: COLORS.lavender,
-  },
   storiesList: {
     paddingHorizontal: 16,
+    paddingTop: 16,
   },
   emptyContainer: {
     alignItems: 'center',
