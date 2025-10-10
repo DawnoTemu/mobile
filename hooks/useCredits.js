@@ -16,6 +16,7 @@ import {
   invalidateStoryCredits as invalidateStoryCreditsService
 } from '../services/creditService';
 import { CREDIT_CACHE_TTL } from '../services/config';
+import { subscribeAuthEvents } from '../services/authService';
 
 const CreditContext = createContext(null);
 
@@ -111,6 +112,11 @@ const reducer = (state, action) => {
         pendingAdjustments
       };
     }
+    case 'RESET':
+      return {
+        ...initialState,
+        initializing: false
+      };
     default:
       return state;
   }
@@ -219,6 +225,19 @@ export const CreditProvider = ({ children }) => {
       subscription.remove();
     };
   }, [maybeRefresh]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeAuthEvents((event) => {
+      if (event === 'LOGIN') {
+        fetchCredits({ forceRefresh: true });
+      } else if (event === 'LOGOUT') {
+        dispatch({ type: 'RESET' });
+        invalidateCreditsCacheService().catch(() => {});
+      }
+    });
+
+    return unsubscribe;
+  }, [fetchCredits]);
 
   const applyAdjustment = useCallback(
     (delta, { id, metadata } = {}) => {

@@ -9,6 +9,28 @@ import { API_BASE_URL, REQUEST_TIMEOUT, STORAGE_KEYS } from './config';
 // Default request timeout
 const REQUEST_TIMEOUT_LOCAL = REQUEST_TIMEOUT;
 
+const authListeners = new Set();
+
+const notifyAuthEvent = (event, payload) => {
+  authListeners.forEach((listener) => {
+    try {
+      listener(event, payload);
+    } catch (error) {
+      console.error('Auth listener error:', error);
+    }
+  });
+};
+
+export const subscribeAuthEvents = (listener) => {
+  if (typeof listener !== 'function') {
+    return () => {};
+  }
+  authListeners.add(listener);
+  return () => {
+    authListeners.delete(listener);
+  };
+};
+
 /**
  * Check if device is online
  * @returns {Promise<boolean>} Whether device is online
@@ -182,6 +204,8 @@ export const login = async (email, password) => {
       SecureStore.setItemAsync(STORAGE_KEYS.REFRESH_TOKEN, result.data.refresh_token),
       AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(result.data.user))
     ]);
+
+    notifyAuthEvent('LOGIN', { user: result.data.user });
   }
   
   return result;
@@ -275,6 +299,8 @@ export const logout = async () => {
       // Navigate to login screen using Expo Router
       router.replace('/');
     }
+    
+    notifyAuthEvent('LOGOUT');
     
     return true;
   } catch (error) {
@@ -414,7 +440,8 @@ export default {
   isLoggedIn,
   resetPasswordRequest,
   resetPassword,
-  resendConfirmationEmail
+  resendConfirmationEmail,
+  subscribeAuthEvents
 };
 
 export { apiRequest };

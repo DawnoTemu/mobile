@@ -3,6 +3,10 @@ import { act, create } from 'react-test-renderer';
 import { AppState } from 'react-native';
 import { CreditProvider, useCredits, useCreditActions, __TESTING__ } from '../useCredits';
 
+jest.mock('../../services/authService', () => ({
+  subscribeAuthEvents: jest.fn()
+}));
+
 jest.mock('../../services/creditService', () => ({
   getCredits: jest.fn(),
   getStoryCredits: jest.fn(),
@@ -13,6 +17,8 @@ jest.mock('../../services/creditService', () => ({
 
 const creditService = require('../../services/creditService');
 const { getCredits } = creditService;
+const authService = require('../../services/authService');
+const { subscribeAuthEvents } = authService;
 
 const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -21,6 +27,7 @@ describe('useCredits', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    subscribeAuthEvents.mockImplementation(() => () => {});
     addEventListenerSpy = jest.spyOn(AppState, 'addEventListener').mockImplementation(() => ({
       remove: jest.fn()
     }));
@@ -70,6 +77,69 @@ describe('useCredits', () => {
     expect(capturedState.balance).toBe(25);
     expect(capturedState.initializing).toBe(false);
     expect(capturedState.stale).toBe(false);
+
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  test('refreshes credits after login event', async () => {
+    let authListener;
+    subscribeAuthEvents.mockImplementation((listener) => {
+      authListener = listener;
+      return jest.fn();
+    });
+
+    getCredits
+      .mockResolvedValueOnce({
+        success: false,
+        status: 401,
+        error: 'Authentication failed',
+        code: 'AUTH_ERROR'
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          balance: 8,
+          unitLabel: 'Story Points',
+          unitSize: 1000,
+          lots: [],
+          recentTransactions: [],
+          fetchedAt: Date.now()
+        },
+        fromCache: false,
+        stale: false,
+        cachedAt: Date.now()
+      });
+
+    let capturedState;
+
+    const TestComponent = () => {
+      capturedState = useCredits();
+      return null;
+    };
+
+    let renderer;
+    await act(async () => {
+      renderer = create(
+        <CreditProvider>
+          <TestComponent />
+        </CreditProvider>
+      );
+      await flushMicrotasks();
+    });
+
+    expect(getCredits).toHaveBeenCalledTimes(1);
+    expect(capturedState.error).toEqual({ message: 'Authentication failed', code: 'AUTH_ERROR' });
+
+    await act(async () => {
+      authListener('LOGIN');
+      await flushMicrotasks();
+    });
+
+    expect(getCredits).toHaveBeenCalledTimes(2);
+    expect(capturedState.balance).toBe(8);
+    expect(capturedState.error).toBeNull();
 
     await act(async () => {
       renderer.unmount();
