@@ -289,11 +289,15 @@ export default function SynthesisScreen({ navigation }) {
 
       if (!ids.length) return;
 
+      let forceFetchForDetails = forceRefresh;
+
       if (primeStoryCredits) {
         try {
           await primeStoryCredits(ids, { forceRefresh });
+          forceFetchForDetails = false;
         } catch (error) {
           console.warn('Failed to prime story credits', error);
+          forceFetchForDetails = forceRefresh;
         }
       }
 
@@ -309,7 +313,7 @@ export default function SynthesisScreen({ navigation }) {
         const results = await Promise.all(
           ids.map(async (id) => {
             try {
-              const result = await fetchStoryCredits(id, { forceRefresh });
+              const result = await fetchStoryCredits(id, { forceRefresh: forceFetchForDetails });
               if (result?.success && result.data) {
                 return [
                   id,
