@@ -19,6 +19,7 @@ import ConfirmModal from '../components/Modals/ConfirmModal';
 import ProgressModal from '../components/Modals/ProgressModal';
 import { useToast } from '../components/StatusToast';
 import useAudioPlayer from '../hooks/useAudioPlayer';
+import { useCredits, useCreditActions } from '../hooks/useCredits';
 import voiceService from '../services/voiceService';
 import { COLORS } from '../styles/colors';
 import AppMenu from '../components/AppMenu';
@@ -32,6 +33,21 @@ const STORAGE_KEYS = {
 export default function SynthesisScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { showToast } = useToast();
+  const creditState = useCredits();
+  const creditActions = useCreditActions();
+  const {
+    balance = 0,
+    unitLabel = 'Story Points (Punkty Magii)',
+    loading: creditsLoading = false,
+    stale: creditsStale = false,
+    error: creditsError = null,
+    initializing: creditsInitializing = false
+  } = creditState || {};
+  const {
+    refreshCredits,
+    getStoryCredits: fetchStoryCredits,
+    primeStoryCredits
+  } = creditActions || {};
   
   // Audio player hook
   const {
@@ -60,6 +76,8 @@ export default function SynthesisScreen({ navigation }) {
   const [progressData, setProgressData] = useState({ progress: 0, status: '' });
   const [isOnline, setIsOnline] = useState(true);
   const [isMenuVisible, setIsMenuVisible] = useState(false);
+  const [storyCredits, setStoryCredits] = useState({});
+  const [storyCreditsLoading, setStoryCreditsLoading] = useState({});
   
   
   // Abort controller ref for cancellable operations
@@ -201,6 +219,9 @@ export default function SynthesisScreen({ navigation }) {
         );
         
         setStories(storiesWithStatus);
+        setStoryCredits({});
+        setStoryCreditsLoading({});
+        loadCreditsForStories(storiesWithStatus);
       } else {
         handleApiError(storiesResult, 'Nie udało się pobrać bajek.');
       }
@@ -226,6 +247,14 @@ export default function SynthesisScreen({ navigation }) {
       return;
     }
     
+    if (result.code === 'PAYMENT_REQUIRED') {
+      showToast('Brak wystarczających Story Points. Odwiedź ekran kredytów.', 'ERROR');
+      if (refreshCredits) {
+        refreshCredits({ force: true }).catch(() => {});
+      }
+      return;
+    }
+    
     // If the app is offline, don't show errors for network operations
     if (!isOnline && result.code === 'OFFLINE') {
       return;
@@ -247,17 +276,150 @@ export default function SynthesisScreen({ navigation }) {
     
     showToast(message, 'ERROR');
   };
+
+  const loadCreditsForStories = useCallback(
+    async (storiesList, { forceRefresh = false } = {}) => {
+      if (!storiesList?.length || !fetchStoryCredits) {
+        return;
+      }
+
+      const ids = storiesList
+        .map((story) => story.id)
+        .filter((id) => typeof id === 'number' || typeof id === 'string');
+
+      if (!ids.length) return;
+
+      if (primeStoryCredits) {
+        try {
+          await primeStoryCredits(ids, { forceRefresh });
+        } catch (error) {
+          console.warn('Failed to prime story credits', error);
+        }
+      }
+
+      setStoryCreditsLoading((prev) => {
+        const next = { ...prev };
+        ids.forEach((id) => {
+          next[id] = true;
+        });
+        return next;
+      });
+
+      try {
+        const results = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const result = await fetchStoryCredits(id, { forceRefresh });
+              if (result?.success && result.data) {
+                return [
+                  id,
+                  { requiredCredits: result.data.requiredCredits, stale: result.stale }
+                ];
+              }
+            } catch (error) {
+              console.warn('Failed to fetch credits for story', id, error);
+            }
+            return [id, null];
+          })
+        );
+
+        setStoryCredits((prev) => {
+          const next = { ...prev };
+          results.forEach(([id, data]) => {
+            if (data) {
+              next[id] = data;
+            }
+          });
+          return next;
+        });
+      } finally {
+        setStoryCreditsLoading((prev) => {
+          const next = { ...prev };
+          ids.forEach((id) => {
+            delete next[id];
+          });
+          return next;
+        });
+      }
+    },
+    [fetchStoryCredits, primeStoryCredits]
+  );
+
+  const fetchCreditsForStory = useCallback(
+    async (storyId, { forceRefresh = false } = {}) => {
+      if (!storyId || !fetchStoryCredits) {
+        return null;
+      }
+
+      if (!forceRefresh && storyCredits[storyId]) {
+        return storyCredits[storyId];
+      }
+
+      setStoryCreditsLoading((prev) => ({ ...prev, [storyId]: true }));
+
+      try {
+        const result = await fetchStoryCredits(storyId, { forceRefresh });
+        if (result?.success && result.data) {
+          const info = {
+            requiredCredits: result.data.requiredCredits,
+            stale: result.stale
+          };
+          setStoryCredits((prev) => ({ ...prev, [storyId]: info }));
+          return info;
+        }
+        return null;
+      } finally {
+        setStoryCreditsLoading((prev) => {
+          const next = { ...prev };
+          delete next[storyId];
+          return next;
+        });
+      }
+    },
+    [fetchStoryCredits, storyCredits]
+  );
+
+  const handleOpenCredits = useCallback(() => {
+    if (navigation?.navigate) {
+      try {
+        navigation.navigate('Credits');
+        return;
+      } catch (error) {
+        console.warn('Unable to navigate to Credits screen', error);
+      }
+    }
+    showToast('Ekran kredytów będzie dostępny wkrótce.', 'INFO');
+  }, [navigation, showToast]);
+
+  const handleRefreshCreditsSummary = useCallback(async () => {
+    if (!refreshCredits) return;
+    const result = await refreshCredits({ force: true });
+    if (!result?.success) {
+      showToast('Nie udało się odświeżyć kredytów.', 'ERROR');
+    }
+  }, [refreshCredits, showToast]);
   
   // Handle story selection
   const handleStorySelect = async (story) => {
-    // Check if story is already selected or is processing
-    if (selectedStory?.id === story.id || processingStories[story.id]) {
+    // Prevent duplicate handling while processing
+    if (processingStories[story.id]) {
       return;
     }
     
     // If audio is currently playing, stop it first
-    if (isPlaying) {
+    if (isPlaying && selectedStory?.id !== story.id) {
       await unloadAudio();
+    }
+
+    const needsGeneration = !story.localAudioUri && !(story.hasAudio && story.localUri);
+
+    if (needsGeneration && fetchCreditsForStory) {
+      const creditInfo = await fetchCreditsForStory(story.id);
+      const required = creditInfo?.requiredCredits;
+      if (typeof required === 'number' && balance < required) {
+        showToast('Masz za mało Story Points, aby wygenerować tę bajkę.', 'INFO');
+        return;
+      }
     }
     
     // Set as selected story
@@ -346,6 +508,15 @@ export default function SynthesisScreen({ navigation }) {
             } : s
           )
         );
+
+        if (refreshCredits) {
+          refreshCredits({ force: true }).catch(() => {});
+        }
+      } else if (result.code === 'PAYMENT_REQUIRED') {
+        showToast('Masz za mało Story Points, aby wygenerować tę bajkę.', 'ERROR');
+        if (refreshCredits) {
+          refreshCredits({ force: true }).catch(() => {});
+        }
       } else {
         handleApiError(result, 'Nie udało się wygenerować bajki:');
       }
@@ -558,18 +729,30 @@ export default function SynthesisScreen({ navigation }) {
   };
   
   // Render story item
-  const renderStoryItem = ({ item }) => (
-    <StoryItem
-      title={item.title}
-      author={item.author}
-      duration={item.duration}
-      imageSource={item.cover_url}
-      isSelected={selectedStory?.id === item.id}
-      isGenerating={!!processingStories[item.id]}
-      hasAudio={item.hasAudio}
-      onPress={() => handleStorySelect(item)}
-    />
-  );
+  const renderStoryItem = ({ item }) => {
+    const creditInfo = storyCredits[item.id];
+    const requiredCredits = creditInfo?.requiredCredits;
+    const creditsLoading = !!storyCreditsLoading[item.id];
+    const affordable =
+      typeof requiredCredits === 'number' ? balance >= requiredCredits : true;
+
+    return (
+      <StoryItem
+        title={item.title}
+        author={item.author}
+        duration={item.duration}
+        imageSource={item.cover_url}
+        isSelected={selectedStory?.id === item.id}
+        isGenerating={!!processingStories[item.id]}
+        hasAudio={item.hasAudio}
+        requiredCredits={requiredCredits}
+        isAffordable={affordable}
+        isCreditLoading={creditsLoading}
+        creditUnitLabel={unitLabel}
+        onPress={() => handleStorySelect(item)}
+      />
+    );
+  };
   
   // Filter stories based on connection status
   const getFilteredStories = () => {
@@ -580,6 +763,54 @@ export default function SynthesisScreen({ navigation }) {
     
     // If offline, only show stories that have local audio
     return stories.filter(story => story.hasLocalAudio);
+  };
+
+  const renderCreditsSummary = () => {
+    const showLoading = creditsLoading || creditsInitializing;
+
+    return (
+      <View style={styles.creditSummary}>
+        <View style={styles.creditSummaryRow}>
+          <Feather name="star" size={18} color={COLORS.lavender} />
+          {showLoading ? (
+            <ActivityIndicator style={styles.creditLoader} size="small" color={COLORS.lavender} />
+          ) : (
+            <Text style={styles.creditBalanceText}>{balance}</Text>
+          )}
+          <Text style={styles.creditUnitText}>{unitLabel}</Text>
+        </View>
+        {creditsStale && (
+          <Text style={styles.creditMetaText}>
+            Dane mogą być nieaktualne. Odśwież kredyty.
+          </Text>
+        )}
+        {creditsError && (
+          <Text style={styles.creditErrorText}>{creditsError.message}</Text>
+        )}
+        <View style={styles.creditActionsRow}>
+          <TouchableOpacity
+            style={[
+              styles.creditActionButton,
+              showLoading && styles.creditActionButtonDisabled
+            ]}
+            onPress={handleRefreshCreditsSummary}
+            disabled={showLoading}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.creditActionText}>
+              {showLoading ? 'Odświeżanie...' : 'Odśwież kredyty'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.creditActionButtonSecondary}
+            onPress={handleOpenCredits}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.creditActionSecondaryText}>Szczegóły kredytów</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   };
   
   return (
@@ -629,6 +860,8 @@ export default function SynthesisScreen({ navigation }) {
             data={getFilteredStories()}
             renderItem={renderStoryItem}
             keyExtractor={(item) => item.id.toString()}
+            ListHeaderComponent={renderCreditsSummary}
+            ListHeaderComponentStyle={styles.creditSummaryContainer}
             contentContainerStyle={[
               styles.storiesList,
               { paddingBottom: audioControlsVisible ? 140 : 16 },
@@ -763,6 +996,86 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.text.secondary,
     marginTop: 12,
+  },
+  creditSummaryContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  creditSummary: {
+    backgroundColor: COLORS.white,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  creditSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  creditLoader: {
+    marginLeft: 8,
+  },
+  creditBalanceText: {
+    fontFamily: 'Quicksand-Bold',
+    fontSize: 20,
+    color: COLORS.text.primary,
+    marginLeft: 8,
+  },
+  creditUnitText: {
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 14,
+    color: COLORS.text.secondary,
+    marginLeft: 8,
+  },
+  creditMetaText: {
+    marginTop: 8,
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 12,
+    color: COLORS.text.tertiary,
+  },
+  creditErrorText: {
+    marginTop: 8,
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 12,
+    color: COLORS.error,
+  },
+  creditActionsRow: {
+    flexDirection: 'row',
+    marginTop: 12,
+  },
+  creditActionButton: {
+    flex: 1,
+    backgroundColor: COLORS.lavender,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  creditActionButtonDisabled: {
+    opacity: 0.6,
+  },
+  creditActionText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 13,
+    color: COLORS.white,
+  },
+  creditActionButtonSecondary: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: COLORS.lavender,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  creditActionSecondaryText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 13,
+    color: COLORS.lavender,
   },
   storiesList: {
     paddingHorizontal: 16,

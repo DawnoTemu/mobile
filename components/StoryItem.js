@@ -17,8 +17,33 @@ export default function StoryItem({
   imageSource,
   isSelected,
   isGenerating,
+  requiredCredits,
+  isAffordable = true,
+  isCreditLoading = false,
+  creditUnitLabel = 'Story Points',
   onPress,
 }) {
+  const normalizedUnitLabel = creditUnitLabel?.split(' (')[0] || creditUnitLabel;
+  const renderStatusIcon = () => {
+    if (isGenerating) {
+      return <ActivityIndicator size="small" color={COLORS.peach} />;
+    }
+
+    if (isCreditLoading) {
+      return <ActivityIndicator size="small" color={COLORS.lavender} />;
+    }
+
+    if (!isAffordable && typeof requiredCredits === 'number') {
+      return <Feather name="lock" size={20} color={COLORS.error} />;
+    }
+
+    if (isSelected) {
+      return <Feather name="check-circle" size={20} color={COLORS.peach} />;
+    }
+
+    return <Feather name="play-circle" size={20} color={COLORS.text.tertiary} />;
+  };
+
   return (
     <TouchableOpacity
       style={[
@@ -57,17 +82,45 @@ export default function StoryItem({
             <Text style={styles.duration}>{duration}</Text>
           </View>
         )}
+
+        <View style={styles.creditsRow}>
+          {isCreditLoading ? (
+            <ActivityIndicator size="small" color={COLORS.lavender} />
+          ) : typeof requiredCredits === 'number' ? (
+            <View
+              style={[
+                styles.creditBadge,
+                !isAffordable && styles.creditBadgeInsufficient
+              ]}
+            >
+              <Feather
+                name="star"
+                size={12}
+                color={isAffordable ? COLORS.lavender : COLORS.error}
+              />
+              <Text
+                style={[
+                  styles.creditBadgeText,
+                  !isAffordable && styles.creditBadgeTextInsufficient
+                ]}
+                numberOfLines={1}
+              >
+                {requiredCredits} {normalizedUnitLabel}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        {!isAffordable && typeof requiredCredits === 'number' && (
+          <Text style={styles.creditWarning}>
+            Za mało Story Points
+          </Text>
+        )}
       </View>
       
       {/* Right Side - Status */}
       <View style={styles.status}>
-        {isGenerating ? (
-          <ActivityIndicator size="small" color={COLORS.peach} />
-        ) : isSelected ? (
-          <Feather name="check-circle" size={20} color={COLORS.peach} />
-        ) : (
-          <Feather name="play-circle" size={20} color={COLORS.text.tertiary} />
-        )}
+        {renderStatusIcon()}
       </View>
     </TouchableOpacity>
   );
@@ -132,6 +185,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.text.tertiary,
     marginLeft: 4,
+  },
+  creditsRow: {
+    marginTop: 6,
+    minHeight: 18,
+    justifyContent: 'center'
+  },
+  creditBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: `${COLORS.lavender}15`,
+    borderRadius: 12,
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+  },
+  creditBadgeInsufficient: {
+    backgroundColor: `${COLORS.error}15`,
+  },
+  creditBadgeText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 12,
+    color: COLORS.lavender,
+    marginLeft: 4,
+  },
+  creditBadgeTextInsufficient: {
+    color: COLORS.error,
+  },
+  creditWarning: {
+    marginTop: 6,
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 12,
+    color: COLORS.error,
   },
   status: {
     justifyContent: 'center',
