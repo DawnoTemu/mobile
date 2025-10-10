@@ -116,11 +116,13 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
         } else {
           // Refresh failed, logout and return error
           await logout();
-          return { 
-            success: false, 
+          const message = data?.error || data?.message || 'Authentication failed';
+          return {
+            success: false,
             status,
-            error: 'Authentication failed',
-            code: 'AUTH_ERROR'
+            error: message,
+            code: 'AUTH_ERROR',
+            data
           };
         }
       }
