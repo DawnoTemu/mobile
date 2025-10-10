@@ -221,7 +221,7 @@ export default function SynthesisScreen({ navigation }) {
         setStories(storiesWithStatus);
         setStoryCredits({});
         setStoryCreditsLoading({});
-        loadCreditsForStories(storiesWithStatus);
+        loadCreditsForStories(storiesWithStatus, { forceRefresh });
       } else {
         handleApiError(storiesResult, 'Nie udało się pobrać bajek.');
       }
