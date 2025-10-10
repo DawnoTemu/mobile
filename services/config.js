@@ -17,7 +17,7 @@ export const ENV = {
 };
 
 // 🔧 CHANGE THIS TO SWITCH ENVIRONMENTS FOR THE ENTIRE APP
-export const CURRENT_ENV = 'PROD'; // 'DEV' | 'STAGING' | 'PROD'
+export const CURRENT_ENV = 'DEV'; // 'DEV' | 'STAGING' | 'PROD'
 
 // Get the current API base URL
 export const API_BASE_URL = ENV[CURRENT_ENV];
