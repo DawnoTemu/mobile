@@ -10,6 +10,36 @@ import {
 import { Feather } from '@expo/vector-icons';
 import { COLORS } from '../styles/colors';
 
+const deriveUnitLabel = (label) => {
+  if (typeof label !== 'string') {
+    return 'Punkty Magii';
+  }
+
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return 'Punkty Magii';
+  }
+
+  const segments = trimmed
+    .split(/[\(\)\/\-\|]/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  const localizedSegment = segments.find((segment) =>
+    segment.toLowerCase().includes('punkty')
+  );
+
+  if (localizedSegment) {
+    return localizedSegment;
+  }
+
+  if (trimmed.toLowerCase().includes('punkty')) {
+    return trimmed;
+  }
+
+  return 'Punkty Magii';
+};
+
 export default function StoryItem({
   title,
   author,
@@ -20,10 +50,16 @@ export default function StoryItem({
   requiredCredits,
   isAffordable = true,
   isCreditLoading = false,
-  creditUnitLabel = 'Story Points',
+  creditUnitLabel = 'Punkty Magii',
   onPress,
 }) {
-  const normalizedUnitLabel = creditUnitLabel?.split(' (')[0] || creditUnitLabel;
+  const normalizedUnitLabel = deriveUnitLabel(creditUnitLabel);
+  const hasNumericCredits =
+    typeof requiredCredits === 'number' && !Number.isNaN(requiredCredits);
+  const badgeLabel = hasNumericCredits
+    ? `${requiredCredits} ${normalizedUnitLabel}`
+    : 'Brak danych';
+  const isInsufficient = hasNumericCredits && !isAffordable;
   const renderStatusIcon = () => {
     if (isGenerating) {
       return <ActivityIndicator size="small" color={COLORS.peach} />;
@@ -86,32 +122,40 @@ export default function StoryItem({
         <View style={styles.creditsRow}>
           {isCreditLoading ? (
             <ActivityIndicator size="small" color={COLORS.lavender} />
-          ) : typeof requiredCredits === 'number' ? (
+          ) : (
             <View
               style={[
                 styles.creditBadge,
-                !isAffordable && styles.creditBadgeInsufficient
+                isInsufficient && styles.creditBadgeInsufficient,
+                !hasNumericCredits && styles.creditBadgePlaceholder
               ]}
             >
               <Feather
-                name="star"
+                name={hasNumericCredits ? 'star' : 'help-circle'}
                 size={12}
-                color={isAffordable ? COLORS.lavender : COLORS.error}
+                color={
+                  hasNumericCredits
+                    ? isInsufficient
+                      ? COLORS.error
+                      : COLORS.white
+                    : COLORS.text.secondary
+                }
               />
               <Text
                 style={[
                   styles.creditBadgeText,
-                  !isAffordable && styles.creditBadgeTextInsufficient
+                  isInsufficient && styles.creditBadgeTextInsufficient,
+                  !hasNumericCredits && styles.creditBadgePlaceholderText
                 ]}
                 numberOfLines={1}
               >
-                {requiredCredits} {normalizedUnitLabel}
+                {badgeLabel}
               </Text>
             </View>
-          ) : null}
+          )}
         </View>
 
-        {!isAffordable && typeof requiredCredits === 'number' && (
+        {isInsufficient && (
           <Text style={styles.creditWarning}>
             Za mało Story Points
           </Text>
@@ -206,11 +250,19 @@ const styles = StyleSheet.create({
   creditBadgeText: {
     fontFamily: 'Quicksand-Medium',
     fontSize: 12,
-    color: COLORS.lavender,
+    color: COLORS.white,
     marginLeft: 4,
   },
   creditBadgeTextInsufficient: {
-    color: COLORS.error,
+    color: COLORS.white,
+  },
+  creditBadgePlaceholder: {
+    backgroundColor: `${COLORS.text.secondary}10`,
+    borderWidth: 1,
+    borderColor: `${COLORS.text.secondary}20`
+  },
+  creditBadgePlaceholderText: {
+    color: COLORS.text.secondary
   },
   creditWarning: {
     marginTop: 6,
