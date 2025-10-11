@@ -125,17 +125,15 @@ Font configurations are in `styles/fonts.js`. The app uses Comfortaa and Quicksa
 
 ### Environment Configuration
 
-The app supports multiple environments:
+The client reads environment settings from `services/config.js`, with values driven by Expo environment variables. Create a `.env` file (or use `eas.json` secrets) and set:
 
-```javascript
-const ENV = {
-  DEV: 'http://192.168.1.108:8000/api',
-  STAGING: 'https://staging-story-voice.herokuapp.com/api',
-  PROD: 'https://story-voice-47d650d68bd6.herokuapp.com/api'
-};
+```bash
+EXPO_PUBLIC_API_ENV=PROD   # or DEV / STAGING
+# Optional: point at a custom backend
+# EXPO_PUBLIC_API_BASE_URL=https://api.dawnotemu.app
 ```
 
-To change the environment, modify the `API_BASE_URL` in `services/voiceService.js`.
+If no variables are provided, the app defaults to `PROD`. `DEV` defaults to `http://localhost:8000`, so supply your LAN or tunnel URL via `EXPO_PUBLIC_API_BASE_URL` when testing on devices.
 
 ### Audio Processing
 

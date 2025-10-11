@@ -1,26 +1,29 @@
 // services/config.js
 // Shared configuration for all services
 //
-// TO SWITCH ENVIRONMENTS:
-// Simply change the CURRENT_ENV value below:
-// - 'DEV' for local development (localhost)
-// - 'STAGING' for staging server  
-// - 'PROD' for production server
-//
-// This will automatically update ALL services (auth, voice, etc.)
+// To switch environments, set `EXPO_PUBLIC_API_ENV` (or `API_ENV`) in a `.env` file:
+// - DEV      -> local development (defaults to http://localhost:8000)
+// - STAGING  -> shared staging API
+// - PROD     -> production API (default)
+// Optional overrides:
+// - EXPO_PUBLIC_API_BASE_URL / API_BASE_URL to point at a custom host.
 
-// Environment configuration
+const DEFAULT_ENV = 'PROD';
+
 export const ENV = {
-  DEV: 'http://Szymons-MacBook-Pro-2:8000',
+  DEV: 'http://localhost:8000',
   STAGING: 'https://staging-story-voice.herokuapp.com',
   PROD: 'https://api.dawnotemu.app'
 };
 
-// 🔧 CHANGE THIS TO SWITCH ENVIRONMENTS FOR THE ENTIRE APP
-export const CURRENT_ENV = 'DEV'; // 'DEV' | 'STAGING' | 'PROD'
+const envFromVariables = (process.env.EXPO_PUBLIC_API_ENV || process.env.API_ENV || '').toUpperCase();
+const resolvedEnv = ENV[envFromVariables] ? envFromVariables : DEFAULT_ENV;
+const explicitBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL || process.env.API_BASE_URL || null;
+
+export const CURRENT_ENV = resolvedEnv;
 
 // Get the current API base URL
-export const API_BASE_URL = ENV[CURRENT_ENV];
+export const API_BASE_URL = explicitBaseUrl || ENV[CURRENT_ENV];
 
 // Request timeout in milliseconds
 export const REQUEST_TIMEOUT = 30000;
