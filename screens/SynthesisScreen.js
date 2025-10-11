@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -77,6 +77,94 @@ export default function SynthesisScreen({ navigation }) {
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [storyCredits, setStoryCredits] = useState({});
   const [storyCreditsLoading, setStoryCreditsLoading] = useState({});
+  const [pendingGeneration, setPendingGeneration] = useState(null);
+  const [isGenerationConfirmVisible, setIsGenerationConfirmVisible] = useState(false);
+  
+  const getLocalizedUnitLabel = useCallback((label) => {
+    if (typeof label !== 'string') {
+      return 'Punkty Magii';
+    }
+
+    const trimmed = label.trim();
+    if (!trimmed) {
+      return 'Punkty Magii';
+    }
+
+    const segments = trimmed
+      .split(/[\(\)\/\-\|]/)
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+
+    const localizedSegment = segments.find((segment) =>
+      segment.toLowerCase().includes('punkty')
+    );
+
+    if (localizedSegment) {
+      return localizedSegment;
+    }
+
+    if (trimmed.toLowerCase().includes('punkty')) {
+      return trimmed;
+    }
+
+    return 'Punkty Magii';
+  }, []);
+
+  const localizedUnitLabel = useMemo(
+    () => getLocalizedUnitLabel(unitLabel),
+    [unitLabel, getLocalizedUnitLabel]
+  );
+  
+  const isStoryPurchased = useCallback(
+    (story) =>
+      !!(
+        story?.hasLocalAudio ||
+        story?.hasAudio ||
+        story?.localAudioUri ||
+        story?.localUri
+      ),
+    []
+  );
+
+  const displayStories = useMemo(() => {
+    const baseStories = isOnline
+      ? stories
+      : stories.filter((story) => story.hasLocalAudio);
+
+    if (!baseStories.length) {
+      return [];
+    }
+
+    const purchased = [];
+    const purchasable = [];
+
+    baseStories.forEach((story) => {
+      if (isStoryPurchased(story)) {
+        purchased.push(story);
+      } else {
+        purchasable.push(story);
+      }
+    });
+
+    const items = [];
+    purchased.forEach((story) => {
+      items.push({ type: 'story', story, id: `story-${story.id}` });
+    });
+
+    if (purchased.length && purchasable.length) {
+      items.push({
+        type: 'divider',
+        id: 'divider-purchasable',
+        label: 'Bajki do wygenerowania'
+      });
+    }
+
+    purchasable.forEach((story) => {
+      items.push({ type: 'story', story, id: `story-${story.id}` });
+    });
+
+    return items;
+  }, [stories, isOnline, isStoryPurchased]);
   
   
   // Abort controller ref for cancellable operations
@@ -394,14 +482,18 @@ export default function SynthesisScreen({ navigation }) {
       await unloadAudio();
     }
 
-    const needsGeneration = !story.localAudioUri && !(story.hasAudio && story.localUri);
+    const needsGeneration =
+      !story.localAudioUri &&
+      !story.hasLocalAudio &&
+      !story.hasAudio;
 
     const creditStateReady = !creditsLoading && !creditsInitializing && !creditsError;
 
+    let requiredCredits = null;
     if (needsGeneration && fetchCreditsForStory && creditStateReady) {
       const creditInfo = await fetchCreditsForStory(story.id);
-      const required = creditInfo?.requiredCredits;
-      if (typeof required === 'number' && balance < required) {
+      requiredCredits = creditInfo?.requiredCredits;
+      if (typeof requiredCredits === 'number' && balance < requiredCredits) {
         showToast('Masz za mało Story Points, aby wygenerować tę bajkę.', 'INFO');
         return;
       }
@@ -424,9 +516,63 @@ export default function SynthesisScreen({ navigation }) {
       return;
     }
     
-    // If no audio available, try to generate/download it
-    await getStoryAudio(story);
+    // If no audio available, confirm before generating
+    if (needsGeneration) {
+      setPendingGeneration({
+        story,
+        requiredCredits
+      });
+      setIsGenerationConfirmVisible(true);
+      return;
+    }
   };
+
+  const handleConfirmGeneration = async () => {
+    const storyToGenerate = pendingGeneration?.story;
+
+    setIsGenerationConfirmVisible(false);
+    setPendingGeneration(null);
+
+    if (!storyToGenerate) {
+      return;
+    }
+
+    await getStoryAudio(storyToGenerate);
+  };
+
+  const handleCancelGeneration = () => {
+    if (pendingGeneration?.story && selectedStory?.id === pendingGeneration.story.id) {
+      setSelectedStory(null);
+    }
+
+    setPendingGeneration(null);
+    setIsGenerationConfirmVisible(false);
+  };
+
+  const generationConfirmCopy = useMemo(() => {
+    if (!pendingGeneration?.story) {
+      return {
+        title: 'Potwierdź wygenerowanie bajki',
+        message: '',
+      };
+    }
+
+    const storyTitle = pendingGeneration.story.title || 'tę bajkę';
+    const sanitizedTitle = storyTitle.trim() ? storyTitle : 'tę bajkę';
+    const cost = pendingGeneration.requiredCredits;
+
+    if (typeof cost === 'number') {
+      return {
+        title: 'Potwierdź wykorzystanie punktów',
+        message: `Wygenerowanie bajki "${sanitizedTitle}" zużyje ${cost} ${localizedUnitLabel}. Czy chcesz kontynuować?`,
+      };
+    }
+
+    return {
+      title: 'Potwierdź wygenerowanie bajki',
+      message: `Wygenerowanie bajki "${sanitizedTitle}" może wymagać wykorzystania ${localizedUnitLabel}. Czy chcesz kontynuować?`,
+    };
+  }, [pendingGeneration, localizedUnitLabel]);
   
   // Get story audio with progress tracking
   const getStoryAudio = async (story, forceDownload = false) => {
@@ -715,39 +861,40 @@ export default function SynthesisScreen({ navigation }) {
   
   // Render story item
   const renderStoryItem = ({ item }) => {
-    const creditInfo = storyCredits[item.id];
+    if (item.type === 'divider') {
+      return (
+        <View style={styles.dividerContainer}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerLabel}>{item.label}</Text>
+          <View style={styles.dividerLine} />
+        </View>
+      );
+    }
+
+    const story = item.story;
+    const creditInfo = storyCredits[story.id];
     const requiredCredits = creditInfo?.requiredCredits;
-    const creditsLoading = !!storyCreditsLoading[item.id];
+    const creditsLoading = !!storyCreditsLoading[story.id];
+    const isReady = isStoryPurchased(story);
     const affordable =
       typeof requiredCredits === 'number' ? balance >= requiredCredits : true;
 
     return (
       <StoryItem
-        title={item.title}
-        author={item.author}
-        duration={item.duration}
-        imageSource={item.cover_url}
-        isSelected={selectedStory?.id === item.id}
-        isGenerating={!!processingStories[item.id]}
-        hasAudio={item.hasAudio}
+        title={story.title}
+        author={story.author}
+        duration={story.duration}
+        imageSource={story.cover_url}
+        isSelected={selectedStory?.id === story.id}
+        isGenerating={!!processingStories[story.id]}
         requiredCredits={requiredCredits}
         isAffordable={affordable}
         isCreditLoading={creditsLoading}
         creditUnitLabel={unitLabel}
-        onPress={() => handleStorySelect(item)}
+        isReady={isReady}
+        onPress={() => handleStorySelect(story)}
       />
     );
-  };
-  
-  // Filter stories based on connection status
-  const getFilteredStories = () => {
-    // If online, show all stories
-    if (isOnline) {
-      return stories;
-    }
-    
-    // If offline, only show stories that have local audio
-    return stories.filter(story => story.hasLocalAudio);
   };
 
   return (
@@ -794,9 +941,9 @@ export default function SynthesisScreen({ navigation }) {
           </View>
         ) : (
           <FlatList
-            data={getFilteredStories()}
+            data={displayStories}
             renderItem={renderStoryItem}
-            keyExtractor={(item) => item.id.toString()}
+            keyExtractor={(item) => item.id}
             contentContainerStyle={[
               styles.storiesList,
               { paddingBottom: audioControlsVisible ? 140 : 16 },
@@ -841,6 +988,17 @@ export default function SynthesisScreen({ navigation }) {
         story={selectedStory}
       />
       
+      {/* Generation Confirmation */}
+      <ConfirmModal
+        visible={isGenerationConfirmVisible}
+        title={generationConfirmCopy.title}
+        message={generationConfirmCopy.message}
+        confirmText="Wygeneruj"
+        cancelText="Anuluj"
+        onConfirm={handleConfirmGeneration}
+        onCancel={handleCancelGeneration}
+      />
+
       {/* Confirmation Modal */}
       <ConfirmModal
         visible={isConfirmModalVisible}
@@ -935,6 +1093,23 @@ const styles = StyleSheet.create({
   storiesList: {
     paddingHorizontal: 16,
     paddingTop: 16,
+  },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 12,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: COLORS.text.tertiary,
+    opacity: 0.4,
+  },
+  dividerLabel: {
+    marginHorizontal: 12,
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 12,
+    color: COLORS.text.secondary,
   },
   emptyContainer: {
     alignItems: 'center',

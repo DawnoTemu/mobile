@@ -1,10 +1,41 @@
 // Enhanced voiceService.js aligned with the API documentation
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from './authService';
 import { API_BASE_URL, REQUEST_TIMEOUT, STORAGE_KEYS, CACHE_EXPIRATION } from './config'; 
+
+const MIN_VALID_AUDIO_SIZE_BYTES = 2048; // guard against empty/partial downloads
+
+const getFileInfoSafe = async (uri) => {
+  if (!uri) {
+    return { exists: false, size: 0 };
+  }
+  try {
+    return await FileSystem.getInfoAsync(uri);
+  } catch (error) {
+    console.warn('Failed to read file info', error);
+    return { exists: false, size: 0, error };
+  }
+};
+
+const isAudioFileValid = (info) => {
+  if (!info?.exists) return false;
+  if (typeof info.size === 'number') {
+    return info.size > MIN_VALID_AUDIO_SIZE_BYTES;
+  }
+  return true;
+};
+
+const deleteFileQuietly = async (uri) => {
+  if (!uri) return;
+  try {
+    await FileSystem.deleteAsync(uri, { idempotent: true });
+  } catch (error) {
+    console.warn('Failed to delete audio file', error);
+  }
+};
 
 // HELPER FUNCTIONS
 /**
@@ -22,7 +53,10 @@ const createFormData = async (audioUri, fileName = null) => {
     : audioUri.replace('file://', '');
   
   // Get file info to determine size
-  const fileInfo = await FileSystem.getInfoAsync(audioUri);
+  const fileInfo = await getFileInfoSafe(audioUri);
+  if (!fileInfo.exists) {
+    throw new Error('Audio file not found for upload');
+  }
   
   // Extract file name from URI if not provided
   if (!fileName) {
@@ -411,9 +445,8 @@ export const checkAudioExists = async (voiceId, storyId) => {
   // First check local storage
   const audioInfo = await getStoredAudioInfo(voiceId, storyId);
   if (audioInfo && audioInfo.localUri) {
-    // Verify file still exists
-    const fileInfo = await FileSystem.getInfoAsync(audioInfo.localUri);
-    if (fileInfo.exists) {
+    const fileInfo = await getFileInfoSafe(audioInfo.localUri);
+    if (isAudioFileValid(fileInfo)) {
       return {
         success: true,
         exists: true,
@@ -570,6 +603,16 @@ const pollForAudioAvailability = async (voiceId, storyId, statusCallback = null)
  */
 const storeAudioInfo = async (voiceId, storyId, localUri) => {
   try {
+    const fileInfo = await getFileInfoSafe(localUri);
+    if (!isAudioFileValid(fileInfo)) {
+      await deleteFileQuietly(localUri);
+      await removeAudioReference(voiceId, storyId);
+      return {
+        success: false,
+        error: 'Invalid audio file detected while storing metadata'
+      };
+    }
+
     // Get existing audio info
     const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
     const audioInfo = infoString ? JSON.parse(infoString) : {};
@@ -612,10 +655,12 @@ const getStoredAudioInfo = async (voiceId, storyId) => {
     // Add file existence verification
     if (storedInfo && storedInfo.localUri) {
       // Verify the file still exists
-      const fileInfo = await FileSystem.getInfoAsync(storedInfo.localUri);
-      if (!fileInfo.exists) {
-        // File no longer exists, remove reference from storage
-        console.log(`File no longer exists: ${storedInfo.localUri}, removing reference`);
+      const fileInfo = await getFileInfoSafe(storedInfo.localUri);
+      if (!isAudioFileValid(fileInfo)) {
+        console.log(
+          `Invalid cached audio detected for story ${storyId}. Removing reference.`
+        );
+        await deleteFileQuietly(storedInfo.localUri);
         await removeAudioReference(voiceId, storyId);
         return null;
       }
@@ -677,11 +722,11 @@ export const getStoredAudioForVoice = async (voiceId) => {
       const info = voiceAudioInfo[storyId];
       if (info && info.localUri) {
         // Check if file exists
-        const fileInfo = await FileSystem.getInfoAsync(info.localUri);
-        if (fileInfo.exists) {
+        const fileInfo = await getFileInfoSafe(info.localUri);
+        if (isAudioFileValid(fileInfo)) {
           validatedInfo[storyId] = info;
         } else {
-          // Remove reference to non-existent file
+          await deleteFileQuietly(info.localUri);
           await removeAudioReference(voiceId, storyId);
         }
       }
@@ -739,7 +784,7 @@ const clearVoiceAudio = async (voiceId) => {
     for (const storyId in audioInfo[voiceId]) {
       const fileInfo = audioInfo[voiceId][storyId];
       if (fileInfo && fileInfo.localUri) {
-        await FileSystem.deleteAsync(fileInfo.localUri, { idempotent: true });
+        await deleteFileQuietly(fileInfo.localUri);
       }
     }
     
@@ -768,19 +813,29 @@ const clearVoiceAudio = async (voiceId) => {
  * @param {AbortSignal} signal - Optional abort signal for cancellation
  * @returns {Promise<Object>} Result with local URI or error
  */
-export const downloadAudio = async (url, voiceId, storyId, progressCallback = null, signal = null, ) => {
+export const downloadAudio = async (
+  url,
+  voiceId,
+  storyId,
+  progressCallback = null,
+  signal = null,
+  retryCount = 0
+) => {
+  let downloadResumable;
   try {
     // Check if already downloaded
     const existingInfo = await getStoredAudioInfo(voiceId, storyId);
     if (existingInfo && existingInfo.localUri) {
-      // Verify file exists
-      const fileInfo = await FileSystem.getInfoAsync(existingInfo.localUri);
-      if (fileInfo.exists) {
+      const fileInfo = await getFileInfoSafe(existingInfo.localUri);
+      if (isAudioFileValid(fileInfo)) {
         return {
           success: true,
           uri: existingInfo.localUri,
           fromCache: true
         };
+      } else {
+        await deleteFileQuietly(existingInfo.localUri);
+        await removeAudioReference(voiceId, storyId);
       }
     }
   
@@ -808,7 +863,7 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
         } 
       : {};
 
-    const downloadResumable = FileSystem.createDownloadResumable(
+    downloadResumable = FileSystem.createDownloadResumable(
       url,
       fileUri,
       options,
@@ -829,6 +884,29 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
     
     // Start download
     const { uri } = await downloadResumable.downloadAsync();
+
+    const downloadedFileInfo = await getFileInfoSafe(uri);
+    if (!isAudioFileValid(downloadedFileInfo)) {
+      await deleteFileQuietly(uri);
+      await removeAudioReference(voiceId, storyId);
+      if (retryCount < 1) {
+        console.warn('Invalid audio file detected. Retrying download.');
+        return downloadAudio(
+          url,
+          voiceId,
+          storyId,
+          progressCallback,
+          signal,
+          retryCount + 1
+        );
+      }
+
+      return {
+        success: false,
+        error: 'Pobrany plik audio jest uszkodzony. Spróbuj ponownie.',
+        code: 'INVALID_AUDIO'
+      };
+    }
     
     // Store audio info for future reference
     await storeAudioInfo(voiceId, storyId, uri);
@@ -840,6 +918,9 @@ export const downloadAudio = async (url, voiceId, storyId, progressCallback = nu
     };
   } catch (error) {
     console.error('Download error:', error);
+    if (downloadResumable?.fileUri) {
+      await deleteFileQuietly(downloadResumable.fileUri);
+    }
     
     // Handle AbortError specifically
     if (error.name === 'AbortError') {
@@ -879,14 +960,16 @@ export const getAudio = async (
     // Check if audio exists locally first
     const audioInfo = await getStoredAudioInfo(voiceId, storyId);
     if (audioInfo && audioInfo.localUri) {
-      // Verify file exists
-      const fileInfo = await FileSystem.getInfoAsync(audioInfo.localUri);
-      if (fileInfo.exists) {
+      const fileInfo = await getFileInfoSafe(audioInfo.localUri);
+      if (isAudioFileValid(fileInfo)) {
         return {
           success: true,
           uri: audioInfo.localUri,
           fromCache: true
         };
+      } else {
+        await deleteFileQuietly(audioInfo.localUri);
+        await removeAudioReference(voiceId, storyId);
       }
     }
   }
@@ -906,17 +989,11 @@ export const getAudio = async (
   
   // If audio exists on server, download it
   if (checkResult.success && checkResult.exists) {
-    // Get authentication token
-    const token = await authService.getAccessToken();
-    
     // URL for downloading the audio with redirect
     const audioUrl = `${API_BASE_URL}/voices/${voiceId}/stories/${storyId}/audio?redirect=true`;
     
-    // Create headers with authorization token
-    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-    
-    // Pass headers to downloadAudio function
-    return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal, headers);
+    // Download existing audio from server
+    return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal);
   }
   
   // If audio doesn't exist, try to generate it

@@ -51,15 +51,25 @@ export default function StoryItem({
   isAffordable = true,
   isCreditLoading = false,
   creditUnitLabel = 'Punkty Magii',
+  isReady = false,
   onPress,
 }) {
   const normalizedUnitLabel = deriveUnitLabel(creditUnitLabel);
   const hasNumericCredits =
-    typeof requiredCredits === 'number' && !Number.isNaN(requiredCredits);
-  const badgeLabel = hasNumericCredits
-    ? `${requiredCredits} ${normalizedUnitLabel}`
-    : 'Brak danych';
-  const isInsufficient = hasNumericCredits && !isAffordable;
+    !isReady &&
+    typeof requiredCredits === 'number' &&
+    !Number.isNaN(requiredCredits);
+  const badgeLabel = isReady
+    ? 'Gotowa bajka'
+    : hasNumericCredits
+      ? `${requiredCredits} ${normalizedUnitLabel}`
+      : 'Brak danych';
+  const badgeIcon = isReady
+    ? 'check-circle'
+    : hasNumericCredits
+      ? 'star'
+      : 'help-circle';
+  const isInsufficient = !isReady && hasNumericCredits && !isAffordable;
   const renderStatusIcon = () => {
     if (isGenerating) {
       return <ActivityIndicator size="small" color={COLORS.peach} />;
@@ -126,26 +136,30 @@ export default function StoryItem({
             <View
               style={[
                 styles.creditBadge,
+                isReady && styles.creditBadgeReady,
                 isInsufficient && styles.creditBadgeInsufficient,
-                !hasNumericCredits && styles.creditBadgePlaceholder
+                !hasNumericCredits && !isReady && styles.creditBadgePlaceholder
               ]}
             >
               <Feather
-                name={hasNumericCredits ? 'star' : 'help-circle'}
+                name={badgeIcon}
                 size={12}
                 color={
-                  hasNumericCredits
-                    ? isInsufficient
-                      ? COLORS.error
-                      : COLORS.white
-                    : COLORS.text.secondary
+                  isReady
+                    ? COLORS.white
+                    : hasNumericCredits
+                      ? isInsufficient
+                        ? COLORS.error
+                        : COLORS.white
+                      : COLORS.text.secondary
                 }
               />
               <Text
                 style={[
                   styles.creditBadgeText,
+                  isReady && styles.creditBadgeReadyText,
                   isInsufficient && styles.creditBadgeTextInsufficient,
-                  !hasNumericCredits && styles.creditBadgePlaceholderText
+                  !hasNumericCredits && !isReady && styles.creditBadgePlaceholderText
                 ]}
                 numberOfLines={1}
               >
@@ -244,6 +258,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     paddingHorizontal: 8,
   },
+  creditBadgeReady: {
+    backgroundColor: COLORS.mint,
+  },
   creditBadgeInsufficient: {
     backgroundColor: `${COLORS.error}15`,
   },
@@ -252,6 +269,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.white,
     marginLeft: 4,
+  },
+  creditBadgeReadyText: {
+    color: COLORS.white,
   },
   creditBadgeTextInsufficient: {
     color: COLORS.white,

@@ -15,17 +15,22 @@ const isFresh = (timestamp, ttl) => {
   return now() - timestamp < ttl;
 };
 
+const toNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 const normalizeLot = (lot = {}) => ({
   source: lot.source ?? 'unknown',
-  amountGranted: Number.isFinite(lot.amount_granted) ? lot.amount_granted : 0,
-  amountRemaining: Number.isFinite(lot.amount_remaining) ? lot.amount_remaining : 0,
+  amountGranted: toNumber(lot.amount_granted),
+  amountRemaining: toNumber(lot.amount_remaining),
   expiresAt: lot.expires_at || null,
   metadata: lot.metadata || null
 });
 
 const normalizeTransaction = (transaction = {}) => ({
   type: transaction.type ?? 'debit',
-  amount: Number.isFinite(transaction.amount) ? transaction.amount : 0,
+  amount: toNumber(transaction.amount),
   status: transaction.status ?? 'applied',
   reason: transaction.reason ?? null,
   audioStoryId: transaction.audio_story_id ?? null,
@@ -35,7 +40,7 @@ const normalizeTransaction = (transaction = {}) => ({
 });
 
 const normalizeStoryCreditsPayload = (payload = {}) => {
-  const raw = Number.isFinite(payload.required_credits) ? payload.required_credits : 0;
+  const raw = toNumber(payload.required_credits);
   return {
     requiredCredits: Math.max(0, raw),
     fetchedAt: now()
@@ -43,9 +48,9 @@ const normalizeStoryCreditsPayload = (payload = {}) => {
 };
 
 const normalizeCreditsPayload = (payload = {}) => ({
-  balance: Number.isFinite(payload.balance) ? payload.balance : 0,
+  balance: toNumber(payload.balance),
   unitLabel: payload.unit_label ?? 'Story Points (Punkty Magii)',
-  unitSize: Number.isFinite(payload.unit_size) ? payload.unit_size : 1000,
+  unitSize: toNumber(payload.unit_size, 1000),
   lots: Array.isArray(payload.lots) ? payload.lots.map(normalizeLot) : [],
   recentTransactions: Array.isArray(payload.recent_transactions)
     ? payload.recent_transactions.map(normalizeTransaction)
