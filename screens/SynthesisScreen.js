@@ -266,15 +266,11 @@ export default function SynthesisScreen({ navigation }) {
 
   useFocusEffect(
     useCallback(() => {
-      BackHandler.addEventListener('hardwareBackPress', onBackPress);
+      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
       
       return () => {
-        // Add safety check to prevent errors during logout
-        try {
-          BackHandler.removeEventListener('hardwareBackPress', onBackPress);
-        } catch (error) {
-          // Silently ignore errors during cleanup (e.g., during logout)
-          console.log('BackHandler cleanup error (ignored):', error);
+        if (typeof subscription?.remove === 'function') {
+          subscription.remove();
         }
       };
     }, [onBackPress])
