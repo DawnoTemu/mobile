@@ -40,9 +40,21 @@ const normalizeTransaction = (transaction = {}) => ({
 });
 
 const normalizeStoryCreditsPayload = (payload = {}) => {
-  const raw = toNumber(payload.required_credits);
+  const { required_credits: rawRequiredCredits } = payload || {};
+
+  let normalizedCredits = null;
+
+  if (typeof rawRequiredCredits === 'number' && Number.isFinite(rawRequiredCredits)) {
+    normalizedCredits = Math.max(0, rawRequiredCredits);
+  } else if (typeof rawRequiredCredits === 'string' && rawRequiredCredits.trim() !== '') {
+    const parsed = Number(rawRequiredCredits);
+    if (Number.isFinite(parsed)) {
+      normalizedCredits = Math.max(0, parsed);
+    }
+  }
+
   return {
-    requiredCredits: Math.max(0, raw),
+    requiredCredits: normalizedCredits,
     fetchedAt: now()
   };
 };

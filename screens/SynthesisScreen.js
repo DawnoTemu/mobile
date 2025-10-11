@@ -43,9 +43,7 @@ export default function SynthesisScreen({ navigation }) {
     initializing: creditsInitializing = false
   } = creditState || {};
   const {
-    refreshCredits,
-    getStoryCredits: fetchStoryCredits,
-    primeStoryCredits
+    refreshCredits
   } = creditActions || {};
   
   // Audio player hook
@@ -75,8 +73,6 @@ export default function SynthesisScreen({ navigation }) {
   const [progressData, setProgressData] = useState({ progress: 0, status: '' });
   const [isOnline, setIsOnline] = useState(true);
   const [isMenuVisible, setIsMenuVisible] = useState(false);
-  const [storyCredits, setStoryCredits] = useState({});
-  const [storyCreditsLoading, setStoryCreditsLoading] = useState({});
   const [pendingGeneration, setPendingGeneration] = useState(null);
   const [isGenerationConfirmVisible, setIsGenerationConfirmVisible] = useState(false);
   
@@ -165,6 +161,31 @@ export default function SynthesisScreen({ navigation }) {
 
     return items;
   }, [stories, isOnline, isStoryPurchased]);
+
+  const getStoryRequiredCredits = useCallback((story) => {
+    if (!story || typeof story !== 'object') {
+      return null;
+    }
+
+    const candidate =
+      story.requiredCredits ??
+      story.required_credits ??
+      story.requiredCredit ??
+      story.required_credit;
+
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return Math.max(0, candidate);
+    }
+
+    if (typeof candidate === 'string' && candidate.trim() !== '') {
+      const parsed = Number(candidate);
+      if (Number.isFinite(parsed)) {
+        return Math.max(0, parsed);
+      }
+    }
+
+    return null;
+  }, []);
   
   
   // Abort controller ref for cancellable operations
@@ -223,7 +244,6 @@ export default function SynthesisScreen({ navigation }) {
   
   // Process offline queue
   const processOfflineQueue = async () => {
-    if (!isOnline) return;
     
     try {
       // Process any queued operations first
@@ -306,9 +326,6 @@ export default function SynthesisScreen({ navigation }) {
         );
         
         setStories(storiesWithStatus);
-        setStoryCredits({});
-        setStoryCreditsLoading({});
-        loadCreditsForStories(storiesWithStatus, { forceRefresh });
       } else {
         handleApiError(storiesResult, 'Nie udało się pobrać bajek.');
       }
@@ -364,160 +381,58 @@ export default function SynthesisScreen({ navigation }) {
     showToast(message, 'ERROR');
   };
 
-  const loadCreditsForStories = useCallback(
-    async (storiesList, { forceRefresh = false } = {}) => {
-      if (!storiesList?.length || !fetchStoryCredits) {
-        return;
-      }
-
-      const ids = storiesList
-        .map((story) => story.id)
-        .filter((id) => typeof id === 'number' || typeof id === 'string');
-
-      if (!ids.length) return;
-
-      let forceFetchForDetails = forceRefresh;
-
-      if (primeStoryCredits) {
-        try {
-          await primeStoryCredits(ids, { forceRefresh });
-          forceFetchForDetails = false;
-        } catch (error) {
-          console.warn('Failed to prime story credits', error);
-          forceFetchForDetails = forceRefresh;
-        }
-      }
-
-      setStoryCreditsLoading((prev) => {
-        const next = { ...prev };
-        ids.forEach((id) => {
-          next[id] = true;
-        });
-        return next;
-      });
-
-      try {
-        const results = await Promise.all(
-          ids.map(async (id) => {
-            try {
-              const result = await fetchStoryCredits(id, { forceRefresh: forceFetchForDetails });
-              if (result?.success && result.data) {
-                return [
-                  id,
-                  { requiredCredits: result.data.requiredCredits, stale: result.stale }
-                ];
-              }
-            } catch (error) {
-              console.warn('Failed to fetch credits for story', id, error);
-            }
-            return [id, null];
-          })
-        );
-
-        setStoryCredits((prev) => {
-          const next = { ...prev };
-          results.forEach(([id, data]) => {
-            if (data) {
-              next[id] = data;
-            }
-          });
-          return next;
-        });
-      } finally {
-        setStoryCreditsLoading((prev) => {
-          const next = { ...prev };
-          ids.forEach((id) => {
-            delete next[id];
-          });
-          return next;
-        });
-      }
-    },
-    [fetchStoryCredits, primeStoryCredits]
-  );
-
-  const fetchCreditsForStory = useCallback(
-    async (storyId, { forceRefresh = false } = {}) => {
-      if (!storyId || !fetchStoryCredits) {
-        return null;
-      }
-
-      if (!forceRefresh && storyCredits[storyId]) {
-        return storyCredits[storyId];
-      }
-
-      setStoryCreditsLoading((prev) => ({ ...prev, [storyId]: true }));
-
-      try {
-        const result = await fetchStoryCredits(storyId, { forceRefresh });
-        if (result?.success && result.data) {
-          const info = {
-            requiredCredits: result.data.requiredCredits,
-            stale: result.stale
-          };
-          setStoryCredits((prev) => ({ ...prev, [storyId]: info }));
-          return info;
-        }
-        return null;
-      } finally {
-        setStoryCreditsLoading((prev) => {
-          const next = { ...prev };
-          delete next[storyId];
-          return next;
-        });
-      }
-    },
-    [fetchStoryCredits, storyCredits]
-  );
-
   // Handle story selection
   const handleStorySelect = async (story) => {
     // Prevent duplicate handling while processing
     if (processingStories[story.id]) {
       return;
     }
-    
+
     // If audio is currently playing, stop it first
     if (isPlaying && selectedStory?.id !== story.id) {
       await unloadAudio();
     }
 
-    const needsGeneration =
-      !story.localAudioUri &&
-      !story.hasLocalAudio &&
-      !story.hasAudio;
+    const hasLocalUri = !!story.localAudioUri;
+    const hasServerUri = !!story.localUri;
+    const hasServerAudio = !!story.hasAudio;
+    const requiresGeneration = !hasLocalUri && !story.hasLocalAudio && !hasServerAudio;
 
     const creditStateReady = !creditsLoading && !creditsInitializing && !creditsError;
 
-    let requiredCredits = null;
-    if (needsGeneration && fetchCreditsForStory && creditStateReady) {
-      const creditInfo = await fetchCreditsForStory(story.id);
-      requiredCredits = creditInfo?.requiredCredits;
-      if (typeof requiredCredits === 'number' && balance < requiredCredits) {
+    const requiredCredits = getStoryRequiredCredits(story);
+
+    if (requiresGeneration && creditStateReady && typeof requiredCredits === 'number') {
+      if (balance < requiredCredits) {
         showToast('Masz za mało Story Points, aby wygenerować tę bajkę.', 'INFO');
         return;
       }
     }
-    
+
     // Set as selected story
     setSelectedStory(story);
 
     // Check if already has locally saved audio
-    if (story.localAudioUri) {
+    if (hasLocalUri) {
       // Load local audio with auto-play
       loadStoryAudio(story.localAudioUri, true);
       return;
     }
-    
+
     // Check if already has audio on server
-    if (story.hasAudio && story.localUri) {
+    if (hasServerUri) {
       // Load server audio with auto-play
       loadStoryAudio(story.localUri, true);
       return;
     }
-    
+
+    if (hasServerAudio) {
+      await getStoryAudio(story);
+      return;
+    }
+
     // If no audio available, confirm before generating
-    if (needsGeneration) {
+    if (requiresGeneration) {
       setPendingGeneration({
         story,
         requiredCredits
@@ -872,9 +787,7 @@ export default function SynthesisScreen({ navigation }) {
     }
 
     const story = item.story;
-    const creditInfo = storyCredits[story.id];
-    const requiredCredits = creditInfo?.requiredCredits;
-    const creditsLoading = !!storyCreditsLoading[story.id];
+    const requiredCredits = getStoryRequiredCredits(story);
     const isReady = isStoryPurchased(story);
     const affordable =
       typeof requiredCredits === 'number' ? balance >= requiredCredits : true;
@@ -889,7 +802,7 @@ export default function SynthesisScreen({ navigation }) {
         isGenerating={!!processingStories[story.id]}
         requiredCredits={requiredCredits}
         isAffordable={affordable}
-        isCreditLoading={creditsLoading}
+        isCreditLoading={false}
         creditUnitLabel={unitLabel}
         isReady={isReady}
         onPress={() => handleStorySelect(story)}

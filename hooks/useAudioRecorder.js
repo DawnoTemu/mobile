@@ -1,240 +1,223 @@
-import { useState, useEffect, useRef } from 'react';
-import { Audio } from 'expo-av';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
+import {
+  useAudioRecorder as useExpoAudioRecorder,
+  useAudioRecorderState,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  getRecordingPermissionsAsync,
+  setAudioModeAsync,
+} from 'expo-audio';
+
+const MAX_DURATION_SECONDS = 60;
 
 export default function useAudioRecorder() {
-  const [recording, setRecording] = useState(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(60); // Start at 30 seconds
-  const [audioUri, setAudioUri] = useState(null);
+  const recorder = useExpoAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(recorder, 250);
+
   const [permissionStatus, setPermissionStatus] = useState(null);
+  const [audioUri, setAudioUri] = useState(null);
   const [progress, setProgress] = useState(0);
-  
-  // Add ref for auto-stop timer
+  const [remainingSeconds, setRemainingSeconds] = useState(MAX_DURATION_SECONDS);
+
   const recordingTimerRef = useRef(null);
-  
-  // Add ref to store the auto-stop callback
   const autoStopCallbackRef = useRef(null);
-  // Request permissions on mount
+
+  const isRecording = recorderState?.isRecording ?? false;
+
   useEffect(() => {
+    let mounted = true;
+
     (async () => {
-      const { status } = await Audio.requestPermissionsAsync();
-      setPermissionStatus(status);
+      try {
+        const { status } = await getRecordingPermissionsAsync();
+        if (mounted) {
+          setPermissionStatus(status);
+        }
+      } catch (error) {
+        console.warn('Unable to retrieve microphone permissions', error);
+      }
     })();
-    
-    // Clean up recording if component unmounts
+
     return () => {
-      stopRecording();
-      // Also clear the timer on unmount
+      mounted = false;
       if (recordingTimerRef.current) {
         clearTimeout(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
     };
   }, []);
-  
-  // Update duration every second while recording and handle auto-stop
+
+  const ensurePermissionsAsync = useCallback(async () => {
+    if (permissionStatus === 'granted') {
+      return true;
+    }
+
+    const { status } = await requestRecordingPermissionsAsync();
+    setPermissionStatus(status);
+    return status === 'granted';
+  }, [permissionStatus]);
+
+  const configureRecordingSessionAsync = useCallback(async () => {
+    await setAudioModeAsync({
+      allowsRecording: true,
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      interruptionMode: 'duckOthers',
+      interruptionModeAndroid: 'duckOthers',
+      shouldRouteThroughEarpiece: false,
+    });
+  }, []);
+
+  const configurePlaybackSessionAsync = useCallback(async () => {
+    await setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'duckOthers',
+      interruptionModeAndroid: 'duckOthers',
+      shouldRouteThroughEarpiece: true,
+    });
+  }, []);
+
+  const stopRecording = useCallback(async () => {
+    if (!recorderState?.canRecord && !recorderState?.isRecording) {
+      return null;
+    }
+
+    try {
+      await recorder.stop();
+    } catch (error) {
+      console.error('Error stopping recording:', error);
+    }
+
+    try {
+      await configurePlaybackSessionAsync();
+    } catch (error) {
+      console.warn('Unable to reset audio session after recording', error);
+    }
+
+    const uri = recorder.uri;
+
+    if (uri) {
+      setAudioUri(uri);
+    }
+
+    setProgress(100);
+    setRemainingSeconds(MAX_DURATION_SECONDS);
+    return uri ?? null;
+  }, [configurePlaybackSessionAsync, recorder, recorderState?.canRecord, recorderState?.isRecording]);
+
+  const startRecording = useCallback(
+    async (autoStopCallback = null) => {
+      try {
+        autoStopCallbackRef.current = autoStopCallback;
+
+        const granted = await ensurePermissionsAsync();
+        if (!granted) {
+          throw new Error('Permission to access microphone was denied');
+        }
+
+        await configureRecordingSessionAsync();
+
+        if (recorderState?.isRecording) {
+          await recorder.stop();
+        }
+
+        setAudioUri(null);
+        setProgress(0);
+        setRemainingSeconds(MAX_DURATION_SECONDS);
+
+        await recorder.prepareToRecordAsync();
+        recorder.record();
+
+        return true;
+      } catch (error) {
+        console.error('Failed to start recording:', error);
+        return false;
+      }
+    },
+    [configureRecordingSessionAsync, ensurePermissionsAsync, recorder, recorderState?.isRecording]
+  );
+
+  const stopRecordingRef = useRef(stopRecording);
+  stopRecordingRef.current = stopRecording;
+
   useEffect(() => {
-    let interval = null;
-    
+    let intervalId = null;
+
     if (isRecording) {
-      // Reset to 30 when recording starts
-      setRecordingDuration(recordingDuration);
+      setRemainingSeconds(MAX_DURATION_SECONDS);
       setProgress(0);
-      
-      interval = setInterval(() => {
-        setRecordingDuration(prev => {
-          const newDuration = prev - 1; // Count down instead of up
-          
-          // Auto-stop recording at 0 seconds
-          if (newDuration <= 0) {
-            // We need to use setTimeout to avoid calling stopRecording inside setState
-            // This prevents state update during another state update
+
+      intervalId = setInterval(() => {
+        setRemainingSeconds((prev) => {
+          const next = prev - 1;
+
+          if (next <= 0) {
             if (!recordingTimerRef.current) {
               recordingTimerRef.current = setTimeout(async () => {
-                const uri = await stopRecording();
-                
-                // Call the auto-stop callback if provided
+                const uri = await stopRecordingRef.current();
                 if (autoStopCallbackRef.current && uri) {
                   autoStopCallbackRef.current(uri);
                 }
-                
+                autoStopCallbackRef.current = null;
                 recordingTimerRef.current = null;
               }, 100);
             }
-            return 0; // Don't go below 0
+            setProgress(100);
+            return 0;
           }
-          
-          // Update progress based on remaining time (30 seconds to 0)
-          setProgress(((recordingDuration - newDuration) / recordingDuration) * 100);
-          return newDuration;
+
+          setProgress(((MAX_DURATION_SECONDS - next) / MAX_DURATION_SECONDS) * 100);
+          return next;
         });
       }, 1000);
     } else {
-      // Reset to 30 when not recording
-      setRecordingDuration(recordingDuration);
+      setRemainingSeconds(MAX_DURATION_SECONDS);
     }
-    
+
     return () => {
-      if (interval) {
-        clearInterval(interval);
+      if (intervalId) {
+        clearInterval(intervalId);
       }
-      // Clear the auto-stop timer on cleanup
       if (recordingTimerRef.current) {
         clearTimeout(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
     };
   }, [isRecording]);
-  
-  // Start recording function with auto-stop callback
-  const startRecording = async (autoStopCallback = null) => {
-    try {
-      // Store the callback for later use
-      autoStopCallbackRef.current = autoStopCallback;
-      
-      // Check permissions
-      if (permissionStatus !== 'granted') {
-        console.log('Requesting microphone permission...');
-        const { status } = await Audio.requestPermissionsAsync();
-        setPermissionStatus(status);
-        if (status !== 'granted') {
-          throw new Error('Permission to access microphone was denied');
-        }
-      }
-      
-      // Configure audio session
-      console.log('Configuring audio session...');
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-      
-      // Create and prepare recording
-      console.log('Preparing to record...');
-      const newRecording = new Audio.Recording();
-      
-      try {
-        await newRecording.prepareToRecordAsync({
-          android: {
-            extension: '.wav',
-            outputFormat: Audio.RECORDING_OPTION_ANDROID_OUTPUT_FORMAT_DEFAULT,
-            audioEncoder: Audio.RECORDING_OPTION_ANDROID_AUDIO_ENCODER_DEFAULT,
-            sampleRate: 44100,
-            numberOfChannels: 2,
-            bitRate: 128000,
-          },
-          ios: {
-            extension: '.wav',
-            audioQuality: Audio.RECORDING_OPTION_IOS_AUDIO_QUALITY_HIGH,
-            sampleRate: 44100,
-            numberOfChannels: 2,
-            bitRate: 128000,
-            linearPCMBitDepth: 16,
-            linearPCMIsBigEndian: false,
-            linearPCMIsFloat: false,
-          },
-        });
-        
-        // Start recording
-        console.log('Starting recording...');
-        await newRecording.startAsync();
-        setRecording(newRecording);
-        setIsRecording(true);
-        setRecordingDuration(60); // Initialize to 30 seconds
-        setProgress(0);
-        
-        return true;
-      } catch (prepareError) {
-        console.error('Error preparing recording:', prepareError);
-        throw prepareError;
-      }
-    } catch (error) {
-      console.error('Failed to start recording', error);
-      return false;
-    }
-  };
-  
-  // Stop recording function
-  const stopRecording = async () => {
-    try {
-      if (!recording) {
-        console.log('No active recording to stop');
-        return null;
-      }
-      
-      console.log('Stopping recording...');
-      
-      try {
-        // Stop recording
-        await recording.stopAndUnloadAsync();
-        
-        // Get the recording URI
-        const uri = recording.getURI();
-        console.log('Recording saved at:', uri);
-        setAudioUri(uri);
-        
-        // Reset recording state
-        setIsRecording(false);
-        setRecording(null);
-        
-        // RESET AUDIO MODE FOR PLAYBACK - ADD THIS
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: true,
-          shouldDuckAndroid: true,
-          playThroughEarpieceAndroid: true, // Set back to true for normal speaker output
-        });
-        
-        return uri;
-      } catch (stopError) {
-        console.error('Error stopping recording:', stopError);
-        
-        // Reset recording state even if there's an error
-        setIsRecording(false);
-        setRecording(null);
-        
-        return null;
-      }
-    } catch (error) {
-      console.error('Failed to stop recording', error);
-      
-      // Reset recording state even if there's an error
-      setIsRecording(false);
-      setRecording(null);
-      
-      return null;
-    }
-  };
-  
-  // Format duration for display (mm:ss)
-  const formatDuration = (seconds) => {
+
+  const formatDuration = useCallback((seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-  };
-  
-  // Handle file uploads
-  const handleAudioFileUpload = async (fileUri) => {
+  }, []);
+
+  const handleAudioFileUpload = useCallback(async (fileUri) => {
     try {
+      if (fileUri && Platform.OS === 'ios') {
+        const info = await FileSystem.getInfoAsync(fileUri);
+        if (!info.exists) {
+          console.warn('Uploaded audio file does not exist at path:', fileUri);
+          return null;
+        }
+      }
+
       setAudioUri(fileUri);
       return fileUri;
     } catch (error) {
-      console.error('Failed to handle audio file', error);
+      console.error('Failed to handle audio file upload:', error);
       return null;
     }
-  };
-  
+  }, []);
+
   return {
     isRecording,
     startRecording,
     stopRecording,
-    recordingDuration,
+    recordingDuration: remainingSeconds,
     formatDuration,
     audioUri,
     permissionStatus,

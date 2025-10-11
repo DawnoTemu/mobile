@@ -41,7 +41,7 @@
     },
     "plugins": [
       [
-        "expo-av",
+        "expo-audio",
         {
           "microphonePermission": "We use the microphone to record a short voice sample, which is used to create a personalized AI voice model for generating children’s audiobooks narrated in your voice."
         }

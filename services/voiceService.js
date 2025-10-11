@@ -341,13 +341,55 @@ export const getCurrentVoice = async () => {
 
 // STORY MANAGEMENT
 
+const normalizeRequiredCredits = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, value);
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, parsed);
+    }
+  }
+
+  return null;
+};
+
+const normalizeStory = (story) => {
+  if (!story || typeof story !== 'object') {
+    return story;
+  }
+
+  const requiredCreditsCandidate =
+    story.requiredCredits ??
+    story.required_credits ??
+    story.requiredCredit ??
+    story.required_credit;
+
+  const normalizedCredits = normalizeRequiredCredits(requiredCreditsCandidate);
+
+  return {
+    ...story,
+    requiredCredits: normalizedCredits,
+  };
+};
+
+const normalizeStories = (stories = []) => {
+  if (!Array.isArray(stories)) {
+    return [];
+  }
+  return stories.map((story) => normalizeStory(story));
+};
+
 /**
  * Caches stories in AsyncStorage
  * @param {Array} stories - List of story objects
  */
 const cacheStories = async (stories) => {
   try {
-    await AsyncStorage.setItem(STORAGE_KEYS.CACHED_STORIES, JSON.stringify(stories));
+    const normalized = normalizeStories(stories);
+    await AsyncStorage.setItem(STORAGE_KEYS.CACHED_STORIES, JSON.stringify(normalized));
     await AsyncStorage.setItem(STORAGE_KEYS.LAST_STORIES_FETCH, Date.now().toString());
     return { success: true };
   } catch (error) {
@@ -367,7 +409,8 @@ const cacheStories = async (stories) => {
 const getCachedStories = async () => {
   try {
     const storiesString = await AsyncStorage.getItem(STORAGE_KEYS.CACHED_STORIES);
-    return storiesString ? JSON.parse(storiesString) : [];
+    const parsed = storiesString ? JSON.parse(storiesString) : [];
+    return normalizeStories(parsed);
   } catch (error) {
     console.error('Failed to get cached stories:', error);
     return [];
@@ -409,12 +452,14 @@ export const getStories = async (forceRefresh = false) => {
       const result = await apiRequest('/stories');
       
       if (result.success) {
+        const normalizedStories = normalizeStories(result.data || []);
+        
         // Cache the stories for offline use
-        await cacheStories(result.data || []);
+        await cacheStories(normalizedStories);
         
         return {
           success: true,
-          stories: result.data || [],
+          stories: normalizedStories,
           fromCache: false
         };
       }

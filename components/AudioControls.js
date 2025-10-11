@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -46,15 +46,64 @@ export default function AudioControls({
   const [expanded, setExpanded] = useState(false);
   const hasAudio = duration > 0;
   const hasAutoPlayed = useRef(false);
+  const scrollViewRef = useRef(null);
+  const [storyContentHeight, setStoryContentHeight] = useState(0);
+  const [storyContainerHeight, setStoryContainerHeight] = useState(0);
+  const [isUserScrollingStory, setIsUserScrollingStory] = useState(false);
+  const userScrollTimeoutRef = useRef(null);
+  const currentScrollYRef = useRef(0);
+  const targetScrollRef = useRef(0);
+  const lastAutoScrollYRef = useRef(0);
+  const pendingScrollYRef = useRef(0);
+  const justJumpRef = useRef(false);
+  const scrollLoopRef = useRef(null);
   
   // Placeholder story data (will be replaced with real data later)
-  const storyData = story || {
-    title: audioTitle || "Story Title",
-    author: "Author Name",
-    cover: null, // This will be replaced with actual image
-    description: "This is a placeholder for the story description. It will be replaced with the actual story description from the server later.",
-    text: "Once upon a time, in a land far, far away...\n\nThis is a placeholder for the full story text. When the server is extended, this will be replaced with the complete story content. For now, let's imagine this is a wonderful tale about brave knights, magical creatures, and exciting adventures.\n\nThe story continues with twists and turns, keeping children engaged and excited to hear what happens next. Every character has their own unique personality and challenges to overcome.\n\nAs the plot develops, valuable lessons about friendship, courage, and kindness are woven into the narrative. These stories help children develop empathy and understanding while enjoying the entertainment of a good story."
-  };
+  const fallbackStoryText =
+    "Once upon a time, in a land far, far away...\n\nThis is a placeholder for the full story text. When the server is extended, this will be replaced with the complete story content. For now, let's imagine this is a wonderful tale about brave knights, magical creatures, and exciting adventures.\n\nThe story continues with twists and turns, keeping children engaged and excited to hear what happens next. Every character has their own unique personality and challenges to overcome.\n\nAs the plot develops, valuable lessons about friendship, courage, and kindness are woven into the narrative. These stories help children develop empathy and understanding while enjoying the entertainment of a good story.";
+
+  const storyText = useMemo(() => {
+    if (!story) {
+      return fallbackStoryText;
+    }
+
+    const candidate =
+      story.content ??
+      story.text ??
+      story.storyText ??
+      story.story_text ??
+      story.fullText ??
+      story.body ??
+      story.story_content ??
+      story.storyBody;
+
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate;
+    }
+
+    return fallbackStoryText;
+  }, [story]);
+
+  const storyData = useMemo(
+    () => ({
+      title: story?.title || audioTitle || 'Story Title',
+      author: story?.author || 'Author Name',
+      cover: story?.cover_url || story?.cover || null,
+      description:
+        story?.description ||
+        story?.summary ||
+        'This is a placeholder for the story description. It will be replaced with the actual story description from the server later.',
+      text: storyText,
+    }),
+    [audioTitle, story, storyText]
+  );
+
+  const coverSource = useMemo(() => {
+    if (storyData.cover) {
+      return { uri: storyData.cover };
+    }
+    return require('../assets/images/cover.png');
+  }, [storyData.cover]);
   
   // Update slider value when position changes (unless user is seeking)
   useEffect(() => {
@@ -174,7 +223,23 @@ export default function AudioControls({
   const handleSlidingComplete = (value) => {
     setIsSeeking(false);
     if (duration > 0) {
-      onSeek(value * duration);
+      const newPosition = value * duration;
+      onSeek(newPosition);
+
+      const maxOffset = Math.max(0, storyContentHeight - storyContainerHeight);
+      const progress = duration > 0 ? newPosition / duration : 0;
+      const targetOffset = maxOffset * progress;
+
+      if (Number.isFinite(targetOffset)) {
+        targetScrollRef.current = targetOffset;
+        pendingScrollYRef.current = targetOffset;
+        currentScrollYRef.current = targetOffset;
+        lastAutoScrollYRef.current = targetOffset;
+        justJumpRef.current = true;
+        if (scrollViewRef.current) {
+          scrollViewRef.current.scrollTo({ y: targetOffset, animated: false });
+        }
+      }
     }
   };
 
@@ -251,6 +316,202 @@ export default function AudioControls({
     extrapolate: 'clamp'
   });
   
+const stopAutoScroll = useCallback(() => {
+  if (scrollLoopRef.current) {
+    cancelAnimationFrame(scrollLoopRef.current);
+    scrollLoopRef.current = null;
+  }
+}, []);
+
+const startSmoothScroll = (
+  scrollViewRef,
+  currentScrollYRef,
+  targetScrollRef,
+  lastAutoScrollYRef,
+  expanded,
+  isUserScrollingStory,
+  isSeeking,
+  storyContentHeight,
+  storyContainerHeight
+) => {
+  if (scrollLoopRef.current || !scrollViewRef.current) {
+    return;
+  }
+
+  const step = () => {
+    scrollLoopRef.current = null;
+
+    if (
+      !expanded ||
+      isUserScrollingStory ||
+      isSeeking ||
+      storyContentHeight <= storyContainerHeight ||
+      !scrollViewRef.current
+    ) {
+      return;
+    }
+
+    const current = currentScrollYRef.current;
+    const target = targetScrollRef.current;
+    const diff = target - current;
+
+    if (Math.abs(diff) <= 0.6) {
+      scrollViewRef.current.scrollTo({ y: target, animated: false });
+      currentScrollYRef.current = target;
+      lastAutoScrollYRef.current = target;
+      justJumpRef.current = false;
+      return;
+    }
+
+    const eased = current + diff * 0.2;
+    currentScrollYRef.current = eased;
+    lastAutoScrollYRef.current = eased;
+    scrollViewRef.current.scrollTo({ y: eased, animated: false });
+
+    scrollLoopRef.current = requestAnimationFrame(step);
+  };
+
+  scrollLoopRef.current = requestAnimationFrame(step);
+};
+
+  const handleStoryScrollStart = useCallback(() => {
+    if (userScrollTimeoutRef.current) {
+      clearTimeout(userScrollTimeoutRef.current);
+      userScrollTimeoutRef.current = null;
+    }
+    stopAutoScroll();
+    setIsUserScrollingStory(true);
+  }, [stopAutoScroll]);
+
+  const handleStoryScrollEnd = useCallback(() => {
+    if (userScrollTimeoutRef.current) {
+      clearTimeout(userScrollTimeoutRef.current);
+    }
+    userScrollTimeoutRef.current = setTimeout(() => {
+      setIsUserScrollingStory(false);
+      userScrollTimeoutRef.current = null;
+    }, 1200);
+  }, []);
+
+  const handleStoryScroll = useCallback((event) => {
+    const offsetY = event.nativeEvent.contentOffset.y;
+    currentScrollYRef.current = offsetY;
+    lastAutoScrollYRef.current = offsetY;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (userScrollTimeoutRef.current) {
+        clearTimeout(userScrollTimeoutRef.current);
+        userScrollTimeoutRef.current = null;
+      }
+      stopAutoScroll();
+    };
+  }, [stopAutoScroll]);
+
+  useEffect(() => {
+    currentScrollYRef.current = 0;
+    targetScrollRef.current = 0;
+    setStoryContentHeight(0);
+    setStoryContainerHeight(0);
+    setIsUserScrollingStory(false);
+    lastAutoScrollYRef.current = 0;
+    pendingScrollYRef.current = 0;
+    justJumpRef.current = true;
+    if (scrollViewRef.current) {
+      scrollViewRef.current.scrollTo({ y: 0, animated: false });
+    }
+  }, [story?.id, storyText]);
+
+  useEffect(() => {
+    if (duration <= 0 || !storyText) {
+      targetScrollRef.current = 0;
+      pendingScrollYRef.current = 0;
+      return;
+    }
+
+    const clampedPosition = Math.max(0, Math.min(position, duration));
+    const maxOffset = Math.max(0, storyContentHeight - storyContainerHeight);
+    const progress = duration > 0 ? clampedPosition / duration : 0;
+    const targetOffset = maxOffset * progress;
+
+    if (!Number.isFinite(targetOffset)) {
+      return;
+    }
+
+    targetScrollRef.current = targetOffset;
+    pendingScrollYRef.current = targetOffset;
+
+    if (
+      !expanded ||
+      isUserScrollingStory ||
+      isSeeking ||
+      storyContentHeight <= storyContainerHeight ||
+      !scrollViewRef.current
+    ) {
+      stopAutoScroll();
+      return;
+    }
+
+    const distance = Math.abs(targetOffset - currentScrollYRef.current);
+    if (distance < 2) {
+      stopAutoScroll();
+      return;
+    }
+
+    const shouldSmooth = !justJumpRef.current && distance < 250;
+
+    if (!shouldSmooth) {
+      stopAutoScroll();
+      scrollViewRef.current.scrollTo({ y: targetOffset, animated: false });
+      currentScrollYRef.current = targetOffset;
+      lastAutoScrollYRef.current = targetOffset;
+      justJumpRef.current = false;
+      return;
+    }
+
+    justJumpRef.current = false;
+    startSmoothScroll(
+      scrollViewRef,
+      currentScrollYRef,
+      targetScrollRef,
+      lastAutoScrollYRef,
+      expanded,
+      isUserScrollingStory,
+      isSeeking,
+      storyContentHeight,
+      storyContainerHeight
+    );
+  }, [
+    duration,
+    expanded,
+    isSeeking,
+    isUserScrollingStory,
+    stopAutoScroll,
+    position,
+    storyContainerHeight,
+    storyContentHeight,
+    storyText,
+  ]);
+
+  useEffect(() => {
+    if (
+      !expanded ||
+      isUserScrollingStory ||
+      storyContentHeight <= storyContainerHeight ||
+      !scrollViewRef.current
+    ) {
+      stopAutoScroll();
+      return;
+    }
+
+    stopAutoScroll();
+    scrollViewRef.current.scrollTo({ y: pendingScrollYRef.current, animated: false });
+    currentScrollYRef.current = pendingScrollYRef.current;
+    lastAutoScrollYRef.current = pendingScrollYRef.current;
+    justJumpRef.current = false;
+  }, [expanded, isUserScrollingStory, stopAutoScroll, storyContentHeight, storyContainerHeight]);
+
   return (
     <Animated.View
       style={[
@@ -372,11 +633,7 @@ export default function AudioControls({
               <View style={styles.storyHeader}>
                 <View style={styles.coverContainer}>
                   <Image 
-                    source={
-                      story && story.cover_url
-                        ? { uri: story.cover_url }
-                        : require('../assets/images/cover.png')
-                    } 
+                    source={coverSource}
                     style={styles.coverImage} 
                     resizeMode="cover"
                     onError={(e) => {
@@ -392,12 +649,27 @@ export default function AudioControls({
               </View>
               
               {/* Story Text Scroll View */}
-              <ScrollView 
+              <View
                 style={styles.storyTextContainer}
-                contentContainerStyle={styles.storyTextContent}
+                onLayout={(event) =>
+                  setStoryContainerHeight(event.nativeEvent.layout.height)
+                }
               >
-                <Text style={styles.storyText}>{storyData.content}</Text>
-              </ScrollView>
+                <ScrollView
+                  ref={scrollViewRef}
+                  style={styles.storyTextScrollView}
+                  contentContainerStyle={styles.storyTextContent}
+                  onContentSizeChange={(_, height) => setStoryContentHeight(height)}
+                  onScroll={handleStoryScroll}
+                  scrollEventThrottle={16}
+                  onScrollBeginDrag={handleStoryScrollStart}
+                  onScrollEndDrag={handleStoryScrollEnd}
+                  onMomentumScrollBegin={handleStoryScrollStart}
+                  onMomentumScrollEnd={handleStoryScrollEnd}
+                >
+                  <Text style={styles.storyText}>{storyData.text}</Text>
+                </ScrollView>
+              </View>
               
               {/* Player Controls in Expanded Mode */}
               <View style={styles.expandedPlayerControls}>
@@ -619,6 +891,9 @@ const styles = StyleSheet.create({
   storyTextContainer: {
     flex: 1,
     marginBottom: 16,
+  },
+  storyTextScrollView: {
+    flex: 1,
   },
   storyTextContent: {
     paddingBottom: 20,

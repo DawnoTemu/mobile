@@ -1,6 +1,5 @@
 import * as FileSystem from 'expo-file-system';
-import { Audio } from 'expo-av';
-import { Image } from 'react-native';
+import { setAudioModeAsync } from 'expo-audio';
 import { Platform } from 'react-native';
 
 /**
@@ -56,14 +55,13 @@ export const getFileInfo = async (uri) => {
  */
 export const configureAudioSessionForRecording = async () => {
   try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      playsInSilentModeIOS: true,
-      interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
-      staysActiveInBackground: false,
-      interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
-      shouldDuckAndroid: true,
-      playThroughEarpieceAndroid: false,
+    await setAudioModeAsync({
+      allowsRecording: true,
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      interruptionMode: 'doNotMix',
+      interruptionModeAndroid: 'doNotMix',
+      shouldRouteThroughEarpiece: false,
     });
   } catch (error) {
     console.error('Error configuring audio session:', error);
@@ -77,13 +75,13 @@ export const configureAudioSessionForRecording = async () => {
  */
 export const configureAudioSessionForPlayback = async () => {
   try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: true,
-      interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
-      interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
-      shouldDuckAndroid: true,
+    await setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'doNotMix',
+      interruptionModeAndroid: 'doNotMix',
+      shouldRouteThroughEarpiece: false,
     });
   } catch (error) {
     console.error('Error configuring audio session:', error);

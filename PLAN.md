@@ -1,36 +1,38 @@
 # Task & Context
-- Upgrade the Expo-managed React Native project from SDK 53 to SDK 54 so that it runs with the latest Expo Go (54.0.0) and stays compatible with current tooling.
+- Sync the story text shown within the expanded audio controls with the currently playing audio, so the text automatically scrolls in step with playback and seeks.
 
 ## Current State (codebase scan)
-- `package.json` pins `expo@^53.0.0`, Expo modules `~53.x`, `expo-router@~5.1.3`, `jest-expo@~53.0.9`, and `react-native@^0.79.5`; lockfile is `package-lock.json`.
-- `app.json` configures Expo settings (icons, plugins, runtimeVersion) but no explicit `sdkVersion`.
-- `eas.json`, `metro.config.js`, `expo-env.d.ts`, and native folders (`ios/`) may require adjustments after upgrading.
-- README and docs do not mention SDK 54 yet; tooling scripts rely on Expo CLI defaults.
+- `components/AudioControls.js` renders the minimized/expanded player UI, including a ScrollView that displays `storyData.text` (currently fallback content) but no linkage to audio position.
+- `SynthesisScreen.js` supplies `position`, `duration`, and the selected `story` object to `AudioControls`; it already tracks playback via `useAudioPlayer`.
+- `hooks/useAudioPlayer.js` emits live playback status (seconds) to the screen; no direct changes needed but confirms position updates are available.
+- Story objects fetched through `voiceService.getStories()` are normalized but may not yet expose a definitive text field (placeholder text is used when absent).
 
 ## Proposed Changes (files & functions)
-- Bump `expo`, Expo modules, `react-native`, `react-navigation` packages, and other SDK-bound deps in `package.json`; regenerate `package-lock.json`.
-- Align devDependencies (`jest-expo`, types, TypeScript if required) with SDK 54 compatibility.
-- Update Expo configuration files (`app.json`, `eas.json`, `expo-env.d.ts`, `metro.config.js`) to match SDK 54 defaults and any new required fields.
-- Adjust code usages if APIs changed (e.g., `expo-av`, `expo-file-system`, routing utilities) and update docs/README to reflect SDK 54.
+- `components/AudioControls.js`: add refs/state to measure the story text ScrollView, watch audio `position`/`duration`, and programmatically scroll content. Introduce guards for short texts, expansion state, and user interactions (e.g., pausing auto-scroll while the user drags).
+- (Optional) `voiceService.js` / `AudioControls` storyData helper: ensure we prefer a real story text field (e.g., `story.content`/`story.text`) before falling back to placeholder copy.
+- (If necessary) minor adjustments in `SynthesisScreen.js` to pass the correct text field once confirmed.
 
 ## Step-by-Step Plan
-1. Review the Expo SDK 54 release notes/migration guide to list required dependency versions and config changes.
-2. Update `package.json` dependency versions (use `npx expo install --fix` / `expo upgrade` as reference), then run `npm install` to refresh `package-lock.json`.
-3. Inspect and update configuration files (`app.json`, `eas.json`, `metro.config.js`, `expo-env.d.ts`) for new schema fields or defaults; verify plugin compatibility.
-4. Audit source code for APIs affected by SDK 54 (especially `expo-av`, `expo-updates`, `expo-router`, `react-native` breaking changes) and adjust implementations/tests as needed.
-5. Run `npx expo doctor --fix`, `npm run lint`, `npm test`, and `npm run start` (or `expo start`) to confirm the project boots with Expo Go 54.
-6. Update documentation/README to note the new SDK version and any changed workflows; consider regenerating build artifacts if required.
+1. Inspect a real story object as loaded in `SynthesisScreen` to confirm which property holds the full text; update the `storyData` helper in `AudioControls` to use it with sensible fallbacks.
+2. In `AudioControls`, add refs for the ScrollView and store layout metrics (`contentHeight`, `containerHeight`), capturing them via `onContentSizeChange` and `onLayout`.
+3. Implement an effect that reacts to changes in `position` (seconds) and `duration`, computing a target scroll offset (e.g., linear proportion) and calling `scrollTo` when the expanded view is visible and auto-scroll is allowed.
+4. Add protections for user interaction: track when the user begins dragging the ScrollView or scrubber and temporarily suspend auto-scroll, resuming after the interaction ends or after a short delay.
+5. Reset scroll position when a new story loads or when playback stops/rewinds to the start, ensuring a smooth restart.
+6. Validate on simulator/device: play audio, watch the text follow playback, seek via slider, and confirm the ScrollView jumps to the corresponding section without jitter.
 
 ## Risks & Assumptions
-- Some dependencies (e.g., `react-native@^0.79.5`, React 19) may not yet be fully supported by Expo 54, requiring version alignment or overrides removal.
-- Native builds might require additional pod install or Gradle sync steps after the upgrade.
-- API changes in Expo modules could introduce runtime regressions if not audited.
-- Limited network access could slow dependency version discovery unless documentation is available offline.
+- Assumes stories include a reliable full-text field; if not, syncing can only operate on placeholder text.
+- Linear position-to-scroll mapping may drift if narration timing is uneven; this plan does not introduce per-sentence timestamps.
+- Automated scrolling while users read could feel abrupt; may need easing or throttling to avoid jumpiness.
 
 ## Validation & Done Criteria
-- `expo doctor` reports no incompatibilities; lint/tests pass.
-- App launches successfully in Expo Go 54 (local simulator or device) without upgrade prompts.
-- Package and config files clearly reflect SDK 54, and docs communicate the new baseline.
+- When audio plays, the story text automatically scrolls forward, keeping the current passage in view while expanded.
+- Seeking (via slider or skip buttons) scrolls the text to the corresponding location.
+- Manual ScrollView interaction does not fight with auto-scroll; once the user stops interacting, auto-sync resumes.
+- No regressions to audio playback controls or minimized player behavior.
 
 ## Open Questions
-- None; resolved during implementation by adopting the Expo SDK 54 compatibility matrix (React 19.1.0 / React Native 0.81.4) and verifying plugin/native settings.
+- Which property on the fetched story payload should represent the authoritative text? (Confirm before coding.)
+content
+- Should auto-scroll run while the player is minimized, or only when the expanded view is open?
+only when the expanded view is open

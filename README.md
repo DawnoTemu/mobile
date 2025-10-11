@@ -50,7 +50,7 @@ my-app/
 - **React Native**: Cross-platform mobile framework
 - **Expo**: Development platform for React Native
 - **React Navigation**: Navigation library
-- **Expo AV**: Audio recording and playback
+- **Expo Audio**: Audio recording and playback
 - **Expo FileSystem**: File management
 - **AsyncStorage**: Local data persistence
 - **NetInfo**: Network connectivity monitoring

@@ -8,9 +8,9 @@ import {
   Image,
   Animated,
   Dimensions,
-  SafeAreaView,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import { useToast } from '../components/StatusToast';

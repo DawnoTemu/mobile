@@ -1,191 +1,237 @@
-import { useState, useEffect, useRef } from 'react';
-import { Audio } from 'expo-av';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useAudioPlayer as useExpoAudioPlayer,
+  useAudioPlayerStatus,
+  setAudioModeAsync,
+} from 'expo-audio';
 
 export default function useAudioPlayer() {
-  const [sound, setSound] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [position, setPosition] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isBuffering, setIsBuffering] = useState(false);
   const [error, setError] = useState(null);
-  
-  // Reference to track position update interval
-  const positionInterval = useRef(null);
-  
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      if (sound) {
-        sound.unloadAsync();
-      }
-      if (positionInterval.current) {
-        clearInterval(positionInterval.current);
-      }
-    };
-  }, [sound]);
-  
-  // Format time (seconds to MM:SS)
-  const formatTime = (seconds) => {
+  const [isLoading, setIsLoading] = useState(false);
+  const [pendingAutoplay, setPendingAutoplay] = useState(false);
+  const [currentUri, setCurrentUri] = useState(null);
+
+  const pendingCorruptionHandler = useRef(null);
+  const pendingUriRef = useRef(null);
+
+  const player = useExpoAudioPlayer(null, { updateInterval: 250, keepAudioSessionActive: false });
+  const status = useAudioPlayerStatus(player);
+
+  const formatTime = useCallback((seconds) => {
     if (!seconds && seconds !== 0) return '0:00';
-    
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-  };
-  
-  // Load an audio file
-  const loadAudio = async (uri, autoPlay = true, onCorruptedFile = null) => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      
-      // Unload any existing sound
-      if (sound) {
-        await sound.unloadAsync();
-      }
-      
-      // Configure audio mode
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        shouldDuckAndroid: true,
-      });
-      
-      // Create and load the sound
-      console.log('Loading audio from:', uri);
-      const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri },
-        { shouldPlay: autoPlay },
-        onPlaybackStatusUpdate
-      );
-      
-      setSound(newSound);
-      setIsLoading(false);
-      
-      return true;
-    } catch (error) {
-      console.error('Error loading audio:', error);
-      
-      // Check for corruption errors (AVFoundationErrorDomain error -11849)
-      const isCorrupted = error.message && (
-        error.message.includes('damaged') || 
-        error.message.includes('AVFoundationErrorDomain') ||
-        error.message.includes('-11849')
-      );
-      
-      if (isCorrupted && onCorruptedFile) {
-        // Call the corruption handler with the URI
-        onCorruptedFile(uri);
-      } else {
-        setError('Failed to load audio file');
-      }
-      
-      setIsLoading(false);
-      return false;
-    }
-  };
-  
-  // Callback for playback status updates
-  const onPlaybackStatusUpdate = (status) => {
-    if (status.isLoaded) {
-      setDuration(status.durationMillis / 1000); // Convert to seconds
-      setPosition(status.positionMillis / 1000);
-      setIsPlaying(status.isPlaying);
-      setIsBuffering(status.isBuffering);
-      
-      // If playback finished
-      if (status.didJustFinish) {
-        setIsPlaying(false);
-      }
-    } else if (status.error) {
-      setError(`Error during playback: ${status.error}`);
-    }
-  };
-  
-  // Play/Pause toggle
-  const togglePlayPause = async () => {
-    if (!sound) return;
-    
-    try {
-      const status = await sound.getStatusAsync();
+  }, []);
 
-      if (isPlaying) {
-        await sound.pauseAsync();
-      } else {
-        if (status.positionMillis === status.durationMillis) {
-          await sound.setPositionAsync(0);
+  const resetPendingFailure = () => {
+    pendingCorruptionHandler.current = null;
+    pendingUriRef.current = null;
+  };
+
+  useEffect(() => {
+    if (!currentUri) {
+      setIsLoading(false);
+      resetPendingFailure();
+      return;
+    }
+
+    if (isLoading && status?.isLoaded) {
+      setIsLoading(false);
+
+      if (pendingAutoplay) {
+        try {
+          player.play();
+        } catch (playError) {
+          console.error('Error auto-playing audio:', playError);
+          setError('Nie udało się odtworzyć pliku audio.');
+        } finally {
+          setPendingAutoplay(false);
         }
-        await sound.playAsync();
       }
-    } catch (error) {
-      console.error('Error toggling play/pause:', error);
-      setError('Failed to control playback');
+
+      resetPendingFailure();
     }
-  };
-  
-  // Rewind (5 seconds by default)
-  const rewind = async (seconds = 5) => {
-    if (!sound) return;
-    
-    try {
-      const newPosition = Math.max(0, position - seconds);
-      await sound.setPositionAsync(newPosition * 1000);
-    } catch (error) {
-      console.error('Error rewinding:', error);
+  }, [status?.isLoaded, currentUri, isLoading, pendingAutoplay, player]);
+
+  useEffect(() => {
+    if (!status) {
+      return;
     }
-  };
-  
-  // Forward (5 seconds by default)
-  const forward = async (seconds = 5) => {
-    if (!sound || !duration) return;
-    
-    try {
-      const newPosition = Math.min(duration, position + seconds);
-      await sound.setPositionAsync(newPosition * 1000);
-    } catch (error) {
-      console.error('Error fast-forwarding:', error);
+
+    if (
+      pendingCorruptionHandler.current &&
+      (status.playbackState?.toLowerCase?.().includes('failed') ||
+        status.reasonForWaitingToPlay?.toLowerCase?.().includes('failed') ||
+        status.reasonForWaitingToPlay?.toLowerCase?.().includes('error'))
+    ) {
+      const handler = pendingCorruptionHandler.current;
+      const uri = pendingUriRef.current;
+
+      handler?.(uri);
+      resetPendingFailure();
+      setError('Wykryto uszkodzony plik audio.');
+      setIsLoading(false);
+      setPendingAutoplay(false);
     }
-  };
-  
-  // Seek to a specific position
-  const seekTo = async (seconds) => {
-    if (!sound) return;
-    
-    try {
-      await sound.setPositionAsync(seconds * 1000);
-    } catch (error) {
-      console.error('Error seeking:', error);
-    }
-  };
-  
-  // Unload the current sound
-  const unloadAudio = async () => {
-    if (positionInterval.current) {
-      clearInterval(positionInterval.current);
-      positionInterval.current = null;
-    }
-    if (sound) {
+  }, [status]);
+
+  const loadAudio = useCallback(
+    async (uri, autoPlay = true, onCorruptedFile = null) => {
+      if (!uri) {
+        setError('Nieprawidłowy adres pliku audio.');
+        return false;
+      }
+
+      setError(null);
+      setIsLoading(true);
+      setPendingAutoplay(autoPlay);
+      setCurrentUri(uri);
+
+      pendingCorruptionHandler.current = onCorruptedFile;
+      pendingUriRef.current = uri;
+
       try {
-        await sound.stopAsync();
-        await sound.unloadAsync();
-        setSound(null);
-      } catch (error) {
-        console.error('Error unloading audio:', error);
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+          interruptionMode: 'duckOthers',
+          interruptionModeAndroid: 'duckOthers',
+          allowsRecording: false,
+          shouldRouteThroughEarpiece: false,
+        });
+
+        player.pause();
+        player.seekTo(0).catch(() => {});
+        await player.replace({ uri });
+
+        if (!autoPlay) {
+          setPendingAutoplay(false);
+        }
+
+        return true;
+      } catch (loadError) {
+        console.error('Error loading audio:', loadError);
+        setError('Nie udało się załadować pliku audio.');
+        setIsLoading(false);
+        setPendingAutoplay(false);
+
+        const message = loadError?.message ?? '';
+        const isCorruptionError =
+          typeof message === 'string' &&
+          (message.includes('damaged') ||
+            message.includes('AVFoundationErrorDomain') ||
+            message.includes('-11849'));
+
+        if (isCorruptionError && onCorruptedFile) {
+          onCorruptedFile(uri);
+        }
+
+        return false;
       }
+    },
+    [player]
+  );
+
+  const togglePlayPause = useCallback(() => {
+    if (!status?.isLoaded) {
+      return;
     }
-    setPosition(0);
-    setDuration(0);
-    setIsPlaying(false);
-  };
-  
+
+    try {
+      if (status.playing) {
+        player.pause();
+      } else {
+        if (status.duration && status.currentTime >= status.duration) {
+          player.seekTo(0);
+        }
+        player.play();
+      }
+    } catch (toggleError) {
+      console.error('Error toggling playback:', toggleError);
+      setError('Nie udało się odtworzyć audio.');
+    }
+  }, [player, status]);
+
+  const rewind = useCallback(
+    async (seconds = 5) => {
+      if (!status?.isLoaded) {
+        return;
+      }
+
+      try {
+        const newPosition = Math.max(0, (status.currentTime ?? 0) - seconds);
+        await player.seekTo(newPosition);
+      } catch (rewindError) {
+        console.error('Error rewinding audio:', rewindError);
+      }
+    },
+    [player, status?.currentTime, status?.isLoaded]
+  );
+
+  const forward = useCallback(
+    async (seconds = 5) => {
+      if (!status?.isLoaded || !status?.duration) {
+        return;
+      }
+
+      try {
+        const newPosition = Math.min(status.duration, (status.currentTime ?? 0) + seconds);
+        await player.seekTo(newPosition);
+      } catch (forwardError) {
+        console.error('Error forwarding audio:', forwardError);
+      }
+    },
+    [player, status?.currentTime, status?.duration, status?.isLoaded]
+  );
+
+  const seekTo = useCallback(
+    async (seconds) => {
+      if (!status?.isLoaded) {
+        return;
+      }
+
+      try {
+        await player.seekTo(seconds);
+      } catch (seekError) {
+        console.error('Error seeking audio:', seekError);
+      }
+    },
+    [player, status?.isLoaded]
+  );
+
+  const unloadAudio = useCallback(async () => {
+    try {
+      await player.stop();
+    } catch (stopError) {
+      // Ignore stop errors
+    }
+
+    player.replace(null);
+    setCurrentUri(null);
+    setPendingAutoplay(false);
+    setIsLoading(false);
+    setError(null);
+    resetPendingFailure();
+  }, [player]);
+
+  const derivedState = useMemo(
+    () => ({
+      isPlaying: status?.playing ?? false,
+      duration: status?.duration ?? 0,
+      position: status?.currentTime ?? 0,
+      isBuffering: status?.isBuffering ?? false,
+    }),
+    [status?.playing, status?.duration, status?.currentTime, status?.isBuffering]
+  );
+
   return {
-    sound,
-    isPlaying,
-    duration,
-    position,
+    sound: player,
+    isPlaying: derivedState.isPlaying,
+    duration: derivedState.duration,
+    position: derivedState.position,
     isLoading,
-    isBuffering,
+    isBuffering: derivedState.isBuffering,
     error,
     formatTime,
     loadAudio,

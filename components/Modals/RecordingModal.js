@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,11 @@ import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../../styles/colors';
-import { Audio } from 'expo-av';
+import {
+  useAudioPlayer as useExpoAudioPlayer,
+  useAudioPlayerStatus,
+  setAudioModeAsync,
+} from 'expo-audio';
 
 export default function RecordingModal({
   visible,
@@ -39,11 +43,12 @@ export default function RecordingModal({
   // State for countdown
   const [countdownNumber, setCountdownNumber] = useState(3);
   
-  // Audio playback states
-  const [sound, setSound] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackPosition, setPlaybackPosition] = useState(0);
-  const [playbackDuration, setPlaybackDuration] = useState(0);
+  const audioSource = useMemo(() => (audioUri ? { uri: audioUri } : null), [audioUri]);
+  const player = useExpoAudioPlayer(audioSource, { updateInterval: 200 });
+  const playerStatus = useAudioPlayerStatus(player);
+  const isPlaying = playerStatus?.playing ?? false;
+  const playbackPosition = playerStatus?.currentTime ?? 0;
+  const playbackDuration = playerStatus?.duration ?? 0;
   
   // Reset state when modal is opened/closed
   useEffect(() => {
@@ -51,93 +56,48 @@ export default function RecordingModal({
       setRecordingState('instructions');
       setCountdownNumber(3);
     } else {
-      // Cleanup audio when modal closes
-      if (sound) {
-        sound.unloadAsync();
-        setSound(null);
+      try {
+        player.pause();
+      } catch (error) {
+        // ignore pause errors
       }
+      player.seekTo(0).catch(() => {});
     }
-  }, [visible]);
+  }, [player, visible]);
 
   // Update recording state based on isRecording prop
   useEffect(() => {
     if (isRecording) {
       setRecordingState('recording');
     } else if (audioUri && !isRecording && !isProcessing && recordingState === 'recording') {
-      // Transition to review state when recording finishes and we have an audio URI
       setRecordingState('review');
-      loadRecordedAudio();
     }
-  }, [isRecording, audioUri, isProcessing]);
-  
-  // Cleanup audio on unmount
-  useEffect(() => {
-    return () => {
-      if (sound) {
-        sound.unloadAsync();
-      }
-    };
-  }, []);
-  
-  // Load the recorded audio for playback
-  const loadRecordedAudio = async () => {
-    if (!audioUri) return;
-    
-    // Unload previous sound if it exists
-    if (sound) {
-      await sound.unloadAsync();
-    }
-    
-    try {
-      // Configure audio mode for playback
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        allowsRecordingIOS: false,
-      });
-      
-      // Create and load the sound
-      const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri: audioUri },
-        { shouldPlay: false },
-        onPlaybackStatusUpdate
-      );
-      
-      setSound(newSound);
-    } catch (error) {
-      console.error('Failed to load recorded audio:', error);
-    }
-  };
-  
-  // Callback for playback status updates
-  const onPlaybackStatusUpdate = (status) => {
-    if (status.isLoaded) {
-      setPlaybackDuration(status.durationMillis / 1000); // Convert to seconds
-      setPlaybackPosition(status.positionMillis / 1000);
-      setIsPlaying(status.isPlaying);
-      
-      // If playback finished, reset to beginning
-      if (status.didJustFinish) {
-        setIsPlaying(false);
-      }
-    }
-  };
+  }, [audioUri, isProcessing, isRecording, recordingState]);
   
   // Play/pause the recorded audio
   const togglePlayback = async () => {
-    if (!sound) return;
-    
+    if (!audioUri) return;
+
     try {
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        shouldPlayInBackground: false,
+        interruptionMode: 'duckOthers',
+        interruptionModeAndroid: 'duckOthers',
+        shouldRouteThroughEarpiece: true,
+      });
+
       if (isPlaying) {
-        await sound.pauseAsync();
-      } else {
-        // If we reached the end, start from beginning
-        const status = await sound.getStatusAsync();
-        if (status.positionMillis === status.durationMillis) {
-          await sound.setPositionAsync(0);
-        }
-        await sound.playAsync();
+        player.pause();
+        return;
       }
+
+      if (playbackDuration && playbackPosition >= playbackDuration) {
+        await player.seekTo(0);
+      }
+
+      player.play();
     } catch (error) {
       console.error('Error toggling playback:', error);
     }
@@ -199,13 +159,13 @@ export default function RecordingModal({
   
   // Handle re-recording
   const handleReRecord = () => {
-    // Clean up audio playback
-    if (sound) {
-      sound.unloadAsync();
-      setSound(null);
+    try {
+      player.pause();
+    } catch (error) {
+      // ignore pause errors
     }
-    
-    // Reset to instructions state
+    player.seekTo(0).catch(() => {});
+
     setRecordingState('instructions');
     
     // Call the parent component's re-record handler
@@ -216,12 +176,13 @@ export default function RecordingModal({
   
   // Handle submitting the recording
   const handleSubmitRecording = () => {
-    // Clean up audio playback
-    if (sound) {
-      sound.unloadAsync();
-      setSound(null);
+    try {
+      player.pause();
+    } catch (error) {
+      // ignore pause errors
     }
-    
+    player.seekTo(0).catch(() => {});
+
     // Call the parent component's submit handler
     if (onSubmitRecording) {
       onSubmitRecording(audioUri);
