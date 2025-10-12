@@ -52,6 +52,7 @@ export default function StoryItem({
   isCreditLoading = false,
   creditUnitLabel = 'Punkty Magii',
   isReady = false,
+  statusMessage = '',
   onPress,
 }) {
   const normalizedUnitLabel = deriveUnitLabel(creditUnitLabel);
@@ -174,6 +175,11 @@ export default function StoryItem({
             Za mało Story Points
           </Text>
         )}
+        {statusMessage ? (
+          <Text style={styles.generationStatus} numberOfLines={2}>
+            {statusMessage}
+          </Text>
+        ) : null}
       </View>
       
       {/* Right Side - Status */}
@@ -289,6 +295,13 @@ const styles = StyleSheet.create({
     fontFamily: 'Quicksand-Regular',
     fontSize: 12,
     color: COLORS.error,
+  },
+  generationStatus: {
+    marginTop: 8,
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 13,
+    color: COLORS.text.secondary,
+    lineHeight: 18
   },
   status: {
     justifyContent: 'center',

@@ -978,24 +978,6 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
 
   const resolvedStoryId = toStringOrNull(storyId) ?? String(storyId);
 
-  const emitStatusUpdate = (status, progressOverride = null) => {
-    if (!statusCallback || !status) {
-      return;
-    }
-    const progressHint =
-      progressOverride !== null
-        ? progressOverride
-        : computeStatusProgressHint(status, progressOverride);
-    statusCallback(status, progressHint !== null ? progressHint : undefined);
-  };
-
-  const persistSnapshot = async (status, details = {}) => {
-    return saveGenerationStateSnapshot(resolvedVoiceId, resolvedStoryId, {
-      status,
-      ...details
-    });
-  };
-
   let existingSnapshot = null;
   try {
     const snapshotResult = await loadGenerationStateSnapshot(
@@ -1004,12 +986,6 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
     );
     if (snapshotResult.success) {
       existingSnapshot = snapshotResult.state || null;
-      if (existingSnapshot?.status) {
-        emitStatusUpdate(
-          existingSnapshot.status,
-          computeStatusProgressHint(existingSnapshot.status, null)
-        );
-      }
     }
   } catch (error) {
     console.warn('Failed to load generation snapshot before starting', error);
@@ -1019,6 +995,62 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
   let latestStatus = existingSnapshot?.status || null;
   let latestMetadata = existingSnapshot || {};
   let slotAttempts = 0;
+
+  const emitStatusUpdate = (status, progressOverride = null, snapshot = null) => {
+    if (!statusCallback || !status) {
+      return;
+    }
+    const metadata = snapshot || latestMetadata || {};
+    const progressHintRaw =
+      typeof progressOverride === 'number'
+        ? progressOverride
+        : computeStatusProgressHint(status, null);
+    const progressHint =
+      typeof progressHintRaw === 'number'
+        ? Math.max(0, Math.min(progressHintRaw, 1))
+        : undefined;
+
+    statusCallback({
+      phase: 'generation',
+      status,
+      progress: progressHint,
+      queuePosition:
+        metadata.queuePosition !== undefined ? metadata.queuePosition : null,
+      queueLength:
+        metadata.queueLength !== undefined ? metadata.queueLength : null,
+      remoteVoiceId:
+        metadata.remoteVoiceId !== undefined ? metadata.remoteVoiceId : null,
+      allocationStatus:
+        metadata.allocationStatus !== undefined ? metadata.allocationStatus : null,
+      serviceProvider:
+        metadata.serviceProvider !== undefined ? metadata.serviceProvider : null,
+      message: metadata.message ?? null,
+      metadata
+    });
+  };
+
+  const persistSnapshot = async (status, details = {}) => {
+    const result = await saveGenerationStateSnapshot(
+      resolvedVoiceId,
+      resolvedStoryId,
+      {
+        status,
+        ...details
+      }
+    );
+    if (result.success && result.state) {
+      latestMetadata = result.state;
+    }
+    return result;
+  };
+
+  if (existingSnapshot?.status) {
+    emitStatusUpdate(
+      existingSnapshot.status,
+      computeStatusProgressHint(existingSnapshot.status, null),
+      existingSnapshot
+    );
+  }
 
   try {
     while (true) {
@@ -1040,12 +1072,23 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
           error: apiResult.error
         });
 
+        emitStatusUpdate('error', null, {
+          ...latestMetadata,
+          statusCode: apiResult.status,
+          error: apiResult.error
+        });
+
         return apiResult;
       }
 
       const interpretation = interpretAudioSynthesisResponse(apiResult);
       if (!interpretation.success) {
         await persistSnapshot('error', {
+          ...latestMetadata,
+          error: interpretation.error,
+          code: interpretation.code || 'API_ERROR'
+        });
+        emitStatusUpdate('error', null, {
           ...latestMetadata,
           error: interpretation.error,
           code: interpretation.code || 'API_ERROR'
@@ -1074,10 +1117,12 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
         httpStatus: apiResult.status
       };
 
-      await persistSnapshot(latestStatus, latestMetadata);
+      const persistedState = await persistSnapshot(latestStatus, latestMetadata);
+
       emitStatusUpdate(
         latestStatus,
-        computeStatusProgressHint(latestStatus, null)
+        computeStatusProgressHint(latestStatus, null),
+        persistedState.success ? persistedState.state : latestMetadata
       );
 
       if (latestStatus === 'ready') {
@@ -1086,8 +1131,13 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
           latestMetadata.audioUrl ||
           buildAudioRedirectUrl(resolvedVoiceId, resolvedStoryId);
 
+        emitStatusUpdate('ready', 1, {
+          ...latestMetadata,
+          status: 'ready',
+          audioUrl
+        });
+
         await clearGenerationStateSnapshot(resolvedVoiceId, resolvedStoryId);
-        emitStatusUpdate('complete', 1);
 
         return {
           success: true,
@@ -1123,6 +1173,7 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
             error: timeoutError.error,
             code: timeoutError.code
           });
+          emitStatusUpdate('error', null, timeoutError);
           return timeoutError;
         }
 
@@ -1153,8 +1204,14 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
         pollOutcome.audioUrl ||
         buildAudioRedirectUrl(resolvedVoiceId, resolvedStoryId);
 
+      emitStatusUpdate('ready', 1, {
+        ...latestMetadata,
+        status: 'ready',
+        audioUrl,
+        audioId: audioStoryId || pollOutcome.audioId || null
+      });
+
       await clearGenerationStateSnapshot(resolvedVoiceId, resolvedStoryId);
-      emitStatusUpdate('complete', 1);
 
       return {
         success: true,
@@ -1176,6 +1233,12 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
         error: pollOutcome.error,
         code: pollOutcome.code
       });
+      emitStatusUpdate('error', null, {
+        ...latestMetadata,
+        status: latestStatus,
+        error: pollOutcome.error,
+        code: pollOutcome.code
+      });
       return pollOutcome;
     }
 
@@ -1183,6 +1246,13 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
       ...latestMetadata,
       status: latestStatus || 'processing',
       error: 'Audio generation timed out'
+    });
+
+    emitStatusUpdate('error', null, {
+      ...latestMetadata,
+      status: latestStatus || 'processing',
+      error: 'Audio generation timed out',
+      code: 'GENERATION_TIMEOUT'
     });
 
     return {
@@ -1197,6 +1267,12 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
   } catch (error) {
     console.error('Error generating audio:', error);
     await persistSnapshot('error', {
+      ...latestMetadata,
+      status: latestStatus || 'error',
+      error: error.message
+    });
+
+    emitStatusUpdate('error', null, {
       ...latestMetadata,
       status: latestStatus || 'error',
       error: error.message
@@ -1226,16 +1302,23 @@ const pollForAudioAvailability = async (
   const {
     audioId = null,
     intervalMs = PROCESSING_POLL_INTERVAL_MS,
-    maxAttempts = PROCESSING_POLL_MAX_ATTEMPTS
+    maxAttempts = PROCESSING_POLL_MAX_ATTEMPTS,
+    metadata: initialMetadata = {}
   } = options || {};
 
   let attempts = 0;
+  const metadataRef = { ...(initialMetadata || {}) };
 
   while (attempts < maxAttempts) {
     if (statusCallback) {
       const progress =
         0.6 + (attempts / Math.max(maxAttempts, 1)) * 0.35; // 60% -> 95%
-      statusCallback('processing', Math.min(progress, 0.95));
+      statusCallback({
+        phase: 'polling',
+        status: 'processing',
+        progress: Math.min(progress, 0.95),
+        metadata: metadataRef
+      });
     }
 
     try {
@@ -1251,8 +1334,23 @@ const pollForAudioAvailability = async (
           const errored =
             state === 'error' ||
             (payload.ready === false && payload.successful === false);
-
+          metadataRef.remoteVoiceId =
+            metadataRef.remoteVoiceId ?? toStringOrNull(payload.voice_id);
           if (state === 'ready') {
+            statusCallback?.({
+              phase: 'polling',
+              status: 'ready',
+              progress: 1,
+              audioUrl: toStringOrNull(payload.url),
+              audioId: String(payload.id ?? audioId),
+              metadata: {
+                ...metadataRef,
+                durationSeconds:
+                  payload.duration_seconds ?? payload.durationSeconds ?? null,
+                fileSizeBytes:
+                  payload.file_size_bytes ?? payload.fileSizeBytes ?? null
+              }
+            });
             return {
               success: true,
               ready: true,
@@ -1262,6 +1360,18 @@ const pollForAudioAvailability = async (
           }
 
           if (errored) {
+            statusCallback?.({
+              phase: 'polling',
+              status: 'error',
+              progress: null,
+              error:
+                toStringOrNull(payload.error) ||
+                'Audio synthesis failed on the server',
+              metadata: {
+                ...metadataRef,
+                state
+              }
+            });
             return {
               success: false,
               error:
@@ -1276,6 +1386,13 @@ const pollForAudioAvailability = async (
 
       const checkResult = await checkAudioExists(voiceId, storyId);
       if (checkResult.success && checkResult.exists) {
+        statusCallback?.({
+          phase: 'polling',
+          status: 'ready',
+          progress: 1,
+          audioUrl: buildAudioRedirectUrl(voiceId, storyId),
+          metadata: metadataRef
+        });
         return {
           success: true,
           ready: true,
@@ -1541,6 +1658,13 @@ export const downloadAudio = async (
             clearError
           );
         }
+        progressCallback?.({
+          phase: 'cache',
+          status: 'ready',
+          progress: 1,
+          fromCache: true,
+          metadata: { voiceId, storyId }
+        });
         return {
           success: true,
           uri: existingInfo.localUri,
@@ -1582,8 +1706,21 @@ export const downloadAudio = async (
       options,
       (downloadProgress) => {
         if (progressCallback) {
-          const progress = downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite;
-          progressCallback(progress);
+          const ratio =
+            downloadProgress.totalBytesExpectedToWrite > 0
+              ? downloadProgress.totalBytesWritten /
+                downloadProgress.totalBytesExpectedToWrite
+              : 0;
+          const normalised = 0.5 + ratio * 0.5;
+          progressCallback({
+            phase: 'download',
+            status: 'downloading',
+            progress: Math.min(normalised, 0.99),
+            downloadProgress: ratio,
+            bytesWritten: downloadProgress.totalBytesWritten,
+            bytesTotal: downloadProgress.totalBytesExpectedToWrite,
+            metadata: { voiceId, storyId }
+          });
         }
       }
     );
@@ -1633,6 +1770,17 @@ export const downloadAudio = async (
       );
     }
 
+    progressCallback?.({
+      phase: 'download',
+      status: 'ready',
+      progress: 1,
+      metadata: {
+        voiceId,
+        storyId,
+        fileSize: downloadedFileInfo.size ?? null
+      }
+    });
+
     return {
       success: true,
       uri,
@@ -1646,6 +1794,14 @@ export const downloadAudio = async (
     
     // Handle AbortError specifically
     if (error.name === 'AbortError') {
+      progressCallback?.({
+        phase: 'download',
+        status: 'error',
+        progress: null,
+        error: 'Download cancelled',
+        code: 'DOWNLOAD_CANCELLED',
+        metadata: { voiceId, storyId }
+      });
       return {
         success: false,
         error: 'Download cancelled',
@@ -1653,6 +1809,15 @@ export const downloadAudio = async (
       };
     }
     
+    progressCallback?.({
+      phase: 'download',
+      status: 'error',
+      progress: null,
+      error: error.message || 'Unknown error during download',
+      code: 'DOWNLOAD_ERROR',
+      metadata: { voiceId, storyId }
+    });
+
     return {
       success: false,
       error: error.message || 'Unknown error during download',
@@ -1684,6 +1849,16 @@ export const getAudio = async (
     if (audioInfo && audioInfo.localUri) {
       const fileInfo = await getFileInfoSafe(audioInfo.localUri);
       if (isAudioFileValid(fileInfo)) {
+        progressCallback?.({
+          phase: 'cache',
+          status: 'ready',
+          progress: 1,
+          storyId,
+          voiceId,
+          metadata: {
+            localUri: audioInfo.localUri
+          }
+        });
         return {
           success: true,
           uri: audioInfo.localUri,
@@ -1715,21 +1890,46 @@ export const getAudio = async (
     const audioUrl = `${API_BASE_URL}/voices/${voiceId}/stories/${storyId}/audio?redirect=true`;
     
     // Download existing audio from server
-    return downloadAudio(audioUrl, voiceId, storyId, progressCallback, signal);
+    return downloadAudio(
+      audioUrl,
+      voiceId,
+      storyId,
+      progressCallback
+        ? (event) =>
+            progressCallback({
+              ...event,
+              storyId,
+              voiceId
+            })
+        : null,
+      signal
+    );
   }
   
   // If audio doesn't exist, try to generate it
   const generateResult = await generateStoryAudio(
     voiceId, 
     storyId, 
-    progressCallback ? (status, progress) => {
-      if (status === 'processing') {
-        progressCallback(progress * 0.5); // First half is processing
-      }
-    } : null
+    progressCallback
+      ? (event) =>
+          progressCallback({
+            ...event,
+            storyId,
+            voiceId
+          })
+      : null
   );
   
   if (!generateResult.success) {
+    progressCallback?.({
+      phase: 'generation',
+      status: 'error',
+      progress: null,
+      error: generateResult.error,
+      code: generateResult.code,
+      storyId,
+      voiceId
+    });
     return generateResult;
   }
   
@@ -1738,9 +1938,14 @@ export const getAudio = async (
     generateResult.audioUrl, 
     voiceId, 
     storyId, 
-    progressCallback ? (progress) => {
-      progressCallback(0.5 + progress * 0.5); // Second half is downloading
-    } : null,
+    progressCallback
+      ? (event) =>
+          progressCallback({
+            ...event,
+            storyId,
+            voiceId
+          })
+      : null,
     signal
   );
 };

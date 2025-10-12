@@ -11,8 +11,12 @@ import { Feather } from '@expo/vector-icons';
 import { COLORS } from '../../styles/colors';
 
 const ProgressModal = ({ visible, progress, status, onCancel }) => {
-  // Format progress to percentage with no decimal places
-  const formattedProgress = Math.floor(progress);
+  const normalisedProgress =
+    typeof progress === 'number'
+      ? Math.max(0, Math.min(100, progress))
+      : 0;
+  const formattedProgress = Math.floor(normalisedProgress);
+  const statusText = typeof status === 'string' ? status : '';
   
   return (
     <Modal
@@ -25,7 +29,7 @@ const ProgressModal = ({ visible, progress, status, onCancel }) => {
         <View style={styles.modalContent}>
           <Text style={styles.title}>Przetwarzanie</Text>
           
-          <Text style={styles.status}>{status}</Text>
+          <Text style={styles.status}>{statusText}</Text>
           
           {/* Progress bar */}
           <View style={styles.progressContainer}>

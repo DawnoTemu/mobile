@@ -30,6 +30,23 @@ const STORAGE_KEYS = {
   DOWNLOADED_AUDIO: 'voice_service_downloaded_audio'
 };
 
+const STATUS_COPY = {
+  queued_for_slot: 'Twoja prośba jest w kolejce. Przydzielimy slot głosowy w ciągu kilku chwil.',
+  allocating_voice: 'Twój głos jest aktywowany w ElevenLabs… odtwarzanie rozpocznie się automatycznie.',
+  processing: 'Generujemy opowieść w Twoim głosie. To zwykle trwa ok. 30–90 sekund.',
+  downloading: 'Pobieranie nagrania...',
+  ready: 'Nagranie jest gotowe – możesz teraz odtworzyć historię.',
+  error: 'Wystąpił problem podczas generowania bajki.'
+};
+
+const STATUS_PROGRESS_MAP = {
+  queued_for_slot: 8,
+  allocating_voice: 20,
+  processing: 60,
+  downloading: 85,
+  ready: 100
+};
+
 export default function SynthesisScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { showToast } = useToast();
@@ -70,11 +87,265 @@ export default function SynthesisScreen({ navigation }) {
   const [isConfirmModalVisible, setIsConfirmModalVisible] = useState(false);
   const [voiceId, setVoiceId] = useState(null);
   const [isProgressModalVisible, setIsProgressModalVisible] = useState(false);
-  const [progressData, setProgressData] = useState({ progress: 0, status: '' });
+  const [progressData, setProgressData] = useState({
+    progress: 0,
+    status: '',
+    statusKey: null,
+    queuePosition: null,
+    queueLength: null,
+    storyId: null
+  });
   const [isOnline, setIsOnline] = useState(true);
   const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [pendingGeneration, setPendingGeneration] = useState(null);
   const [isGenerationConfirmVisible, setIsGenerationConfirmVisible] = useState(false);
+  const [generationStatusByStory, setGenerationStatusByStory] = useState({});
+  const [activeGenerationStoryId, setActiveGenerationStoryId] = useState(null);
+
+  const formatQueueMessage = useCallback((position, length) => {
+    if (position === null || position === undefined) {
+      return null;
+    }
+    const numericPosition = Number(position);
+    if (!Number.isFinite(numericPosition) || numericPosition < 0) {
+      return null;
+    }
+    const displayPosition = Math.floor(numericPosition) + 1;
+    if (length === null || length === undefined) {
+      return `Miejsce w kolejce: ${displayPosition}`;
+    }
+    const numericLength = Number(length);
+    if (!Number.isFinite(numericLength) || numericLength < 0) {
+      return `Miejsce w kolejce: ${displayPosition}`;
+    }
+    return `Miejsce w kolejce: ${displayPosition}/${Math.max(
+      1,
+      Math.floor(numericLength)
+    )}`;
+  }, []);
+
+  const statusToProgress = useCallback((status) => {
+    if (typeof status !== 'string') {
+      return null;
+    }
+    const normalized = status.trim().toLowerCase();
+    const mapped = STATUS_PROGRESS_MAP[normalized];
+    return typeof mapped === 'number' ? mapped : null;
+  }, []);
+
+  const hydrateGenerationState = useCallback(
+    async (currentVoiceId) => {
+      if (!currentVoiceId) {
+        return;
+      }
+      try {
+        const snapshotMap = await voiceService.listGenerationStateSnapshots({
+          voiceId: currentVoiceId
+        });
+        const voiceKey = String(currentVoiceId);
+        const voiceSnapshots = snapshotMap?.[voiceKey] || {};
+
+        setGenerationStatusByStory(() => {
+          const next = {};
+          Object.entries(voiceSnapshots).forEach(([storyKey, snapshot]) => {
+            if (
+              snapshot &&
+              typeof snapshot === 'object' &&
+              snapshot.status &&
+              snapshot.status !== 'ready'
+            ) {
+              next[storyKey] = snapshot;
+            }
+          });
+          return next;
+        });
+
+        setProcessingStories(() => {
+          const next = {};
+          Object.entries(voiceSnapshots).forEach(([storyKey, snapshot]) => {
+            if (
+              snapshot &&
+              typeof snapshot === 'object' &&
+              snapshot.status &&
+              snapshot.status !== 'ready'
+            ) {
+              next[storyKey] = true;
+            }
+          });
+          return next;
+        });
+
+        const selectedSnapshot =
+          selectedStory && voiceSnapshots?.[String(selectedStory.id)];
+        if (selectedSnapshot && selectedSnapshot.status !== 'ready') {
+          const queueText = formatQueueMessage(
+            selectedSnapshot.queuePosition,
+            selectedSnapshot.queueLength
+          );
+          const message =
+            selectedSnapshot.message ||
+            STATUS_COPY[selectedSnapshot.status] ||
+            STATUS_COPY.processing;
+          const statusLine = queueText ? `${message}\n${queueText}` : message;
+          const progress =
+            statusToProgress(selectedSnapshot.status) ?? progressData.progress;
+          setProgressData((prev) => ({
+            ...prev,
+            progress,
+            status: statusLine,
+            statusKey: selectedSnapshot.status,
+            queuePosition: selectedSnapshot.queuePosition ?? null,
+            queueLength: selectedSnapshot.queueLength ?? null,
+            storyId: selectedStory.id
+          }));
+          setIsProgressModalVisible(true);
+        } else if (
+          activeGenerationStoryId &&
+          !voiceSnapshots?.[String(activeGenerationStoryId)]
+        ) {
+          setIsProgressModalVisible(false);
+          setProgressData({
+            progress: 0,
+            status: '',
+            statusKey: null,
+            queuePosition: null,
+            queueLength: null,
+            storyId: null
+          });
+        }
+      } catch (error) {
+        console.error('Failed to hydrate generation state:', error);
+      }
+    },
+    [
+      activeGenerationStoryId,
+      formatQueueMessage,
+      progressData.progress,
+      selectedStory,
+      statusToProgress
+    ]
+  );
+
+  const handleGenerationEvent = useCallback(
+    (storyId, event = {}) => {
+      if (!storyId || !event || typeof event !== 'object') {
+        return;
+      }
+
+      const statusValue = typeof event.status === 'string' ? event.status : null;
+      const normalizedStatus = statusValue ? statusValue.trim().toLowerCase() : null;
+      const rawQueuePosition =
+        event.queuePosition !== undefined ? event.queuePosition : null;
+      const rawQueueLength =
+        event.queueLength !== undefined ? event.queueLength : null;
+      const queuePosition = Number(rawQueuePosition);
+      const queueLength = Number(rawQueueLength);
+      const safeQueuePosition =
+        Number.isFinite(queuePosition) && queuePosition >= 0
+          ? Math.floor(queuePosition)
+          : null;
+      const safeQueueLength =
+        Number.isFinite(queueLength) && queueLength >= 0
+          ? Math.floor(queueLength)
+          : null;
+      const queueText = formatQueueMessage(safeQueuePosition, safeQueueLength);
+
+      const message =
+        event.message ||
+        (normalizedStatus && STATUS_COPY[normalizedStatus]) ||
+        STATUS_COPY.processing;
+      const statusLine = queueText ? `${message}\n${queueText}` : message;
+
+      if (normalizedStatus === 'ready') {
+        setGenerationStatusByStory((prev) => {
+          if (!prev[storyId]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[storyId];
+          return next;
+        });
+      } else if (normalizedStatus) {
+        setGenerationStatusByStory((prev) => ({
+          ...prev,
+          [storyId]: {
+            ...(prev[storyId] || {}),
+            status: normalizedStatus,
+            queuePosition: safeQueuePosition,
+            queueLength: safeQueueLength,
+            remoteVoiceId:
+              event.remoteVoiceId ??
+              prev[storyId]?.remoteVoiceId ??
+              event.metadata?.remoteVoiceId ??
+              null,
+            allocationStatus:
+              event.allocationStatus ??
+              prev[storyId]?.allocationStatus ??
+              null,
+            serviceProvider:
+              event.serviceProvider ?? prev[storyId]?.serviceProvider ?? null,
+            message,
+            phase: event.phase || prev[storyId]?.phase || null,
+            updatedAt: Date.now(),
+            metadata: event.metadata || prev[storyId]?.metadata || null
+          }
+        }));
+      }
+
+      if (normalizedStatus) {
+        setProcessingStories((prev) => {
+          const next = { ...prev };
+          if (
+            normalizedStatus === 'queued_for_slot' ||
+            normalizedStatus === 'allocating_voice' ||
+            normalizedStatus === 'processing' ||
+            normalizedStatus === 'downloading'
+          ) {
+            next[storyId] = true;
+          } else {
+            delete next[storyId];
+          }
+          return next;
+        });
+      }
+
+      if (normalizedStatus === 'ready' || normalizedStatus === 'error') {
+        setIsProgressModalVisible(false);
+      } else if (normalizedStatus) {
+        setIsProgressModalVisible(true);
+      }
+
+      setProgressData((prev) => {
+        const incomingProgress =
+          typeof event.progress === 'number'
+            ? Math.max(0, Math.min(event.progress, 1))
+            : null;
+        const progressFromStatus =
+          statusToProgress(normalizedStatus) ?? prev.progress ?? 0;
+        const computedProgress =
+          incomingProgress !== null
+            ? Math.round(incomingProgress * 100)
+            : progressFromStatus;
+
+        return {
+          progress: Number.isFinite(computedProgress)
+            ? computedProgress
+            : prev.progress,
+          status: statusLine,
+          statusKey: normalizedStatus || prev.statusKey,
+          queuePosition: safeQueuePosition,
+          queueLength: safeQueueLength,
+          storyId
+        };
+      });
+    },
+    [formatQueueMessage, statusToProgress]
+  );
+
+  const createGenerationEventHandler = useCallback(
+    (storyId) => (event) => handleGenerationEvent(storyId, event),
+    [handleGenerationEvent]
+  );
   
   const getLocalizedUnitLabel = useCallback((label) => {
     if (typeof label !== 'string') {
@@ -294,6 +565,8 @@ export default function SynthesisScreen({ navigation }) {
       
       const currentVoiceId = voiceResult.voiceId;
       setVoiceId(currentVoiceId);
+      setGenerationStatusByStory({});
+      setProcessingStories({});
       
       // Fetch available stories
       const storiesResult = await voiceService.getStories(forceRefresh);
@@ -323,6 +596,7 @@ export default function SynthesisScreen({ navigation }) {
         );
         
         setStories(storiesWithStatus);
+        await hydrateGenerationState(currentVoiceId);
       } else {
         handleApiError(storiesResult, 'Nie udało się pobrać bajek.');
       }
@@ -489,66 +763,57 @@ export default function SynthesisScreen({ navigation }) {
   // Get story audio with progress tracking
   const getStoryAudio = async (story, forceDownload = false) => {
     try {
-      // Check if online - if offline and no local audio, show message
       if (!isOnline) {
         showToast('Brak połączenia z internetem. Dostępne są tylko zapisane bajki.', 'WARNING');
         return;
       }
-      
-      // Mark story as processing      
+
+      if (!voiceId) {
+        showToast('Brak aktywnego głosu. Spróbuj ponownie.', 'ERROR');
+        return;
+      }
+
+      setActiveGenerationStoryId(story.id);
       setProcessingStories((prev) => ({ ...prev, [story.id]: true }));
-      
-      // Show progress modal
-      setProgressData({ progress: 0, status: 'Generowanie audio...' });
+
+      handleGenerationEvent(story.id, { status: 'processing', progress: 0 });
       setIsProgressModalVisible(true);
-      
-      // Create abort signal for cancellation
+
       const signal = createAbortController();
-      
-      // Get current audio (with forceDownload parameter)
+      const statusObserver = createGenerationEventHandler(story.id);
+
       const result = await voiceService.getAudio(
         voiceId,
         story.id,
-        (progress) => {
-          // Update progress
-          let statusText = 'Generowanie audio...';
-          if (progress > 0.5) {
-            statusText = 'Pobieranie audio...';
-          }
-          
-          setProgressData({
-            progress: progress * 100,
-            status: statusText
-          });
-        },
+        statusObserver,
         signal,
-        forceDownload  // Pass the forceDownload parameter
+        forceDownload
       );
-      
-      // Hide progress modal
-      setIsProgressModalVisible(false);
-      
-      // Remove from processing stories
+
       setProcessingStories((prev) => {
-        const updated = { ...prev };
-        delete updated[story.id];
-        return updated;
+        const next = { ...prev };
+        delete next[story.id];
+        return next;
       });
-      
+      setGenerationStatusByStory((prev) => {
+        const next = { ...prev };
+        delete next[story.id];
+        return next;
+      });
+
       if (result.success) {
-        // Load the audio with auto-play set to true
         await loadStoryAudio(result.uri, true);
-        
-        // Update story in the list to show it has audio and local availability
-        setStories(currentStories =>
-          currentStories.map(s => 
-            s.id === story.id ? { 
-              ...s, 
-              hasAudio: true, 
-              localUri: result.uri,
-              hasLocalAudio: true,
-              localAudioUri: result.uri
-            } : s
+        setStories((currentStories) =>
+          currentStories.map((s) =>
+            s.id === story.id
+              ? {
+                  ...s,
+                  hasAudio: true,
+                  localUri: result.uri,
+                  hasLocalAudio: true,
+                  localAudioUri: result.uri
+                }
+              : s
           )
         );
 
@@ -565,22 +830,33 @@ export default function SynthesisScreen({ navigation }) {
       }
     } catch (error) {
       console.error('Error getting story audio:', error);
-      
-      // If the error is due to offline, show a specific message
+      handleGenerationEvent(story.id, {
+        status: 'error',
+        progress: null,
+        message: STATUS_COPY.error,
+        error: error.message
+      });
+
       if (!isOnline) {
         showToast('Brak połączenia z internetem. Dostępne są tylko zapisane bajki.', 'WARNING');
       } else {
         showToast('Wystąpił problem podczas generowania bajki.', 'ERROR');
       }
     } finally {
-      // Hide progress modal if still visible
       setIsProgressModalVisible(false);
-      
-      // Remove from processing stories
       setProcessingStories((prev) => {
-        const updated = { ...prev };
-        delete updated[story.id];
-        return updated;
+        const next = { ...prev };
+        delete next[story.id];
+        return next;
+      });
+      setActiveGenerationStoryId(null);
+      setProgressData({
+        progress: 0,
+        status: '',
+        statusKey: null,
+        queuePosition: null,
+        queueLength: null,
+        storyId: null
       });
     }
   };
@@ -595,6 +871,25 @@ export default function SynthesisScreen({ navigation }) {
       
       // Clear processing states
       setProcessingStories({});
+      if (activeGenerationStoryId && voiceId) {
+        setGenerationStatusByStory((prev) => {
+          const next = { ...prev };
+          delete next[activeGenerationStoryId];
+          return next;
+        });
+        voiceService.clearGenerationStateSnapshot(voiceId, activeGenerationStoryId).catch(
+          () => {}
+        );
+      }
+      setActiveGenerationStoryId(null);
+      setProgressData({
+        progress: 0,
+        status: '',
+        statusKey: null,
+        queuePosition: null,
+        queueLength: null,
+        storyId: null
+      });
       
       showToast('Operacja została anulowana.', 'INFO');
     }
@@ -665,28 +960,39 @@ export default function SynthesisScreen({ navigation }) {
         // Continue even if deletion fails
       }
       
-      // Show progress modal
-      setProgressData({ progress: 0, status: 'Ponowne pobieranie audio...' });
+      setActiveGenerationStoryId(matchingStory.id);
+      handleGenerationEvent(matchingStory.id, {
+        status: 'downloading',
+        progress: 0.5,
+        message: 'Ponowne pobieranie audio...',
+        phase: 'download'
+      });
       setIsProgressModalVisible(true);
-      
-      // Get a fresh copy of the audio
+
       const signal = createAbortController();
-      
+
+      const statusObserver = (event) =>
+        handleGenerationEvent(matchingStory.id, {
+          ...event,
+          message: event.message || 'Ponowne pobieranie audio...'
+        });
+
       const result = await voiceService.getAudio(
         voiceId,
         matchingStory.id,
-        (progress) => {
-          setProgressData({
-            progress: progress * 100,
-            status: 'Ponowne pobieranie audio...'
-          });
-        },
+        statusObserver,
         signal,
         true // Force fresh download
       );
-      
+
       // Hide progress modal
       setIsProgressModalVisible(false);
+      setActiveGenerationStoryId(null);
+      setGenerationStatusByStory((prev) => {
+        const next = { ...prev };
+        delete next[matchingStory.id];
+        return next;
+      });
       
       if (result.success) {
         // Load the audio with auto-play
@@ -714,6 +1020,21 @@ export default function SynthesisScreen({ navigation }) {
       console.error('Error recovering from corrupted audio:', error);
       showToast('Nie udało się ponownie pobrać audio. Spróbuj ponownie.', 'ERROR');
       setIsProgressModalVisible(false);
+      setGenerationStatusByStory((prev) => {
+        const next = { ...prev };
+        delete next[matchingStory.id];
+        return next;
+      });
+      setActiveGenerationStoryId(null);
+    } finally {
+      setProgressData({
+        progress: 0,
+        status: '',
+        statusKey: null,
+        queuePosition: null,
+        queueLength: null,
+        storyId: null
+      });
     }
   };
 
@@ -788,6 +1109,19 @@ export default function SynthesisScreen({ navigation }) {
     const isReady = isStoryPurchased(story);
     const affordable =
       typeof requiredCredits === 'number' ? balance >= requiredCredits : true;
+    const generationState = generationStatusByStory?.[story.id];
+    const queueLabel = generationState
+      ? formatQueueMessage(
+          generationState.queuePosition,
+          generationState.queueLength
+        )
+      : null;
+    const statusCopy =
+      generationState && generationState.status !== 'ready'
+        ? [generationState.message, queueLabel]
+            .filter(Boolean)
+            .join('\n')
+        : '';
 
     return (
       <StoryItem
@@ -802,6 +1136,7 @@ export default function SynthesisScreen({ navigation }) {
         isCreditLoading={false}
         creditUnitLabel={unitLabel}
         isReady={isReady}
+        statusMessage={statusCopy}
         onPress={() => handleStorySelect(story)}
       />
     );
@@ -925,6 +1260,9 @@ export default function SynthesisScreen({ navigation }) {
         visible={isProgressModalVisible}
         progress={progressData.progress}
         status={progressData.status}
+        statusKey={progressData.statusKey}
+        queuePosition={progressData.queuePosition}
+        queueLength={progressData.queueLength}
         onCancel={handleCancelOperation}
       />
       <AppMenu 
