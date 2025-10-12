@@ -10,13 +10,79 @@ import {
 import { Feather } from '@expo/vector-icons';
 import { COLORS } from '../../styles/colors';
 
-const ProgressModal = ({ visible, progress, status, onCancel }) => {
+const STATUS_TITLES = {
+  queued_for_slot: 'Twoja prośba w kolejce',
+  allocating_voice: 'Aktywujemy głos',
+  processing: 'Generujemy nagranie',
+  downloading: 'Pobieranie nagrania',
+  ready: 'Nagranie gotowe',
+  error: 'Błąd generowania'
+};
+
+const STATUS_ICONS = {
+  queued_for_slot: 'clock',
+  allocating_voice: 'zap',
+  processing: 'loader',
+  downloading: 'download-cloud',
+  ready: 'check-circle',
+  error: 'alert-circle'
+};
+
+const PROVIDER_LABELS = {
+  elevenlabs: 'ElevenLabs'
+};
+
+const ProgressModal = ({
+  visible,
+  progress,
+  status,
+  statusKey,
+  queuePosition,
+  queueLength,
+  remoteVoiceId,
+  serviceProvider,
+  onCancel
+}) => {
   const normalisedProgress =
     typeof progress === 'number'
       ? Math.max(0, Math.min(100, progress))
       : 0;
   const formattedProgress = Math.floor(normalisedProgress);
   const statusText = typeof status === 'string' ? status : '';
+  const normalizedStatusKey =
+    typeof statusKey === 'string' ? statusKey.trim().toLowerCase() : null;
+  const title =
+    STATUS_TITLES[normalizedStatusKey] || STATUS_TITLES.processing;
+  const iconName =
+    STATUS_ICONS[normalizedStatusKey] || STATUS_ICONS.processing;
+  const isComplete = normalizedStatusKey === 'ready';
+  const isError = normalizedStatusKey === 'error';
+  const canCancel = typeof onCancel === 'function' && !isComplete;
+
+  const queueLabel =
+    queuePosition !== null && queuePosition !== undefined
+      ? `Miejsce w kolejce: ${Math.max(1, Number(queuePosition) + 1)}${
+          queueLength !== null && queueLength !== undefined
+            ? `/${Math.max(1, Number(queueLength))}`
+            : ''
+        }`
+      : null;
+
+  const providerLabel = (() => {
+    if (!serviceProvider && !remoteVoiceId) {
+      return null;
+    }
+    const providerName =
+      (serviceProvider && PROVIDER_LABELS[serviceProvider.toLowerCase()]) ||
+      serviceProvider;
+    if (providerName && remoteVoiceId) {
+      return `${providerName} • ${remoteVoiceId}`;
+    }
+    if (providerName) {
+      return providerName;
+    }
+    return remoteVoiceId;
+  })();
   
   return (
     <Modal
@@ -27,9 +93,31 @@ const ProgressModal = ({ visible, progress, status, onCancel }) => {
     >
       <View style={styles.backdrop}>
         <View style={styles.modalContent}>
-          <Text style={styles.title}>Przetwarzanie</Text>
-          
+          <View style={styles.headerRow}>
+            <Feather
+              name={iconName}
+              size={28}
+              color={isError ? COLORS.error : COLORS.peach}
+              style={[
+                styles.statusIcon,
+                normalizedStatusKey === 'processing' && styles.iconSpinning
+              ]}
+            />
+            <Text style={styles.title}>{title}</Text>
+          </View>
+
           <Text style={styles.status}>{statusText}</Text>
+
+          {queueLabel ? (
+            <View style={styles.queuePill}>
+              <Feather name="users" size={14} color={COLORS.peach} />
+              <Text style={styles.queueText}>{queueLabel}</Text>
+            </View>
+          ) : null}
+
+          {providerLabel ? (
+            <Text style={styles.providerText}>{providerLabel}</Text>
+          ) : null}
           
           {/* Progress bar */}
           <View style={styles.progressContainer}>
@@ -45,14 +133,39 @@ const ProgressModal = ({ visible, progress, status, onCancel }) => {
           
           {/* Progress indicator */}
           <View style={styles.loadingIndicator}>
-            <ActivityIndicator size="large" color={COLORS.peach} />
+            {isComplete ? (
+              <Feather
+                name="check-circle"
+                size={36}
+                color={COLORS.mint}
+                accessibilityRole="image"
+                accessibilityLabel="Generowanie zakończone"
+              />
+            ) : isError ? (
+              <Feather
+                name="alert-circle"
+                size={36}
+                color={COLORS.error}
+                accessibilityRole="image"
+                accessibilityLabel="Wystąpił błąd"
+              />
+            ) : (
+              <ActivityIndicator size="large" color={COLORS.peach} />
+            )}
           </View>
           
           {/* Cancel button */}
-          <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
-            <Feather name="x" size={20} color={COLORS.text.secondary} />
-            <Text style={styles.cancelText}>Anuluj</Text>
-          </TouchableOpacity>
+          {canCancel ? (
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={onCancel}
+              accessibilityRole="button"
+              accessibilityLabel="Anuluj generowanie"
+            >
+              <Feather name="x" size={20} color={COLORS.text.secondary} />
+              <Text style={styles.cancelText}>Anuluj</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
     </Modal>
@@ -78,18 +191,49 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
+  headerRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12
+  },
+  statusIcon: {
+    marginRight: 12
+  },
   title: {
     fontFamily: 'Quicksand-Bold',
     fontSize: 20,
     color: COLORS.text.primary,
-    marginBottom: 16,
   },
   status: {
     fontFamily: 'Quicksand-Medium',
     fontSize: 16,
     color: COLORS.text.secondary,
-    marginBottom: 24,
+    marginBottom: 12,
     textAlign: 'center',
+  },
+  queuePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 16,
+    backgroundColor: `${COLORS.peach}20`,
+    marginBottom: 8,
+  },
+  queueText: {
+    fontFamily: 'Quicksand-SemiBold',
+    fontSize: 13,
+    color: COLORS.peach,
+    marginLeft: 6,
+  },
+  providerText: {
+    fontFamily: 'Quicksand-Regular',
+    fontSize: 12,
+    color: COLORS.text.tertiary,
+    marginBottom: 16,
+    textAlign: 'center'
   },
   progressContainer: {
     width: '100%',
@@ -124,6 +268,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.text.secondary,
     marginLeft: 8,
+  },
+  iconSpinning: {
+    // Placeholder class if we later wire animated rotation
   },
 });
 

@@ -93,6 +93,8 @@ export default function SynthesisScreen({ navigation }) {
     statusKey: null,
     queuePosition: null,
     queueLength: null,
+    remoteVoiceId: null,
+    serviceProvider: null,
     storyId: null
   });
   const [isOnline, setIsOnline] = useState(true);
@@ -186,16 +188,23 @@ export default function SynthesisScreen({ navigation }) {
             selectedSnapshot.message ||
             STATUS_COPY[selectedSnapshot.status] ||
             STATUS_COPY.processing;
-          const statusLine = queueText ? `${message}\n${queueText}` : message;
           const progress =
             statusToProgress(selectedSnapshot.status) ?? progressData.progress;
           setProgressData((prev) => ({
             ...prev,
             progress,
-            status: statusLine,
+            status: message,
             statusKey: selectedSnapshot.status,
             queuePosition: selectedSnapshot.queuePosition ?? null,
             queueLength: selectedSnapshot.queueLength ?? null,
+            remoteVoiceId:
+              selectedSnapshot.remoteVoiceId ??
+              selectedSnapshot.voiceSlotMetadata?.elevenlabsVoiceId ??
+              null,
+            serviceProvider:
+              selectedSnapshot.serviceProvider ??
+              selectedSnapshot.voiceSlotMetadata?.serviceProvider ??
+              null,
             storyId: selectedStory.id
           }));
           setIsProgressModalVisible(true);
@@ -210,6 +219,8 @@ export default function SynthesisScreen({ navigation }) {
             statusKey: null,
             queuePosition: null,
             queueLength: null,
+            remoteVoiceId: null,
+            serviceProvider: null,
             storyId: null
           });
         }
@@ -254,7 +265,16 @@ export default function SynthesisScreen({ navigation }) {
         event.message ||
         (normalizedStatus && STATUS_COPY[normalizedStatus]) ||
         STATUS_COPY.processing;
-      const statusLine = queueText ? `${message}\n${queueText}` : message;
+      const resolvedRemoteVoiceId =
+        event.remoteVoiceId ??
+        event.metadata?.remoteVoiceId ??
+        generationStatusByStory?.[storyId]?.remoteVoiceId ??
+        null;
+      const resolvedServiceProvider =
+        event.serviceProvider ??
+        event.metadata?.serviceProvider ??
+        generationStatusByStory?.[storyId]?.serviceProvider ??
+        null;
 
       if (normalizedStatus === 'ready') {
         setGenerationStatusByStory((prev) => {
@@ -273,17 +293,13 @@ export default function SynthesisScreen({ navigation }) {
             status: normalizedStatus,
             queuePosition: safeQueuePosition,
             queueLength: safeQueueLength,
-            remoteVoiceId:
-              event.remoteVoiceId ??
-              prev[storyId]?.remoteVoiceId ??
-              event.metadata?.remoteVoiceId ??
-              null,
+            remoteVoiceId: resolvedRemoteVoiceId,
             allocationStatus:
               event.allocationStatus ??
               prev[storyId]?.allocationStatus ??
               null,
             serviceProvider:
-              event.serviceProvider ?? prev[storyId]?.serviceProvider ?? null,
+              resolvedServiceProvider ?? prev[storyId]?.serviceProvider ?? null,
             message,
             phase: event.phase || prev[storyId]?.phase || null,
             updatedAt: Date.now(),
@@ -331,15 +347,17 @@ export default function SynthesisScreen({ navigation }) {
           progress: Number.isFinite(computedProgress)
             ? computedProgress
             : prev.progress,
-          status: statusLine,
+          status: message,
           statusKey: normalizedStatus || prev.statusKey,
           queuePosition: safeQueuePosition,
           queueLength: safeQueueLength,
+          remoteVoiceId: resolvedRemoteVoiceId,
+          serviceProvider: resolvedServiceProvider ?? prev.serviceProvider,
           storyId
         };
       });
     },
-    [formatQueueMessage, statusToProgress]
+    [formatQueueMessage, statusToProgress, generationStatusByStory]
   );
 
   const createGenerationEventHandler = useCallback(
@@ -1263,6 +1281,8 @@ export default function SynthesisScreen({ navigation }) {
         statusKey={progressData.statusKey}
         queuePosition={progressData.queuePosition}
         queueLength={progressData.queueLength}
+        remoteVoiceId={progressData.remoteVoiceId}
+        serviceProvider={progressData.serviceProvider}
         onCancel={handleCancelOperation}
       />
       <AppMenu 
