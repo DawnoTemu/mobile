@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -226,7 +226,7 @@ const [progressData, setProgressData] = useState({
   };
   
   // Process audio (either recorded or uploaded) for voice cloning
-  const formatQueueMessage = useCallback((position, length) => {
+  const formatQueueMessage = (position, length) => {
     if (position === null || position === undefined) {
       return null;
     }
@@ -243,9 +243,9 @@ const [progressData, setProgressData] = useState({
       return `Miejsce w kolejce: ${displayPosition}`;
     }
     return `Miejsce w kolejce: ${displayPosition}/${Math.max(1, Math.floor(numericLength))}`;
-  }, []);
+  };
 
-  const resetProgressState = useCallback(() => {
+  const resetProgressState = () => {
     setProgressData({
       progress: 0,
       status: '',
@@ -253,62 +253,63 @@ const [progressData, setProgressData] = useState({
       queuePosition: null,
       queueLength: null
     });
-  }, []);
+  };
 
-  const handleCloneProgressUpdate = useCallback(
-    (update) => {
-      setProgressData((prev) => {
-        if (update === null || update === undefined) {
-          return prev;
-        }
+  const handleCloneProgressUpdate = (update) => {
+    setProgressData((prev) => {
+      if (update === null || update === undefined) {
+        return prev;
+      }
 
-        if (typeof update === 'number') {
-          const clamped = Math.max(0, Math.min(1, update));
-          const pct = Math.round(clamped * 100);
-          const statusText =
-            pct < 30
-              ? 'Analizowanie próbki głosu...'
-              : pct < 70
-              ? 'Trenowanie modelu głosu...'
-              : 'Finalizowanie...';
-          return {
-            progress: pct,
-            status: statusText,
-            statusKey: prev.statusKey,
-            queuePosition: prev.queuePosition,
-            queueLength: prev.queueLength
-          };
-        }
-
-        const {
-          progress,
-          message,
-          statusKey,
-          queuePosition,
-          queueLength
-        } = update;
-
-        const pct =
-          typeof progress === 'number'
-            ? Math.round(Math.max(0, Math.min(1, progress)) * 100)
-            : prev.progress;
-
-        const normalizedStatus = statusKey || prev.statusKey || 'processing';
-        const baseMessage =
-          message || VOICE_UPLOAD_COPY[normalizedStatus] || VOICE_UPLOAD_COPY.processing;
-        const queueText = formatQueueMessage(queuePosition, queueLength);
-
+      if (typeof update === 'number') {
+        const clamped = Math.max(0, Math.min(1, update));
+        const pct = Math.round(clamped * 100);
+        const statusText =
+          pct < 30
+            ? 'Analizowanie próbki głosu...'
+            : pct < 70
+            ? 'Trenowanie modelu głosu...'
+            : 'Finalizowanie...';
         return {
           progress: Math.max(0, Math.min(100, pct)),
-          status: queueText ? `${baseMessage}\n${queueText}` : baseMessage,
-          statusKey: normalizedStatus,
-          queuePosition: queuePosition ?? prev.queuePosition,
-          queueLength: queueLength ?? prev.queueLength
+          status: statusText,
+          statusKey: prev.statusKey,
+          queuePosition: prev.queuePosition,
+          queueLength: prev.queueLength
         };
-      });
-    },
-    [formatQueueMessage]
-  );
+      }
+
+      if (typeof update !== 'object') {
+        return prev;
+      }
+
+      const {
+        progress,
+        message,
+        statusKey,
+        queuePosition,
+        queueLength
+      } = update;
+
+      const pct =
+        typeof progress === 'number'
+          ? Math.round(Math.max(0, Math.min(1, progress)) * 100)
+          : prev.progress;
+
+      const normalizedStatus = statusKey || prev.statusKey || 'processing';
+      const baseMessage =
+        message || VOICE_UPLOAD_COPY[normalizedStatus] || VOICE_UPLOAD_COPY.processing;
+      const queueText = formatQueueMessage(queuePosition, queueLength);
+
+      return {
+        progress: Math.max(0, Math.min(100, pct)),
+        status: queueText ? `${baseMessage}\n${queueText}` : baseMessage,
+        statusKey: normalizedStatus,
+        queuePosition: queuePosition ?? prev.queuePosition,
+        queueLength: queueLength ?? prev.queueLength
+      };
+    });
+  };
 
   const processAudioForCloning = async (uri) => {
     try {
