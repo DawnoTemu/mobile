@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from './authService';
-import { API_BASE_URL, REQUEST_TIMEOUT, STORAGE_KEYS, CACHE_EXPIRATION } from './config'; 
+import { API_BASE_URL, REQUEST_TIMEOUT, STORAGE_KEYS, CACHE_EXPIRATION, GENERATION_STATE_TTL } from './config'; 
 
 const MIN_VALID_AUDIO_SIZE_BYTES = 2048; // guard against empty/partial downloads
 
@@ -35,6 +35,18 @@ const deleteFileQuietly = async (uri) => {
   } catch (error) {
     console.warn('Failed to delete audio file', error);
   }
+};
+
+const headersToObject = (headers) => {
+  if (!headers) {
+    return {};
+  }
+
+  const snapshot = {};
+  headers.forEach((value, key) => {
+    snapshot[String(key).toLowerCase()] = value;
+  });
+  return snapshot;
 };
 
 // HELPER FUNCTIONS
@@ -126,7 +138,8 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
         success: false,
         status: null,
         error: 'No internet connection',
-        code: 'OFFLINE'
+        code: 'OFFLINE',
+        headers: null
       };
     }
 
@@ -146,7 +159,7 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
         'Authorization': `Bearer ${token}`
       };
     }
-
+    
     // Perform request
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
@@ -154,12 +167,24 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
     });
 
     const status = response.status;
-    const data = await response.json().catch(() => null);
+    const headers = headersToObject(response.headers);
+    let responseBody = null;
+
+    if (status !== 204) {
+      const rawText = await response.text().catch(() => '');
+      if (rawText) {
+        try {
+          responseBody = JSON.parse(rawText);
+        } catch (parseError) {
+          responseBody = rawText;
+        }
+      }
+    }
 
     if (timeoutId) clearTimeout(timeoutId);
     
     if (status === 204) {
-      return { success: true, status, data: null };
+      return { success: true, status, data: null, headers };
     }
     
     // For 401 Unauthorized, try to refresh token
@@ -172,17 +197,21 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
     }
     
     if (!response.ok) {
-      const message = data?.error || data?.message || `Request failed with status ${status}`;
+      const message =
+        (responseBody && typeof responseBody === 'object'
+          ? responseBody.error || responseBody.message
+          : null) || `Request failed with status ${status}`;
       return {
         success: false,
         status,
         error: message,
         code: mapStatusToCode(status),
-        data
+        data: responseBody,
+        headers
       };
     }
     
-    return { success: true, status, data };
+    return { success: true, status, data: responseBody, headers };
   } catch (error) {
     if (timeoutId) clearTimeout(timeoutId);
 
@@ -192,7 +221,8 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
         success: false, 
         status: null,
         error: 'Request timed out or was cancelled',
-        code: 'TIMEOUT'
+        code: 'TIMEOUT',
+        headers: null
       };
     }
     
@@ -204,7 +234,8 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
         success: false, 
         error: 'No internet connection',
         status: null,
-        code: 'OFFLINE'
+        code: 'OFFLINE',
+        headers: null
       };
     }
     
@@ -212,7 +243,8 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
       success: false, 
       error: error.message || 'Unknown error',
       status: null,
-      code: 'API_ERROR'
+      code: 'API_ERROR',
+      headers: null
     };
   }
 };
@@ -808,6 +840,236 @@ export const markStoriesWithLocalAudio = async (voiceId, stories) => {
     console.error('Failed to mark stories with local audio:', error);
     return stories;
   }
+};
+
+/**
+ * Generation state persistence helpers
+ */
+
+const ensureObject = (value) => (value && typeof value === 'object' ? value : {});
+
+const normaliseId = (value) => {
+  if (value === null || value === undefined) return null;
+  const stringified = String(value).trim();
+  return stringified.length ? stringified : null;
+};
+
+const isGenerationStateExpired = (entry, now, fallbackTtl) => {
+  if (!entry || typeof entry !== 'object') return true;
+  const expiresAt = typeof entry.expiresAt === 'number' ? entry.expiresAt : null;
+  if (expiresAt !== null) {
+    return now > expiresAt;
+  }
+  const ttl = typeof entry.ttl === 'number' && entry.ttl > 0 ? entry.ttl : fallbackTtl;
+  const updatedAt = typeof entry.updatedAt === 'number' ? entry.updatedAt : 0;
+  if (!updatedAt) {
+    return true;
+  }
+  return now - updatedAt > ttl;
+};
+
+const readGenerationStateMap = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.GENERATION_STATE);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return ensureObject(parsed);
+  } catch (error) {
+    console.error('Failed to read generation state snapshot:', error);
+    return {};
+  }
+};
+
+const writeGenerationStateMap = async (value) => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.GENERATION_STATE, JSON.stringify(value));
+    return true;
+  } catch (error) {
+    console.error('Failed to persist generation state snapshot:', error);
+    return false;
+  }
+};
+
+const pruneGenerationStateMap = (map, now, ttl) => {
+  let mutated = false;
+  Object.keys(map).forEach((voiceKey) => {
+    const stories = ensureObject(map[voiceKey]);
+    if (stories !== map[voiceKey]) {
+      map[voiceKey] = stories;
+    }
+    Object.keys(stories).forEach((storyKey) => {
+      if (isGenerationStateExpired(stories[storyKey], now, ttl)) {
+        delete stories[storyKey];
+        mutated = true;
+      }
+    });
+    if (!Object.keys(stories).length) {
+      delete map[voiceKey];
+      mutated = true;
+    }
+  });
+  return mutated;
+};
+
+const sanitizeGenerationStateEntry = (entry) => {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+  return {
+    ...entry,
+    // Ensure we surface numeric timestamps consistently
+    updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : null,
+    expiresAt: typeof entry.expiresAt === 'number' ? entry.expiresAt : null
+  };
+};
+
+export const saveGenerationStateSnapshot = async (voiceId, storyId, snapshot = {}, options = {}) => {
+  const voiceKey = normaliseId(voiceId);
+  const storyKey = normaliseId(storyId);
+  if (!voiceKey || !storyKey) {
+    return {
+      success: false,
+      error: 'voiceId and storyId are required to store generation state',
+      code: 'INVALID_ARGUMENT'
+    };
+  }
+
+  const ttl = typeof options.ttl === 'number' && options.ttl > 0
+    ? options.ttl
+    : GENERATION_STATE_TTL;
+
+  const now = Date.now();
+  const map = await readGenerationStateMap();
+  pruneGenerationStateMap(map, now, ttl);
+
+  if (!map[voiceKey]) {
+    map[voiceKey] = {};
+  }
+
+  const entry = {
+    ...snapshot,
+    voiceId: voiceKey,
+    storyId: storyKey,
+    updatedAt: now,
+    ttl,
+    expiresAt: now + ttl
+  };
+
+  map[voiceKey][storyKey] = entry;
+  await writeGenerationStateMap(map);
+
+  return {
+    success: true,
+    state: sanitizeGenerationStateEntry(entry)
+  };
+};
+
+export const loadGenerationStateSnapshot = async (voiceId, storyId) => {
+  const voiceKey = normaliseId(voiceId);
+  const storyKey = normaliseId(storyId);
+  if (!voiceKey || !storyKey) {
+    return {
+      success: false,
+      error: 'voiceId and storyId are required to load generation state',
+      code: 'INVALID_ARGUMENT'
+    };
+  }
+
+  const now = Date.now();
+  const map = await readGenerationStateMap();
+  const stories = ensureObject(map[voiceKey]);
+  const entry = stories[storyKey];
+
+  if (!entry || isGenerationStateExpired(entry, now, GENERATION_STATE_TTL)) {
+    if (entry) {
+      delete stories[storyKey];
+      if (!Object.keys(stories).length) {
+        delete map[voiceKey];
+      }
+      await writeGenerationStateMap(map);
+    }
+    return {
+      success: true,
+      state: null,
+      expired: !!entry
+    };
+  }
+
+  return {
+    success: true,
+    state: sanitizeGenerationStateEntry(entry)
+  };
+};
+
+export const listGenerationStateSnapshots = async ({ voiceId } = {}) => {
+  const filterVoiceKey = normaliseId(voiceId);
+  const now = Date.now();
+  const map = await readGenerationStateMap();
+  const ttl = GENERATION_STATE_TTL;
+  const result = {};
+  const mutated = pruneGenerationStateMap(map, now, ttl);
+
+  const voices = filterVoiceKey ? [filterVoiceKey] : Object.keys(map);
+  voices.forEach((voiceKey) => {
+    const stories = ensureObject(map[voiceKey]);
+    const entries = {};
+    Object.keys(stories).forEach((storyKey) => {
+      const entry = stories[storyKey];
+      if (!isGenerationStateExpired(entry, now, ttl)) {
+        entries[storyKey] = sanitizeGenerationStateEntry(entry);
+      }
+    });
+    if (Object.keys(entries).length) {
+      result[voiceKey] = entries;
+    }
+  });
+
+  if (mutated) {
+    await writeGenerationStateMap(map);
+  }
+
+  return result;
+};
+
+export const clearGenerationStateSnapshot = async (voiceId, storyId = null) => {
+  const voiceKey = normaliseId(voiceId);
+  if (!voiceKey) {
+    return {
+      success: false,
+      error: 'voiceId is required to clear generation state',
+      code: 'INVALID_ARGUMENT'
+    };
+  }
+
+  const map = await readGenerationStateMap();
+  if (!map[voiceKey]) {
+    return { success: true };
+  }
+
+  if (storyId === null || storyId === undefined) {
+    delete map[voiceKey];
+  } else {
+    const storyKey = normaliseId(storyId);
+    if (storyKey && map[voiceKey][storyKey]) {
+      delete map[voiceKey][storyKey];
+    }
+    if (!Object.keys(map[voiceKey]).length) {
+      delete map[voiceKey];
+    }
+  }
+
+  await writeGenerationStateMap(map);
+  return { success: true };
+};
+
+export const purgeExpiredGenerationStateSnapshots = async () => {
+  const now = Date.now();
+  const map = await readGenerationStateMap();
+  const mutated = pruneGenerationStateMap(map, now, GENERATION_STATE_TTL);
+  if (mutated) {
+    await writeGenerationStateMap(map);
+  }
+  return { success: true, mutated };
 };
 
 /**
@@ -1499,5 +1761,10 @@ export default {
   getStoryCoverUrl,
   getStoredAudioForVoice,
   markStoriesWithLocalAudio,
+  saveGenerationStateSnapshot,
+  loadGenerationStateSnapshot,
+  listGenerationStateSnapshots,
+  clearGenerationStateSnapshot,
+  purgeExpiredGenerationStateSnapshots,
   isOnline
 };
