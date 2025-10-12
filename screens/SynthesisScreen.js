@@ -227,16 +227,17 @@ export default function SynthesisScreen({ navigation }) {
     // Subscribe to network changes
     const unsubscribe = NetInfo.addEventListener(state => {
       const newIsOnline = state.isConnected === true;
-      
-      // Only update if the status changed
-      if (newIsOnline !== isOnline) {
-        setIsOnline(newIsOnline);
-        
-        // If we just came back online, process queue and refresh stories
-        if (newIsOnline) {
+      setIsOnline((previousIsOnline) => {
+        if (previousIsOnline === newIsOnline) {
+          return previousIsOnline;
+        }
+
+        if (previousIsOnline === false && newIsOnline === true) {
           processOfflineQueue();
         }
-      }
+
+        return newIsOnline;
+      });
     });
     
     return unsubscribe;
