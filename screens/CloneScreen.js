@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,15 @@ import { cloneVoice } from '../services/voiceService';
 import voiceService from '../services/voiceService'; 
 import { COLORS } from '../styles/colors';
 
+const VOICE_UPLOAD_COPY = {
+  uploading: 'Wysyłanie nagrania...',
+  recorded: 'Nagranie odebrane. Przygotowujemy Twój głos...',
+  processing: 'Analizujemy próbkę głosu...',
+  allocating: 'Aktywujemy Twój głos w tle...',
+  ready: 'Twój głos jest gotowy!',
+  error: 'Nie udało się przygotować głosu. Spróbuj ponownie.'
+};
+
 export default function CloneScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { showToast } = useToast();
@@ -32,7 +41,13 @@ export default function CloneScreen({ navigation }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [hasExistingVoice, setHasExistingVoice] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
-  const [progressData, setProgressData] = useState({ progress: 0, status: '' });
+const [progressData, setProgressData] = useState({
+  progress: 0,
+  status: '',
+  statusKey: null,
+  queuePosition: null,
+  queueLength: null
+});
   
   // Reference for handling abort operations
   const abortControllerRef = useRef(null);
@@ -111,7 +126,7 @@ export default function CloneScreen({ navigation }) {
     }
     
     // Reset progress data
-    setProgressData({ progress: 0, status: '' });
+    resetProgressState();
     
     // Show recording modal with instructions first (actual recording starts on button press)
     setIsModalVisible(true);
@@ -211,6 +226,90 @@ export default function CloneScreen({ navigation }) {
   };
   
   // Process audio (either recorded or uploaded) for voice cloning
+  const formatQueueMessage = useCallback((position, length) => {
+    if (position === null || position === undefined) {
+      return null;
+    }
+    const numericPosition = Number(position);
+    if (!Number.isFinite(numericPosition) || numericPosition < 0) {
+      return null;
+    }
+    const displayPosition = Math.floor(numericPosition) + 1;
+    if (length === null || length === undefined) {
+      return `Miejsce w kolejce: ${displayPosition}`;
+    }
+    const numericLength = Number(length);
+    if (!Number.isFinite(numericLength) || numericLength < 0) {
+      return `Miejsce w kolejce: ${displayPosition}`;
+    }
+    return `Miejsce w kolejce: ${displayPosition}/${Math.max(1, Math.floor(numericLength))}`;
+  }, []);
+
+  const resetProgressState = useCallback(() => {
+    setProgressData({
+      progress: 0,
+      status: '',
+      statusKey: null,
+      queuePosition: null,
+      queueLength: null
+    });
+  }, []);
+
+  const handleCloneProgressUpdate = useCallback(
+    (update) => {
+      setProgressData((prev) => {
+        if (update === null || update === undefined) {
+          return prev;
+        }
+
+        if (typeof update === 'number') {
+          const clamped = Math.max(0, Math.min(1, update));
+          const pct = Math.round(clamped * 100);
+          const statusText =
+            pct < 30
+              ? 'Analizowanie próbki głosu...'
+              : pct < 70
+              ? 'Trenowanie modelu głosu...'
+              : 'Finalizowanie...';
+          return {
+            progress: pct,
+            status: statusText,
+            statusKey: prev.statusKey,
+            queuePosition: prev.queuePosition,
+            queueLength: prev.queueLength
+          };
+        }
+
+        const {
+          progress,
+          message,
+          statusKey,
+          queuePosition,
+          queueLength
+        } = update;
+
+        const pct =
+          typeof progress === 'number'
+            ? Math.round(Math.max(0, Math.min(1, progress)) * 100)
+            : prev.progress;
+
+        const normalizedStatus = statusKey || prev.statusKey || 'processing';
+        const baseMessage =
+          message || VOICE_UPLOAD_COPY[normalizedStatus] || VOICE_UPLOAD_COPY.processing;
+        const queueText = formatQueueMessage(queuePosition, queueLength);
+
+        return {
+          progress: Math.max(0, Math.min(100, pct)),
+          status: queueText ? `${baseMessage}\n${queueText}` : baseMessage,
+          statusKey: normalizedStatus,
+          queuePosition: queuePosition ?? prev.queuePosition,
+          queueLength: queueLength ?? prev.queueLength
+        };
+      });
+    },
+    [formatQueueMessage]
+  );
+
   const processAudioForCloning = async (uri) => {
     try {
       // For uploaded files, show the modal with processing state
@@ -224,37 +323,23 @@ export default function CloneScreen({ navigation }) {
       // Set initial progress and status message
       setProgressData({
         progress: 0,
-        status: 'Rozpoczynanie klonowania głosu...'
+        status: VOICE_UPLOAD_COPY.uploading,
+        statusKey: 'uploading',
+        queuePosition: null,
+        queueLength: null
       });
       
       // API call to clone voice with progress callback
       const result = await cloneVoice(
         uri,
-        (progress) => {
-          // Update progress state
-          let statusText = 'Przetwarzanie głosu...';
-          
-          if (progress < 0.1) {
-            statusText = 'Wysyłanie nagrania...';
-          } else if (progress < 0.3) {
-            statusText = 'Analizowanie próbki głosu...';
-          } else if (progress < 0.7) {
-            statusText = 'Trenowanie modelu głosu...';
-          } else {
-            statusText = 'Finalizowanie...';
-          }
-          
-          setProgressData({
-            progress: progress * 100,
-            status: statusText
-          });
-        },
+        handleCloneProgressUpdate,
         abortControllerRef.current?.signal
       );
       
       // Hide modals at the end
       setIsProcessing(false);
       setIsModalVisible(false);
+      resetProgressState();
       
       if (result.success) {
         // Save voice ID to AsyncStorage
@@ -277,6 +362,7 @@ export default function CloneScreen({ navigation }) {
       console.error('Error processing audio:', error);
       setIsProcessing(false);
       setIsModalVisible(false);
+      resetProgressState();
       showToast('Wystąpił problem podczas przetwarzania audio. Spróbuj ponownie.', 'ERROR');
     }
   };

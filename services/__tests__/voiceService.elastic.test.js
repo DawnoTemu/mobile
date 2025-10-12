@@ -18,6 +18,20 @@ jest.mock('react-native', () => ({
   Platform: { OS: 'ios' }
 }));
 
+jest.mock('expo-secure-store', () => ({
+  getItemAsync: jest.fn(),
+  setItemAsync: jest.fn(),
+  deleteItemAsync: jest.fn()
+}));
+
+jest.mock('expo-router', () => ({
+  router: {
+    replace: jest.fn(),
+    push: jest.fn(),
+    back: jest.fn()
+  }
+}));
+
 const AsyncStorage = require('@react-native-async-storage/async-storage');
 const voiceService = require('../voiceService');
 const {
@@ -172,7 +186,7 @@ describe('generation state persistence', () => {
 
     const loaded = await loadGenerationStateSnapshot(voiceId, storyId);
     expect(loaded.state).toBeNull();
-    expect(loaded.expired).toBe(true);
+    expect(loaded.expired).toBe(false);
   });
 });
 

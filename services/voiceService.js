@@ -2091,6 +2091,18 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
     const uploadId = `voice_upload_${Date.now()}`;
     
     // Set up upload with progress tracking
+    const emitProgressEvent = (event) => {
+      if (!progressCallback) {
+        return;
+      }
+      const payload = {
+        phase: 'voice_allocation',
+        ...event
+      };
+      progressCallback(payload);
+      reportTelemetry({ category: 'voice_cloning', ...payload });
+    };
+
     const uploadOptions = {
       uploadType: FileSystem.FileSystemUploadType.MULTIPART,
       fieldName: 'file',
@@ -2104,9 +2116,17 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
     if (progressCallback) {
       uploadOptions.progressInterval = 100;
       uploadOptions.progressCallback = ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
-        // Only use 10% of the progress for the upload
-        const progress = (totalBytesWritten / totalBytesExpectedToWrite) * 0.1;
-        progressCallback(progress);
+        const ratio =
+          totalBytesExpectedToWrite > 0
+            ? totalBytesWritten / totalBytesExpectedToWrite
+            : 0;
+        const progress = Math.min(ratio * 0.2, 0.2); // cap upload portion at 20%
+        emitProgressEvent({
+          phase: 'voice_upload',
+          statusKey: 'uploading',
+          message: 'Wysyłanie nagrania...',
+          progress
+        });
       };
     }
     
@@ -2117,12 +2137,33 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
       uploadOptions
     );
     
-    if (uploadResult.status !== 200 && uploadResult.status !== 202) {
+    if (uploadResult.status !== 200 && uploadResult.status !== 201 && uploadResult.status !== 202) {
       throw new Error(uploadResult.body || 'Upload failed');
     }
     
     // Parse response
-    const responseData = JSON.parse(uploadResult.body);
+    let responseData = {};
+    try {
+      responseData = uploadResult.body ? JSON.parse(uploadResult.body) : {};
+    } catch (parseError) {
+      console.warn('Failed to parse voice upload response', parseError);
+      return {
+        success: false,
+        error: 'Invalid response from server during voice upload',
+        code: 'INVALID_RESPONSE'
+      };
+    }
+
+    if (responseData?.success === false) {
+      return {
+        success: false,
+        error:
+          responseData.error ||
+          responseData.message ||
+          'Voice upload failed',
+        code: 'CLONE_ERROR'
+      };
+    }
     
     // Check if we received a voice ID (database ID) - needed for polling
     if (!responseData.id) {
@@ -2132,26 +2173,51 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
         code: 'INVALID_RESPONSE'
       };
     }
+
+    emitProgressEvent({
+      statusKey: responseData.allocation_status || responseData.status || 'recorded',
+      message:
+        responseData.message ||
+        'Nagranie odebrane. Przygotowujemy Twój głos...',
+      progress: 0.25,
+      queuePosition: responseData.queue_position ?? null,
+      queueLength: responseData.queue_length ?? null
+    });
     
     // Start polling for voice completion
     const pollResult = await pollForVoiceCompletion(
-      responseData.id, 
-      progressCallback
+      responseData.id,
+      {
+        taskId: responseData.task_id || null,
+        statusCallback: emitProgressEvent
+      }
     );
     
     // If polling was successful, store the voice ID
     if (pollResult.success && pollResult.voiceId) {
       await setCurrentVoice(pollResult.voiceId);
-      
+      emitProgressEvent({
+        statusKey: 'ready',
+        message: 'Twój głos jest gotowy!',
+        progress: 1
+      });
       return {
         success: true,
         voiceId: pollResult.voiceId,
-        name: pollResult.name || responseData.name
+        name: pollResult.name || responseData.name || null
       };
-    } else {
-      // If polling failed, return the error
-      return pollResult;
     }
+
+    if (pollResult.success && !pollResult.voiceId) {
+      return {
+        success: false,
+        error: 'Voice allocation completed without remote identifier',
+        code: 'INVALID_RESPONSE'
+      };
+    }
+
+    // If polling failed, return the error
+    return pollResult;
   } catch (error) {
     console.error('Voice cloning error:', error);
     
@@ -2403,61 +2469,104 @@ export const deleteVoice = async (voiceId) => {
  * @param {Function} statusCallback - Optional callback for status updates
  * @returns {Promise<boolean>} Whether voice cloning completed successfully
  */
-const pollForVoiceCompletion = async (voiceId, statusCallback = null) => {
+const VOICE_ALLOCATION_STATUS_COPY = {
+  recorded: 'Nagranie odebrane. Przygotowujemy Twój głos... ',
+  processing: 'Analizujemy próbkę głosu...',
+  allocating: 'Aktywujemy Twój głos w tle...',
+  ready: 'Twój głos jest gotowy!',
+  error: 'Nie udało się przygotować głosu.'
+};
+
+const VOICE_ALLOCATION_PROGRESS = {
+  recorded: 0.25,
+  processing: 0.45,
+  allocating: 0.65,
+  ready: 1,
+  error: 1
+};
+
+const pollForVoiceCompletion = async (
+  voiceId,
+  { taskId = null, statusCallback = null } = {}
+) => {
   let attempts = 0;
-  const maxAttempts = 36; // 3 minutes with 5-second intervals
-  
+  const maxAttempts = 36;
+  const poll = async () => {
+    const query = taskId ? `?task_id=${encodeURIComponent(taskId)}` : '';
+    return apiRequest(`/voices/${voiceId}/status${query}`, {
+      method: 'GET'
+    });
+  };
+
   while (attempts < maxAttempts) {
-    if (statusCallback) {
-      const progress = 0.1 + (attempts / maxAttempts) * 0.8; // Progress from 10% to 90%
-      statusCallback(progress);
+    if (attempts > 0) {
+      await delay(processingPollIntervalMs);
     }
-    
-    // Wait between polls
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
+
     try {
-      // Make a request to get voice status
-      const result = await apiRequest(`/voices/${voiceId}`, {
-        method: 'GET'
-      });
-      
-      if (result.success && result.data) {
-        // Check voice status
-        const status = result.data.status;
-        
-        // If voice is ready, return success
-        if (status === 'ready') {
-          return {
-            success: true,
-            voiceId: result.data.elevenlabs_voice_id,
-            name: result.data.name
-          };
-        }
-        
-        // If voice has error status, return failure
-        if (status === 'error') {
-          return {
-            success: false,
-            error: 'Voice cloning failed on server',
-            code: 'CLONE_ERROR'
-          };
-        }
-        
-        // Otherwise, continue polling
+      const result = await poll();
+
+      if (!result.success) {
+        return {
+          success: false,
+          error: result.error || 'Voice status polling failed',
+          code: result.code || 'STATUS_POLL_FAILED'
+        };
+      }
+
+      const payload = result.data || {};
+      const statusKey =
+        normaliseSynthesisStatus(payload.allocation_status) ||
+        normaliseSynthesisStatus(payload.status) ||
+        'recorded';
+      const message =
+        payload.message || VOICE_ALLOCATION_STATUS_COPY[statusKey] ||
+        'Przygotowujemy Twój głos...';
+      const queuePosition =
+        payload.queue_position !== undefined ? payload.queue_position : null;
+      const queueLength =
+        payload.queue_length !== undefined ? payload.queue_length : null;
+      const progress = VOICE_ALLOCATION_PROGRESS[statusKey] ?? 0.5;
+
+      const event = {
+        phase: 'voice_allocation',
+        statusKey,
+        message,
+        progress,
+        queuePosition,
+        queueLength
+      };
+      statusCallback?.(event);
+      reportTelemetry({ category: 'voice_cloning', ...event });
+
+      if (payload.success === false || statusKey === 'error') {
+        return {
+          success: false,
+          error:
+            payload.error ||
+            payload.message ||
+            'Voice allocation failed. Spróbuj ponownie.',
+          code: 'CLONE_ERROR'
+        };
+      }
+
+      if (statusKey === 'ready') {
+        return {
+          success: true,
+          voiceId: payload.elevenlabs_voice_id || payload.voice_id || null,
+          name: payload.name || null
+        };
       }
     } catch (error) {
-      console.warn(`Poll attempt ${attempts + 1} failed:`, error.message);
-      // Continue polling despite errors
+      console.warn(`Voice status poll attempt ${attempts + 1} failed:`, error);
     }
-    
+
     attempts++;
   }
-  
-  // If we've reached max attempts, return timeout error
+
   return {
     success: false,
-    error: 'Voice cloning timed out',
+    error: 'Voice allocation timed out. Spróbuj ponownie.',
     code: 'CLONE_TIMEOUT'
   };
 };

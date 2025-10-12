@@ -73,6 +73,9 @@ components:
         content:
           type: string
           example: "Once upon a time..."
+        required_credits:
+          type: integer
+          example: 3
         cover_path:
           type: string
           example: "/stories/1/cover"
@@ -103,6 +106,9 @@ components:
           description:
             type: string
             example: "A classic fairy tale about two children who discover a house made of candy..."
+          required_credits:
+            type: integer
+            example: 3
           cover_path:
             type: string
             example: "/stories/1/cover"
@@ -125,9 +131,50 @@ components:
         name:
           type: string
           example: "My Voice"
+        status:
+          type: string
+          enum: [pending, processing, recorded, ready, error]
+          example: "recorded"
+        allocation_status:
+          type: string
+          example: "recorded"
+        service_provider:
+          type: string
+          example: "elevenlabs"
         elevenlabs_voice_id:
           type: string
           example: "pNInz6obpgDQGcFmaJgB"
+          nullable: true
+        recording_s3_key:
+          type: string
+          example: "voice_samples/42/voice_7_e2f3.wav"
+        recording_filesize:
+          type: integer
+          example: 2048000
+          nullable: true
+        s3_sample_key:
+          type: string
+          example: "voice_samples/42/voice_7_e2f3.wav"
+          nullable: true
+        sample_filename:
+          type: string
+          example: "sample.wav"
+          nullable: true
+        elevenlabs_allocated_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        slot_lock_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
         user_id:
           type: integer
           format: int64
@@ -157,6 +204,158 @@ components:
         details:
           type: string
           example: "Detailed error information"
+
+    AudioSynthesisStatus:
+      type: string
+      enum:
+        - ready
+        - processing
+        - allocating_voice
+        - queued_for_slot
+      example: processing
+
+    VoiceSlotMetadata:
+      type: object
+      description: Current slot information returned with audio synthesis responses.
+      properties:
+        voice_id:
+          type: integer
+          example: 17
+        allocation_status:
+          type: string
+          example: allocating
+        service_provider:
+          type: string
+          example: elevenlabs
+        queue_position:
+          type: integer
+          nullable: true
+          example: 2
+        queue_length:
+          type: integer
+          nullable: true
+          example: 5
+        elevenlabs_voice_id:
+          type: string
+          nullable: true
+          example: "pNInz6obpgDQGcFmaJgB"
+        queued:
+          type: boolean
+          nullable: true
+        allocated_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    AudioSynthesisResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: AudioStory identifier
+          example: 301
+        status:
+          $ref: '#/components/schemas/AudioSynthesisStatus'
+        message:
+          type: string
+          example: "Voice allocation is in progress"
+        url:
+          type: string
+          format: uri
+          nullable: true
+          example: "https://s3.amazonaws.com/storyvoice/audio/voice_17/story_42.mp3"
+        voice:
+          $ref: '#/components/schemas/VoiceSlotMetadata'
+
+    VoiceSlotQueueEntry:
+      type: object
+      properties:
+        voice_id:
+          type: integer
+          example: 42
+        score:
+          type: number
+          format: double
+          example: 1.711234521e9
+        attempts:
+          type: integer
+          example: 2
+        user_id:
+          type: integer
+          example: 12
+        s3_key:
+          type: string
+          example: "voice_samples/12/voice_42_a1b2.wav"
+
+    VoiceSlotStatusMetrics:
+      type: object
+      properties:
+        slot_limit:
+          type: integer
+          nullable: true
+          example: 30
+        available_capacity:
+          type: integer
+          nullable: true
+          example: 3
+        ready_count:
+          type: integer
+          example: 24
+        allocating_count:
+          type: integer
+          example: 4
+        queue_depth:
+          type: integer
+          example: 5
+
+    VoiceSlotStatusResponse:
+      type: object
+      properties:
+        metrics:
+          $ref: '#/components/schemas/VoiceSlotStatusMetrics'
+        active_voices:
+          type: array
+          items:
+            $ref: '#/components/schemas/Voice'
+        queued_requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/VoiceSlotQueueEntry'
+        recent_events:
+          type: array
+          items:
+            $ref: '#/components/schemas/VoiceSlotEvent'
+
+    VoiceSlotEvent:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 512
+        voice_id:
+          type: integer
+          nullable: true
+          example: 42
+        user_id:
+          type: integer
+          nullable: true
+          example: 12
+        event_type:
+          type: string
+          example: allocation_completed
+        reason:
+          type: string
+          nullable: true
+          example: "voice_ready"
+        metadata:
+          type: object
+          additionalProperties: {}
+          example:
+            s3_key: voice_samples/12/voice_42.wav
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-03-30T12:45:10Z"
 
     LoginRequest:
       type: object
@@ -280,17 +479,6 @@ components:
           format: uri
           example: "https://s3.amazonaws.com/storyvoice/samples/..."
 
-    AudioSynthesisResponse:
-      type: object
-      properties:
-        status:
-          type: string
-          example: "success"
-        url:
-          type: string
-          format: uri
-          example: "https://s3.amazonaws.com/storyvoice/audio/..."
-
     MessageResponse:
       type: object
       properties:
@@ -405,15 +593,45 @@ components:
     VoiceStatusResponse:
       type: object
       properties:
+        success:
+          type: boolean
+          example: true
         id:
           type: integer
         name:
           type: string
         status:
           type: string
-          enum: [pending, processing, ready, error]
+          enum: [pending, processing, recorded, ready, error]
         elevenlabs_voice_id:
           type: string
+          nullable: true
+        allocation_status:
+          type: string
+          example: "recorded"
+        service_provider:
+          type: string
+          nullable: true
+        task_id:
+          type: string
+          nullable: true
+        queue_position:
+          type: integer
+          nullable: true
+        queue_length:
+          type: integer
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        recording_s3_key:
+          type: string
+          nullable: true
+        recording_filesize:
+          type: integer
           nullable: true
         sample_url:
           type: string
@@ -775,7 +993,7 @@ paths:
     post:
       tags:
         - Voices
-      summary: Create a new voice clone
+      summary: Upload a new voice recording
       security:
         - bearerAuth: []
       requestBody:
@@ -791,8 +1009,18 @@ paths:
                 name:
                   type: string
       responses:
-        '202': { description: Voice cloning accepted }
-        '200': { description: Voice created }
+        '201':
+          description: Voice recording accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceStatusResponse'
+        '200':
+          description: Voice already recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceStatusResponse'
         '400': { description: Bad request }
         '401': { description: Unauthorized }
 
@@ -854,7 +1082,7 @@ paths:
         '403': { description: Forbidden }
         '404': { description: Not found }
 
-  /voices/{voice_external_id}/stories/{story_id}/audio:
+  /voices/{voice_identifier}/stories/{story_id}/audio:
     get:
       tags:
         - Audio
@@ -862,9 +1090,9 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: voice_external_id
+        - name: voice_identifier
           in: path
-          description: External voice ID (e.g., ElevenLabs)
+          description: External ElevenLabs voice ID or numeric internal voice ID
           required: true
           schema:
             type: string
@@ -903,7 +1131,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: voice_external_id
+        - name: voice_identifier
           in: path
           required: true
           schema:
@@ -923,7 +1151,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - name: voice_external_id
+        - name: voice_identifier
           in: path
           required: true
           schema:
@@ -934,8 +1162,18 @@ paths:
           schema:
             type: integer
       responses:
-        '202': { description: Queued (pending) }
-        '200': { description: Already ready }
+        '202':
+          description: Accepted, voice allocation or synthesis pending
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AudioSynthesisResponse'
+        '200':
+          description: Audio already ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AudioSynthesisResponse'
         '400': { description: Bad request }
         '401': { description: Unauthorized }
         '402': { description: Payment Required (insufficient credits) }
@@ -1135,6 +1373,99 @@ paths:
                 $ref: '#/components/schemas/Error'
         '404':
           description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /admin/voice-slots/status:
+    get:
+      tags:
+        - Admin
+      summary: Inspect current voice slot utilisation and queue
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit_active
+          in: query
+          required: false
+          schema:
+            type: integer
+            example: 100
+        - name: limit_queue
+          in: query
+          required: false
+          schema:
+            type: integer
+            example: 50
+        - name: limit_events
+          in: query
+          required: false
+          schema:
+            type: integer
+            example: 50
+      responses:
+        '200':
+          description: Snapshot of slot usage and queue depth
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceSlotStatusResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /admin/voice-slots/process-queue:
+    post:
+      tags:
+        - Admin
+      summary: Trigger processing of queued voice allocations
+      security:
+        - bearerAuth: []
+      responses:
+        '202':
+          description: Queue processing scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Voice allocation queue processing triggered
+                  task_id:
+                    type: string
+                    nullable: true
+                    example: "ce3f6f9a-6f8c-4e2c-8d91-1b0f5a99a8f4"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
           content:
             application/json:
               schema:
