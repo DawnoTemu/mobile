@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system';
 import { setAudioModeAsync } from 'expo-audio';
-import { Platform } from 'react-native';
+import { Platform, Image } from 'react-native';
 
 /**
  * Format time in seconds to MM:SS format
