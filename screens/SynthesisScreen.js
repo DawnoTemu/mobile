@@ -672,8 +672,20 @@ export default function SynthesisScreen({ navigation }) {
 
   // Handle story selection
   const handleStorySelect = async (story) => {
-    // Prevent duplicate handling while processing
     if (processingStories[story.id]) {
+      if (selectedStory?.id !== story.id) {
+        setSelectedStory(story);
+      }
+
+      if (activeGenerationStoryId === story.id) {
+        setIsProgressModalVisible(true);
+        return;
+      }
+
+      if (generationStatusByStory?.[story.id]) {
+        setIsProgressModalVisible(true);
+        await getStoryAudio(story);
+      }
       return;
     }
 
