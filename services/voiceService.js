@@ -49,6 +49,163 @@ const headersToObject = (headers) => {
   return snapshot;
 };
 
+const GENERATION_SLOT_RETRY_DELAY_MS = 15000;
+const GENERATION_SLOT_MAX_ATTEMPTS = 8;
+const PROCESSING_POLL_INTERVAL_MS = 5000;
+const PROCESSING_POLL_MAX_ATTEMPTS = 36;
+
+const delay = (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const toStringOrNull = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const trimmed = String(value).trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const toNumberOrNull = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const candidate = Number(value);
+  return Number.isFinite(candidate) ? candidate : null;
+};
+
+const parseQueueHeaders = (headerMap = {}) => {
+  const queuePosition = toNumberOrNull(headerMap['x-voice-queue-position']);
+  const queueLength = toNumberOrNull(headerMap['x-voice-queue-length']);
+  const remoteVoiceIdRaw =
+    headerMap['x-voice-remote-id'] !== undefined
+      ? headerMap['x-voice-remote-id']
+      : headerMap['x-voice-remote-id'.toLowerCase()];
+
+  return {
+    queuePosition,
+    queueLength,
+    remoteVoiceId: toStringOrNull(remoteVoiceIdRaw)
+  };
+};
+
+const normaliseSynthesisStatus = (status) => {
+  if (typeof status !== 'string') {
+    return null;
+  }
+  const normalized = status.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  return normalized;
+};
+
+const computeStatusProgressHint = (status, fallback = null) => {
+  switch (status) {
+    case 'queued_for_slot':
+      return 0.05;
+    case 'allocating_voice':
+      return 0.2;
+    case 'processing':
+      return fallback !== null ? fallback : 0.6;
+    case 'ready':
+      return 1;
+    default:
+      return fallback;
+  }
+};
+
+const extractVoiceSlotMetadata = (voice = {}) => {
+  if (!voice || typeof voice !== 'object') {
+    return {};
+  }
+  const slot = {
+    voiceId: toNumberOrNull(voice.voice_id) ?? toNumberOrNull(voice.id),
+    allocationStatus: toStringOrNull(voice.allocation_status),
+    serviceProvider: toStringOrNull(voice.service_provider),
+    queuePosition:
+      toNumberOrNull(voice.queue_position) ?? toNumberOrNull(voice.queuePosition),
+    queueLength: toNumberOrNull(voice.queue_length) ?? toNumberOrNull(voice.queueLength),
+    elevenlabsVoiceId: toStringOrNull(voice.elevenlabs_voice_id),
+    queued:
+      typeof voice.queued === 'boolean'
+        ? voice.queued
+        : voice.queued === 'true'
+          ? true
+          : voice.queued === 'false'
+            ? false
+            : null,
+    allocatedAt: toStringOrNull(voice.allocated_at)
+  };
+
+  return slot;
+};
+
+const buildAudioRedirectUrl = (voiceId, storyId) =>
+  `${API_BASE_URL}/voices/${voiceId}/stories/${storyId}/audio?redirect=true`;
+
+const interpretAudioSynthesisResponse = (result) => {
+  if (!result || !result.success) {
+    return {
+      success: false,
+      error: result?.error || 'Unable to generate audio',
+      code: result?.code || 'API_ERROR'
+    };
+  }
+
+  const payload = result.data && typeof result.data === 'object' ? result.data : {};
+  const queueHeaders = parseQueueHeaders(result.headers || {});
+  const voiceSlotMetadata = extractVoiceSlotMetadata(payload.voice || {});
+
+  const payloadStatus = normaliseSynthesisStatus(payload.status);
+  const status =
+    payloadStatus ||
+    (result.status === 200 && payload.url ? 'ready' : payloadStatus) ||
+    (result.status === 200 ? 'ready' : null);
+
+  const audioIdRaw =
+    payload.id !== undefined
+      ? payload.id
+      : payload.audio_id !== undefined
+        ? payload.audio_id
+        : null;
+
+  const queuePosition =
+    toNumberOrNull(payload.queue_position) ??
+    toNumberOrNull(payload.queuePosition) ??
+    voiceSlotMetadata.queuePosition ??
+    queueHeaders.queuePosition;
+
+  const queueLength =
+    toNumberOrNull(payload.queue_length) ??
+    toNumberOrNull(payload.queueLength) ??
+    voiceSlotMetadata.queueLength ??
+    queueHeaders.queueLength;
+
+  const remoteVoiceId =
+    toStringOrNull(payload.remote_voice_id) ??
+    queueHeaders.remoteVoiceId ??
+    voiceSlotMetadata.elevenlabsVoiceId;
+
+  return {
+    success: true,
+    status,
+    message: toStringOrNull(payload.message),
+    url: toStringOrNull(payload.url),
+    audioId:
+      audioIdRaw !== null && audioIdRaw !== undefined ? String(audioIdRaw) : null,
+    queuePosition,
+    queueLength,
+    remoteVoiceId,
+    allocationStatus: voiceSlotMetadata.allocationStatus,
+    serviceProvider: voiceSlotMetadata.serviceProvider,
+    voiceSlotMetadata,
+    queueHeaders,
+    raw: payload
+  };
+};
+
 // HELPER FUNCTIONS
 /**
  * Creates FormData from an audio file with platform-specific handling
@@ -332,6 +489,234 @@ export const processOfflineQueue = async () => {
   }
 };
 
+/**
+ * Generation state persistence helpers
+ */
+const ensureObject = (value) => (value && typeof value === 'object' ? value : {});
+
+const normaliseId = (value) => {
+  if (value === null || value === undefined) return null;
+  const stringified = String(value).trim();
+  return stringified.length ? stringified : null;
+};
+
+const isGenerationStateExpired = (entry, now, fallbackTtl) => {
+  if (!entry || typeof entry !== 'object') return true;
+  const expiresAt = typeof entry.expiresAt === 'number' ? entry.expiresAt : null;
+  if (expiresAt !== null) {
+    return now > expiresAt;
+  }
+  const ttl = typeof entry.ttl === 'number' && entry.ttl > 0 ? entry.ttl : fallbackTtl;
+  const updatedAt = typeof entry.updatedAt === 'number' ? entry.updatedAt : 0;
+  if (!updatedAt) {
+    return true;
+  }
+  return now - updatedAt > ttl;
+};
+
+const readGenerationStateMap = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.GENERATION_STATE);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return ensureObject(parsed);
+  } catch (error) {
+    console.error('Failed to read generation state snapshot:', error);
+    return {};
+  }
+};
+
+const writeGenerationStateMap = async (value) => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.GENERATION_STATE, JSON.stringify(value));
+    return true;
+  } catch (error) {
+    console.error('Failed to persist generation state snapshot:', error);
+    return false;
+  }
+};
+
+const pruneGenerationStateMap = (map, now, ttl) => {
+  let mutated = false;
+  Object.keys(map).forEach((voiceKey) => {
+    const stories = ensureObject(map[voiceKey]);
+    if (stories !== map[voiceKey]) {
+      map[voiceKey] = stories;
+    }
+    Object.keys(stories).forEach((storyKey) => {
+      if (isGenerationStateExpired(stories[storyKey], now, ttl)) {
+        delete stories[storyKey];
+        mutated = true;
+      }
+    });
+    if (!Object.keys(stories).length) {
+      delete map[voiceKey];
+      mutated = true;
+    }
+  });
+  return mutated;
+};
+
+const sanitizeGenerationStateEntry = (entry) => {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+  return {
+    ...entry,
+    updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : null,
+    expiresAt: typeof entry.expiresAt === 'number' ? entry.expiresAt : null
+  };
+};
+
+export const saveGenerationStateSnapshot = async (voiceId, storyId, snapshot = {}, options = {}) => {
+  const voiceKey = normaliseId(voiceId);
+  const storyKey = normaliseId(storyId);
+  if (!voiceKey || !storyKey) {
+    return {
+      success: false,
+      error: 'voiceId and storyId are required to store generation state',
+      code: 'INVALID_ARGUMENT'
+    };
+  }
+
+  const ttl = typeof options.ttl === 'number' && options.ttl > 0
+    ? options.ttl
+    : GENERATION_STATE_TTL;
+
+  const now = Date.now();
+  const map = await readGenerationStateMap();
+  pruneGenerationStateMap(map, now, ttl);
+
+  if (!map[voiceKey]) {
+    map[voiceKey] = {};
+  }
+
+  const entry = {
+    ...snapshot,
+    voiceId: voiceKey,
+    storyId: storyKey,
+    updatedAt: now,
+    ttl,
+    expiresAt: now + ttl
+  };
+
+  map[voiceKey][storyKey] = entry;
+  await writeGenerationStateMap(map);
+
+  return {
+    success: true,
+    state: sanitizeGenerationStateEntry(entry)
+  };
+};
+
+export const loadGenerationStateSnapshot = async (voiceId, storyId) => {
+  const voiceKey = normaliseId(voiceId);
+  const storyKey = normaliseId(storyId);
+  if (!voiceKey || !storyKey) {
+    return {
+      success: false,
+      error: 'voiceId and storyId are required to load generation state',
+      code: 'INVALID_ARGUMENT'
+    };
+  }
+
+  const now = Date.now();
+  const map = await readGenerationStateMap();
+  const stories = ensureObject(map[voiceKey]);
+  const entry = stories[storyKey];
+
+  if (!entry || isGenerationStateExpired(entry, now, GENERATION_STATE_TTL)) {
+    if (entry) {
+      delete stories[storyKey];
+      if (!Object.keys(stories).length) {
+        delete map[voiceKey];
+      }
+      await writeGenerationStateMap(map);
+    }
+    return {
+      success: true,
+      state: null,
+      expired: !!entry
+    };
+  }
+
+  return {
+    success: true,
+    state: sanitizeGenerationStateEntry(entry)
+  };
+};
+
+export const listGenerationStateSnapshots = async ({ voiceId } = {}) => {
+  const filterVoiceKey = normaliseId(voiceId);
+  const now = Date.now();
+  const map = await readGenerationStateMap();
+  const ttl = GENERATION_STATE_TTL;
+  const result = {};
+  const mutated = pruneGenerationStateMap(map, now, ttl);
+
+  const voices = filterVoiceKey ? [filterVoiceKey] : Object.keys(map);
+  voices.forEach((voiceKey) => {
+    const stories = ensureObject(map[voiceKey]);
+    const entries = {};
+    Object.keys(stories).forEach((storyKey) => {
+      const entry = stories[storyKey];
+      if (!isGenerationStateExpired(entry, now, ttl)) {
+        entries[storyKey] = sanitizeGenerationStateEntry(entry);
+      }
+    });
+    if (Object.keys(entries).length) {
+      result[voiceKey] = entries;
+    }
+  });
+
+  if (mutated) {
+    await writeGenerationStateMap(map);
+  }
+
+  return result;
+};
+
+export const clearGenerationStateSnapshot = async (voiceId, storyId = null) => {
+  const voiceKey = normaliseId(voiceId);
+  if (!voiceKey) {
+    return {
+      success: false,
+      error: 'voiceId is required to clear generation state',
+      code: 'INVALID_ARGUMENT'
+    };
+  }
+
+  const map = await readGenerationStateMap();
+  if (!map[voiceKey]) {
+    return { success: true };
+  }
+
+  if (storyId === null || storyId === undefined) {
+    delete map[voiceKey];
+  } else {
+    const storyKey = normaliseId(storyId);
+    if (storyKey && map[voiceKey][storyKey]) {
+      delete map[voiceKey][storyKey];
+    }
+    if (!Object.keys(map[voiceKey]).length) {
+      delete map[voiceKey];
+    }
+  }
+
+  await writeGenerationStateMap(map);
+  return { success: true };
+};
+
+export const purgeExpiredGenerationStateSnapshots = async () => {
+  const now = Date.now();
+  const map = await readGenerationStateMap();
+  const mutated = pruneGenerationStateMap(map, now, GENERATION_STATE_TTL);
+  if (mutated) {
+    await writeGenerationStateMap(map);
+  }
+  return { success: true, mutated };
+};
+
 // VOICE MANAGEMENT
 
 /**
@@ -569,7 +954,6 @@ export const checkAudioExists = async (voiceId, storyId) => {
  * @returns {Promise<Object>} Result with audio URL or error
  */
 export const generateStoryAudio = async (voiceId, storyId, statusCallback = null) => {
-  // Check if online
   const online = await isOnline();
   if (!online) {
     return {
@@ -579,8 +963,8 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
     };
   }
 
-  // If no voiceId provided, try to get current one
-  if (!voiceId) {
+  let resolvedVoiceId = toStringOrNull(voiceId);
+  if (!resolvedVoiceId) {
     const current = await getCurrentVoice();
     if (!current.success || !current.voiceId) {
       return {
@@ -589,44 +973,235 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
         code: 'MISSING_VOICE_ID'
       };
     }
-    voiceId = current.voiceId;
+    resolvedVoiceId = toStringOrNull(current.voiceId);
   }
-  
-  try {
-    // Start synthesis request using updated endpoint
-    if (statusCallback) statusCallback('processing', 0.1);
-    
-    const result = await apiRequest(`/voices/${voiceId}/stories/${storyId}/audio`, {
-      method: 'POST'
-    });
-    
-    // Continue polling even if initial request timed out but likely started processing
-    if (!result.success && result.code !== 'TIMEOUT') {
-      return result;  // Only return for non-timeout errors
-    }
-    
-    if (statusCallback) statusCallback('processing', 0.5);
-        
-    // Always attempt to poll, even after a timeout
-    const isAvailable = await pollForAudioAvailability(voiceId, storyId, statusCallback);
 
-    if (!isAvailable) {
+  const resolvedStoryId = toStringOrNull(storyId) ?? String(storyId);
+
+  const emitStatusUpdate = (status, progressOverride = null) => {
+    if (!statusCallback || !status) {
+      return;
+    }
+    const progressHint =
+      progressOverride !== null
+        ? progressOverride
+        : computeStatusProgressHint(status, progressOverride);
+    statusCallback(status, progressHint !== null ? progressHint : undefined);
+  };
+
+  const persistSnapshot = async (status, details = {}) => {
+    return saveGenerationStateSnapshot(resolvedVoiceId, resolvedStoryId, {
+      status,
+      ...details
+    });
+  };
+
+  let existingSnapshot = null;
+  try {
+    const snapshotResult = await loadGenerationStateSnapshot(
+      resolvedVoiceId,
+      resolvedStoryId
+    );
+    if (snapshotResult.success) {
+      existingSnapshot = snapshotResult.state || null;
+      if (existingSnapshot?.status) {
+        emitStatusUpdate(
+          existingSnapshot.status,
+          computeStatusProgressHint(existingSnapshot.status, null)
+        );
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to load generation snapshot before starting', error);
+  }
+
+  let audioStoryId = existingSnapshot?.audioId || null;
+  let latestStatus = existingSnapshot?.status || null;
+  let latestMetadata = existingSnapshot || {};
+  let slotAttempts = 0;
+
+  try {
+    while (true) {
+      const apiResult = await apiRequest(
+        `/voices/${resolvedVoiceId}/stories/${resolvedStoryId}/audio`,
+        { method: 'POST' }
+      );
+
+      if (!apiResult.success) {
+        if (apiResult.code === 'TIMEOUT') {
+          latestStatus = latestStatus || 'processing';
+          emitStatusUpdate('processing', 0.6);
+          break;
+        }
+
+        await persistSnapshot(latestStatus || 'error', {
+          ...latestMetadata,
+          statusCode: apiResult.status,
+          error: apiResult.error
+        });
+
+        return apiResult;
+      }
+
+      const interpretation = interpretAudioSynthesisResponse(apiResult);
+      if (!interpretation.success) {
+        await persistSnapshot('error', {
+          ...latestMetadata,
+          error: interpretation.error,
+          code: interpretation.code || 'API_ERROR'
+        });
+        return {
+          success: false,
+          error: interpretation.error,
+          code: interpretation.code || 'API_ERROR'
+        };
+      }
+
+      latestStatus = interpretation.status || latestStatus || 'processing';
+      audioStoryId = interpretation.audioId || audioStoryId;
+
+      latestMetadata = {
+        ...latestMetadata,
+        audioId: audioStoryId,
+        message: interpretation.message,
+        queuePosition: interpretation.queuePosition,
+        queueLength: interpretation.queueLength,
+        remoteVoiceId: interpretation.remoteVoiceId,
+        allocationStatus: interpretation.allocationStatus,
+        serviceProvider: interpretation.serviceProvider,
+        voiceSlotMetadata: interpretation.voiceSlotMetadata,
+        queueHeaders: interpretation.queueHeaders,
+        httpStatus: apiResult.status
+      };
+
+      await persistSnapshot(latestStatus, latestMetadata);
+      emitStatusUpdate(
+        latestStatus,
+        computeStatusProgressHint(latestStatus, null)
+      );
+
+      if (latestStatus === 'ready') {
+        const audioUrl =
+          interpretation.url ||
+          latestMetadata.audioUrl ||
+          buildAudioRedirectUrl(resolvedVoiceId, resolvedStoryId);
+
+        await clearGenerationStateSnapshot(resolvedVoiceId, resolvedStoryId);
+        emitStatusUpdate('complete', 1);
+
+        return {
+          success: true,
+          status: 'ready',
+          audioUrl,
+          metadata: {
+            ...latestMetadata,
+            status: 'ready',
+            audioUrl
+          }
+        };
+      }
+
+      if (latestStatus === 'processing') {
+        break;
+      }
+
+      if (latestStatus === 'queued_for_slot' || latestStatus === 'allocating_voice') {
+        slotAttempts += 1;
+        if (slotAttempts >= GENERATION_SLOT_MAX_ATTEMPTS) {
+          const timeoutError = {
+            success: false,
+            error: 'Voice slot allocation timed out. Please try again shortly.',
+            code: 'ALLOCATION_TIMEOUT',
+            status: latestStatus,
+            queuePosition: latestMetadata.queuePosition,
+            queueLength: latestMetadata.queueLength,
+            remoteVoiceId: latestMetadata.remoteVoiceId
+          };
+          await persistSnapshot('error', {
+            ...latestMetadata,
+            status: latestStatus,
+            error: timeoutError.error,
+            code: timeoutError.code
+          });
+          return timeoutError;
+        }
+
+        await delay(GENERATION_SLOT_RETRY_DELAY_MS);
+        continue;
+      }
+
+      // Unknown status: attempt to progress via polling
+      break;
+    }
+
+    emitStatusUpdate('processing', 0.6);
+
+    const pollOutcome = await pollForAudioAvailability(
+      resolvedVoiceId,
+      resolvedStoryId,
+      statusCallback,
+      {
+        audioId: audioStoryId,
+        intervalMs: PROCESSING_POLL_INTERVAL_MS,
+        maxAttempts: PROCESSING_POLL_MAX_ATTEMPTS,
+        metadata: latestMetadata
+      }
+    );
+
+    if (pollOutcome.success && pollOutcome.ready) {
+      const audioUrl =
+        pollOutcome.audioUrl ||
+        buildAudioRedirectUrl(resolvedVoiceId, resolvedStoryId);
+
+      await clearGenerationStateSnapshot(resolvedVoiceId, resolvedStoryId);
+      emitStatusUpdate('complete', 1);
+
       return {
-        success: false,
-        error: 'Audio generation timed out',
-        code: 'GENERATION_TIMEOUT'
+        success: true,
+        status: 'ready',
+        audioUrl,
+        metadata: {
+          ...latestMetadata,
+          status: 'ready',
+          audioUrl,
+          audioId: audioStoryId || pollOutcome.audioId || null
+        }
       };
     }
-    
-    if (statusCallback) statusCallback('complete', 1);
-    
-    // Return the URL for the generated audio
+
+    if (!pollOutcome.success) {
+      await persistSnapshot('error', {
+        ...latestMetadata,
+        status: latestStatus,
+        error: pollOutcome.error,
+        code: pollOutcome.code
+      });
+      return pollOutcome;
+    }
+
+    await persistSnapshot(latestStatus || 'processing', {
+      ...latestMetadata,
+      status: latestStatus || 'processing',
+      error: 'Audio generation timed out'
+    });
+
     return {
-      success: true,
-      audioUrl: `${API_BASE_URL}/voices/${voiceId}/stories/${storyId}/audio?redirect=true`,
+      success: false,
+      error: 'Audio generation timed out',
+      code: 'GENERATION_TIMEOUT',
+      status: latestStatus || 'processing',
+      queuePosition: latestMetadata.queuePosition,
+      queueLength: latestMetadata.queueLength,
+      remoteVoiceId: latestMetadata.remoteVoiceId
     };
   } catch (error) {
     console.error('Error generating audio:', error);
+    await persistSnapshot('error', {
+      ...latestMetadata,
+      status: latestStatus || 'error',
+      error: error.message
+    });
+
     return {
       success: false,
       error: error.message || 'Unknown error generating audio',
@@ -642,32 +1217,85 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
  * @param {Function} statusCallback - Optional callback for status updates
  * @returns {Promise<boolean>} Whether audio is available
  */
-const pollForAudioAvailability = async (voiceId, storyId, statusCallback = null) => {
+const pollForAudioAvailability = async (
+  voiceId,
+  storyId,
+  statusCallback = null,
+  options = {}
+) => {
+  const {
+    audioId = null,
+    intervalMs = PROCESSING_POLL_INTERVAL_MS,
+    maxAttempts = PROCESSING_POLL_MAX_ATTEMPTS
+  } = options || {};
+
   let attempts = 0;
-  const maxAttempts = 24; // 2 minutes with 5-second intervals
-  
+
   while (attempts < maxAttempts) {
     if (statusCallback) {
-      const progress = 0.5 + (attempts / maxAttempts) * 0.3; // Progress from 50% to 80%
-      statusCallback('processing', progress);
+      const progress =
+        0.6 + (attempts / Math.max(maxAttempts, 1)) * 0.35; // 60% -> 95%
+      statusCallback('processing', Math.min(progress, 0.95));
     }
-    
-    // Wait between polls
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
+
     try {
+      if (audioId) {
+        const statusResult = await apiRequest(`/audio/${audioId}/status`, {
+          method: 'GET'
+        });
+
+        if (statusResult.success && statusResult.data) {
+          const payload =
+            typeof statusResult.data === 'object' ? statusResult.data : {};
+          const state = normaliseSynthesisStatus(payload.status);
+          const errored =
+            state === 'error' ||
+            (payload.ready === false && payload.successful === false);
+
+          if (state === 'ready') {
+            return {
+              success: true,
+              ready: true,
+              audioUrl: toStringOrNull(payload.url),
+              audioId: String(payload.id ?? audioId)
+            };
+          }
+
+          if (errored) {
+            return {
+              success: false,
+              error:
+                toStringOrNull(payload.error) ||
+                'Audio synthesis failed on the server',
+              code: 'GENERATION_FAILED',
+              status: state || 'error'
+            };
+          }
+        }
+      }
+
       const checkResult = await checkAudioExists(voiceId, storyId);
       if (checkResult.success && checkResult.exists) {
-        return true;
+        return {
+          success: true,
+          ready: true,
+          audioUrl: buildAudioRedirectUrl(voiceId, storyId),
+          fromCache: checkResult.fromCache,
+          localUri: checkResult.localUri || null
+        };
       }
     } catch (error) {
-      console.warn(`Poll attempt ${attempts + 1} failed:`, error.message);
+      console.warn(`Audio polling attempt ${attempts + 1} failed:`, error);
     }
-    
-    attempts++;
+
+    await delay(intervalMs);
+    attempts += 1;
   }
-  
-  return false;
+
+  return {
+    success: true,
+    ready: false
+  };
 };
 
 // AUDIO FILE MANAGEMENT
@@ -843,236 +1471,6 @@ export const markStoriesWithLocalAudio = async (voiceId, stories) => {
 };
 
 /**
- * Generation state persistence helpers
- */
-
-const ensureObject = (value) => (value && typeof value === 'object' ? value : {});
-
-const normaliseId = (value) => {
-  if (value === null || value === undefined) return null;
-  const stringified = String(value).trim();
-  return stringified.length ? stringified : null;
-};
-
-const isGenerationStateExpired = (entry, now, fallbackTtl) => {
-  if (!entry || typeof entry !== 'object') return true;
-  const expiresAt = typeof entry.expiresAt === 'number' ? entry.expiresAt : null;
-  if (expiresAt !== null) {
-    return now > expiresAt;
-  }
-  const ttl = typeof entry.ttl === 'number' && entry.ttl > 0 ? entry.ttl : fallbackTtl;
-  const updatedAt = typeof entry.updatedAt === 'number' ? entry.updatedAt : 0;
-  if (!updatedAt) {
-    return true;
-  }
-  return now - updatedAt > ttl;
-};
-
-const readGenerationStateMap = async () => {
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEYS.GENERATION_STATE);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return ensureObject(parsed);
-  } catch (error) {
-    console.error('Failed to read generation state snapshot:', error);
-    return {};
-  }
-};
-
-const writeGenerationStateMap = async (value) => {
-  try {
-    await AsyncStorage.setItem(STORAGE_KEYS.GENERATION_STATE, JSON.stringify(value));
-    return true;
-  } catch (error) {
-    console.error('Failed to persist generation state snapshot:', error);
-    return false;
-  }
-};
-
-const pruneGenerationStateMap = (map, now, ttl) => {
-  let mutated = false;
-  Object.keys(map).forEach((voiceKey) => {
-    const stories = ensureObject(map[voiceKey]);
-    if (stories !== map[voiceKey]) {
-      map[voiceKey] = stories;
-    }
-    Object.keys(stories).forEach((storyKey) => {
-      if (isGenerationStateExpired(stories[storyKey], now, ttl)) {
-        delete stories[storyKey];
-        mutated = true;
-      }
-    });
-    if (!Object.keys(stories).length) {
-      delete map[voiceKey];
-      mutated = true;
-    }
-  });
-  return mutated;
-};
-
-const sanitizeGenerationStateEntry = (entry) => {
-  if (!entry || typeof entry !== 'object') {
-    return null;
-  }
-  return {
-    ...entry,
-    // Ensure we surface numeric timestamps consistently
-    updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : null,
-    expiresAt: typeof entry.expiresAt === 'number' ? entry.expiresAt : null
-  };
-};
-
-export const saveGenerationStateSnapshot = async (voiceId, storyId, snapshot = {}, options = {}) => {
-  const voiceKey = normaliseId(voiceId);
-  const storyKey = normaliseId(storyId);
-  if (!voiceKey || !storyKey) {
-    return {
-      success: false,
-      error: 'voiceId and storyId are required to store generation state',
-      code: 'INVALID_ARGUMENT'
-    };
-  }
-
-  const ttl = typeof options.ttl === 'number' && options.ttl > 0
-    ? options.ttl
-    : GENERATION_STATE_TTL;
-
-  const now = Date.now();
-  const map = await readGenerationStateMap();
-  pruneGenerationStateMap(map, now, ttl);
-
-  if (!map[voiceKey]) {
-    map[voiceKey] = {};
-  }
-
-  const entry = {
-    ...snapshot,
-    voiceId: voiceKey,
-    storyId: storyKey,
-    updatedAt: now,
-    ttl,
-    expiresAt: now + ttl
-  };
-
-  map[voiceKey][storyKey] = entry;
-  await writeGenerationStateMap(map);
-
-  return {
-    success: true,
-    state: sanitizeGenerationStateEntry(entry)
-  };
-};
-
-export const loadGenerationStateSnapshot = async (voiceId, storyId) => {
-  const voiceKey = normaliseId(voiceId);
-  const storyKey = normaliseId(storyId);
-  if (!voiceKey || !storyKey) {
-    return {
-      success: false,
-      error: 'voiceId and storyId are required to load generation state',
-      code: 'INVALID_ARGUMENT'
-    };
-  }
-
-  const now = Date.now();
-  const map = await readGenerationStateMap();
-  const stories = ensureObject(map[voiceKey]);
-  const entry = stories[storyKey];
-
-  if (!entry || isGenerationStateExpired(entry, now, GENERATION_STATE_TTL)) {
-    if (entry) {
-      delete stories[storyKey];
-      if (!Object.keys(stories).length) {
-        delete map[voiceKey];
-      }
-      await writeGenerationStateMap(map);
-    }
-    return {
-      success: true,
-      state: null,
-      expired: !!entry
-    };
-  }
-
-  return {
-    success: true,
-    state: sanitizeGenerationStateEntry(entry)
-  };
-};
-
-export const listGenerationStateSnapshots = async ({ voiceId } = {}) => {
-  const filterVoiceKey = normaliseId(voiceId);
-  const now = Date.now();
-  const map = await readGenerationStateMap();
-  const ttl = GENERATION_STATE_TTL;
-  const result = {};
-  const mutated = pruneGenerationStateMap(map, now, ttl);
-
-  const voices = filterVoiceKey ? [filterVoiceKey] : Object.keys(map);
-  voices.forEach((voiceKey) => {
-    const stories = ensureObject(map[voiceKey]);
-    const entries = {};
-    Object.keys(stories).forEach((storyKey) => {
-      const entry = stories[storyKey];
-      if (!isGenerationStateExpired(entry, now, ttl)) {
-        entries[storyKey] = sanitizeGenerationStateEntry(entry);
-      }
-    });
-    if (Object.keys(entries).length) {
-      result[voiceKey] = entries;
-    }
-  });
-
-  if (mutated) {
-    await writeGenerationStateMap(map);
-  }
-
-  return result;
-};
-
-export const clearGenerationStateSnapshot = async (voiceId, storyId = null) => {
-  const voiceKey = normaliseId(voiceId);
-  if (!voiceKey) {
-    return {
-      success: false,
-      error: 'voiceId is required to clear generation state',
-      code: 'INVALID_ARGUMENT'
-    };
-  }
-
-  const map = await readGenerationStateMap();
-  if (!map[voiceKey]) {
-    return { success: true };
-  }
-
-  if (storyId === null || storyId === undefined) {
-    delete map[voiceKey];
-  } else {
-    const storyKey = normaliseId(storyId);
-    if (storyKey && map[voiceKey][storyKey]) {
-      delete map[voiceKey][storyKey];
-    }
-    if (!Object.keys(map[voiceKey]).length) {
-      delete map[voiceKey];
-    }
-  }
-
-  await writeGenerationStateMap(map);
-  return { success: true };
-};
-
-export const purgeExpiredGenerationStateSnapshots = async () => {
-  const now = Date.now();
-  const map = await readGenerationStateMap();
-  const mutated = pruneGenerationStateMap(map, now, GENERATION_STATE_TTL);
-  if (mutated) {
-    await writeGenerationStateMap(map);
-  }
-  return { success: true, mutated };
-};
-
-/**
  * Clears stored audio for a specific voice
  * @param {string} voiceId - Voice ID
  */
@@ -1135,6 +1533,14 @@ export const downloadAudio = async (
     if (existingInfo && existingInfo.localUri) {
       const fileInfo = await getFileInfoSafe(existingInfo.localUri);
       if (isAudioFileValid(fileInfo)) {
+        try {
+          await clearGenerationStateSnapshot(voiceId, storyId);
+        } catch (clearError) {
+          console.warn(
+            'Failed to clear generation snapshot after returning cached audio',
+            clearError
+          );
+        }
         return {
           success: true,
           uri: existingInfo.localUri,
@@ -1217,7 +1623,16 @@ export const downloadAudio = async (
     
     // Store audio info for future reference
     await storeAudioInfo(voiceId, storyId, uri);
-    
+
+    try {
+      await clearGenerationStateSnapshot(voiceId, storyId);
+    } catch (clearError) {
+      console.warn(
+        'Failed to clear generation snapshot after successful download',
+        clearError
+      );
+    }
+
     return {
       success: true,
       uri,
