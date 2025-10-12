@@ -49,10 +49,58 @@ const headersToObject = (headers) => {
   return snapshot;
 };
 
-const GENERATION_SLOT_RETRY_DELAY_MS = 15000;
-const GENERATION_SLOT_MAX_ATTEMPTS = 8;
-const PROCESSING_POLL_INTERVAL_MS = 5000;
-const PROCESSING_POLL_MAX_ATTEMPTS = 36;
+const DEFAULT_GENERATION_SLOT_RETRY_DELAY_MS = 15000;
+const DEFAULT_GENERATION_SLOT_MAX_ATTEMPTS = 8;
+const DEFAULT_PROCESSING_POLL_INTERVAL_MS = 5000;
+const DEFAULT_PROCESSING_POLL_MAX_ATTEMPTS = 36;
+
+let generationSlotRetryDelayMs = DEFAULT_GENERATION_SLOT_RETRY_DELAY_MS;
+let generationSlotMaxAttempts = DEFAULT_GENERATION_SLOT_MAX_ATTEMPTS;
+let processingPollIntervalMs = DEFAULT_PROCESSING_POLL_INTERVAL_MS;
+let processingPollMaxAttempts = DEFAULT_PROCESSING_POLL_MAX_ATTEMPTS;
+
+let voiceGenerationTelemetryHandler = null;
+
+export const setVoiceGenerationTelemetryHandler = (handler) => {
+  voiceGenerationTelemetryHandler =
+    typeof handler === 'function' ? handler : null;
+};
+
+const reportTelemetry = (event) => {
+  if (
+    !event ||
+    typeof voiceGenerationTelemetryHandler !== 'function'
+  ) {
+    return;
+  }
+  try {
+    voiceGenerationTelemetryHandler(event);
+  } catch (error) {
+    console.warn('voiceService telemetry handler threw', error);
+  }
+};
+
+const applyTimingOverrides = (overrides = {}) => {
+  if (typeof overrides.slotDelay === 'number') {
+    generationSlotRetryDelayMs = overrides.slotDelay;
+  }
+  if (typeof overrides.slotAttempts === 'number') {
+    generationSlotMaxAttempts = overrides.slotAttempts;
+  }
+  if (typeof overrides.pollInterval === 'number') {
+    processingPollIntervalMs = overrides.pollInterval;
+  }
+  if (typeof overrides.pollAttempts === 'number') {
+    processingPollMaxAttempts = overrides.pollAttempts;
+  }
+};
+
+const resetTimingOverrides = () => {
+  generationSlotRetryDelayMs = DEFAULT_GENERATION_SLOT_RETRY_DELAY_MS;
+  generationSlotMaxAttempts = DEFAULT_GENERATION_SLOT_MAX_ATTEMPTS;
+  processingPollIntervalMs = DEFAULT_PROCESSING_POLL_INTERVAL_MS;
+  processingPollMaxAttempts = DEFAULT_PROCESSING_POLL_MAX_ATTEMPTS;
+};
 
 const delay = (ms) =>
   new Promise((resolve) => {
@@ -717,6 +765,21 @@ export const purgeExpiredGenerationStateSnapshots = async () => {
   return { success: true, mutated };
 };
 
+export const __TEST_ONLY__ = {
+  interpretAudioSynthesisResponse,
+  parseQueueHeaders,
+  normaliseSynthesisStatus,
+  saveGenerationStateSnapshot,
+  loadGenerationStateSnapshot,
+  listGenerationStateSnapshots,
+  clearGenerationStateSnapshot,
+  purgeExpiredGenerationStateSnapshots,
+  setTimingOverrides: applyTimingOverrides,
+  resetTimingOverrides,
+  setTelemetryHandler: setVoiceGenerationTelemetryHandler,
+  reportTelemetryEvent: reportTelemetry
+};
+
 // VOICE MANAGEMENT
 
 /**
@@ -997,7 +1060,7 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
   let slotAttempts = 0;
 
   const emitStatusUpdate = (status, progressOverride = null, snapshot = null) => {
-    if (!statusCallback || !status) {
+    if (!status) {
       return;
     }
     const metadata = snapshot || latestMetadata || {};
@@ -1010,7 +1073,8 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
         ? Math.max(0, Math.min(progressHintRaw, 1))
         : undefined;
 
-    statusCallback({
+    const event = {
+      category: 'voice_generation',
       phase: 'generation',
       status,
       progress: progressHint,
@@ -1026,7 +1090,10 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
         metadata.serviceProvider !== undefined ? metadata.serviceProvider : null,
       message: metadata.message ?? null,
       metadata
-    });
+    };
+
+    statusCallback?.(event);
+    reportTelemetry(event);
   };
 
   const persistSnapshot = async (status, details = {}) => {
@@ -1157,7 +1224,7 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
 
       if (latestStatus === 'queued_for_slot' || latestStatus === 'allocating_voice') {
         slotAttempts += 1;
-        if (slotAttempts >= GENERATION_SLOT_MAX_ATTEMPTS) {
+        if (slotAttempts >= generationSlotMaxAttempts) {
           const timeoutError = {
             success: false,
             error: 'Voice slot allocation timed out. Please try again shortly.',
@@ -1177,7 +1244,7 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
           return timeoutError;
         }
 
-        await delay(GENERATION_SLOT_RETRY_DELAY_MS);
+        await delay(generationSlotRetryDelayMs);
         continue;
       }
 
@@ -1193,8 +1260,8 @@ export const generateStoryAudio = async (voiceId, storyId, statusCallback = null
       statusCallback,
       {
         audioId: audioStoryId,
-        intervalMs: PROCESSING_POLL_INTERVAL_MS,
-        maxAttempts: PROCESSING_POLL_MAX_ATTEMPTS,
+        intervalMs: processingPollIntervalMs,
+        maxAttempts: processingPollMaxAttempts,
         metadata: latestMetadata
       }
     );
@@ -1301,8 +1368,8 @@ const pollForAudioAvailability = async (
 ) => {
   const {
     audioId = null,
-    intervalMs = PROCESSING_POLL_INTERVAL_MS,
-    maxAttempts = PROCESSING_POLL_MAX_ATTEMPTS,
+    intervalMs = processingPollIntervalMs,
+    maxAttempts = processingPollMaxAttempts,
     metadata: initialMetadata = {}
   } = options || {};
 
@@ -1310,16 +1377,17 @@ const pollForAudioAvailability = async (
   const metadataRef = { ...(initialMetadata || {}) };
 
   while (attempts < maxAttempts) {
-    if (statusCallback) {
-      const progress =
-        0.6 + (attempts / Math.max(maxAttempts, 1)) * 0.35; // 60% -> 95%
-      statusCallback({
-        phase: 'polling',
-        status: 'processing',
-        progress: Math.min(progress, 0.95),
-        metadata: metadataRef
-      });
-    }
+    const pollProgress =
+      0.6 + (attempts / Math.max(maxAttempts, 1)) * 0.35; // 60% -> 95%
+    const pollingEvent = {
+      category: 'voice_generation',
+      phase: 'polling',
+      status: 'processing',
+      progress: Math.min(pollProgress, 0.95),
+      metadata: metadataRef
+    };
+    statusCallback?.(pollingEvent);
+    reportTelemetry(pollingEvent);
 
     try {
       if (audioId) {
@@ -1337,7 +1405,8 @@ const pollForAudioAvailability = async (
           metadataRef.remoteVoiceId =
             metadataRef.remoteVoiceId ?? toStringOrNull(payload.voice_id);
           if (state === 'ready') {
-            statusCallback?.({
+            const readyEvent = {
+              category: 'voice_generation',
               phase: 'polling',
               status: 'ready',
               progress: 1,
@@ -1350,7 +1419,9 @@ const pollForAudioAvailability = async (
                 fileSizeBytes:
                   payload.file_size_bytes ?? payload.fileSizeBytes ?? null
               }
-            });
+            };
+            statusCallback?.(readyEvent);
+            reportTelemetry(readyEvent);
             return {
               success: true,
               ready: true,
@@ -1360,9 +1431,10 @@ const pollForAudioAvailability = async (
           }
 
           if (errored) {
-            statusCallback?.({
+            const errorEvent = {
+              category: 'voice_generation',
               phase: 'polling',
-              status: 'error',
+              status: state || 'error',
               progress: null,
               error:
                 toStringOrNull(payload.error) ||
@@ -1371,12 +1443,12 @@ const pollForAudioAvailability = async (
                 ...metadataRef,
                 state
               }
-            });
+            };
+            statusCallback?.(errorEvent);
+            reportTelemetry(errorEvent);
             return {
               success: false,
-              error:
-                toStringOrNull(payload.error) ||
-                'Audio synthesis failed on the server',
+              error: errorEvent.error,
               code: 'GENERATION_FAILED',
               status: state || 'error'
             };
@@ -1386,13 +1458,16 @@ const pollForAudioAvailability = async (
 
       const checkResult = await checkAudioExists(voiceId, storyId);
       if (checkResult.success && checkResult.exists) {
-        statusCallback?.({
+        const headReadyEvent = {
+          category: 'voice_generation',
           phase: 'polling',
           status: 'ready',
           progress: 1,
           audioUrl: buildAudioRedirectUrl(voiceId, storyId),
           metadata: metadataRef
-        });
+        };
+        statusCallback?.(headReadyEvent);
+        reportTelemetry(headReadyEvent);
         return {
           success: true,
           ready: true,
@@ -1658,13 +1733,16 @@ export const downloadAudio = async (
             clearError
           );
         }
-        progressCallback?.({
+        const cacheEvent = {
+          category: 'voice_generation',
           phase: 'cache',
           status: 'ready',
           progress: 1,
           fromCache: true,
           metadata: { voiceId, storyId }
-        });
+        };
+        progressCallback?.(cacheEvent);
+        reportTelemetry(cacheEvent);
         return {
           success: true,
           uri: existingInfo.localUri,
@@ -1705,23 +1783,27 @@ export const downloadAudio = async (
       fileUri,
       options,
       (downloadProgress) => {
-        if (progressCallback) {
-          const ratio =
-            downloadProgress.totalBytesExpectedToWrite > 0
-              ? downloadProgress.totalBytesWritten /
-                downloadProgress.totalBytesExpectedToWrite
-              : 0;
-          const normalised = 0.5 + ratio * 0.5;
-          progressCallback({
-            phase: 'download',
-            status: 'downloading',
-            progress: Math.min(normalised, 0.99),
-            downloadProgress: ratio,
-            bytesWritten: downloadProgress.totalBytesWritten,
-            bytesTotal: downloadProgress.totalBytesExpectedToWrite,
-            metadata: { voiceId, storyId }
-          });
+        if (!progressCallback && !voiceGenerationTelemetryHandler) {
+          return;
         }
+        const ratio =
+          downloadProgress.totalBytesExpectedToWrite > 0
+            ? downloadProgress.totalBytesWritten /
+              downloadProgress.totalBytesExpectedToWrite
+            : 0;
+        const normalised = 0.5 + ratio * 0.5;
+        const downloadEvent = {
+          category: 'voice_generation',
+          phase: 'download',
+          status: 'downloading',
+          progress: Math.min(normalised, 0.99),
+          downloadProgress: ratio,
+          bytesWritten: downloadProgress.totalBytesWritten,
+          bytesTotal: downloadProgress.totalBytesExpectedToWrite,
+          metadata: { voiceId, storyId }
+        };
+        progressCallback?.(downloadEvent);
+        reportTelemetry(downloadEvent);
       }
     );
     
@@ -1770,7 +1852,8 @@ export const downloadAudio = async (
       );
     }
 
-    progressCallback?.({
+    const downloadCompleteEvent = {
+      category: 'voice_generation',
       phase: 'download',
       status: 'ready',
       progress: 1,
@@ -1779,7 +1862,9 @@ export const downloadAudio = async (
         storyId,
         fileSize: downloadedFileInfo.size ?? null
       }
-    });
+    };
+    progressCallback?.(downloadCompleteEvent);
+    reportTelemetry(downloadCompleteEvent);
 
     return {
       success: true,
@@ -1794,14 +1879,17 @@ export const downloadAudio = async (
     
     // Handle AbortError specifically
     if (error.name === 'AbortError') {
-      progressCallback?.({
+      const cancelEvent = {
+        category: 'voice_generation',
         phase: 'download',
         status: 'error',
         progress: null,
         error: 'Download cancelled',
         code: 'DOWNLOAD_CANCELLED',
         metadata: { voiceId, storyId }
-      });
+      };
+      progressCallback?.(cancelEvent);
+      reportTelemetry(cancelEvent);
       return {
         success: false,
         error: 'Download cancelled',
@@ -1809,14 +1897,17 @@ export const downloadAudio = async (
       };
     }
     
-    progressCallback?.({
+    const downloadErrorEvent = {
+      category: 'voice_generation',
       phase: 'download',
       status: 'error',
       progress: null,
       error: error.message || 'Unknown error during download',
       code: 'DOWNLOAD_ERROR',
       metadata: { voiceId, storyId }
-    });
+    };
+    progressCallback?.(downloadErrorEvent);
+    reportTelemetry(downloadErrorEvent);
 
     return {
       success: false,
@@ -1849,7 +1940,8 @@ export const getAudio = async (
     if (audioInfo && audioInfo.localUri) {
       const fileInfo = await getFileInfoSafe(audioInfo.localUri);
       if (isAudioFileValid(fileInfo)) {
-        progressCallback?.({
+        const cacheEvent = {
+          category: 'voice_generation',
           phase: 'cache',
           status: 'ready',
           progress: 1,
@@ -1858,7 +1950,9 @@ export const getAudio = async (
           metadata: {
             localUri: audioInfo.localUri
           }
-        });
+        };
+        progressCallback?.(cacheEvent);
+        reportTelemetry(cacheEvent);
         return {
           success: true,
           uri: audioInfo.localUri,
@@ -1921,7 +2015,8 @@ export const getAudio = async (
   );
   
   if (!generateResult.success) {
-    progressCallback?.({
+    const generationErrorEvent = {
+      category: 'voice_generation',
       phase: 'generation',
       status: 'error',
       progress: null,
@@ -1929,7 +2024,9 @@ export const getAudio = async (
       code: generateResult.code,
       storyId,
       voiceId
-    });
+    };
+    progressCallback?.(generationErrorEvent);
+    reportTelemetry(generationErrorEvent);
     return generateResult;
   }
   
@@ -2386,5 +2483,6 @@ export default {
   listGenerationStateSnapshots,
   clearGenerationStateSnapshot,
   purgeExpiredGenerationStateSnapshots,
+  setVoiceGenerationTelemetryHandler,
   isOnline
 };
