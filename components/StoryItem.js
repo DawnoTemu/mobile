@@ -52,7 +52,6 @@ export default function StoryItem({
   isCreditLoading = false,
   creditUnitLabel = 'Punkty Magii',
   isReady = false,
-  statusMessage = '',
   onPress,
 }) {
   const normalizedUnitLabel = deriveUnitLabel(creditUnitLabel);
@@ -175,11 +174,6 @@ export default function StoryItem({
           )}
         </View>
 
-        {statusMessage ? (
-          <Text style={styles.generationStatus} numberOfLines={2}>
-            {statusMessage}
-          </Text>
-        ) : null}
       </View>
       
       {/* Right Side - Status */}
@@ -289,13 +283,6 @@ const styles = StyleSheet.create({
   },
   creditBadgePlaceholderText: {
     color: COLORS.text.secondary
-  },
-  generationStatus: {
-    marginTop: 8,
-    fontFamily: 'Quicksand-Medium',
-    fontSize: 13,
-    color: COLORS.text.secondary,
-    lineHeight: 18
   },
   status: {
     justifyContent: 'center',

@@ -202,12 +202,17 @@ export default function useAudioPlayer() {
 
   const unloadAudio = useCallback(async () => {
     try {
-      await player.stop();
+      await player.stop?.();
     } catch (stopError) {
-      // Ignore stop errors
+      console.warn('Failed to stop audio during unload', stopError);
     }
 
-    player.replace(null);
+    try {
+      await player.unloadAsync?.();
+    } catch (unloadError) {
+      console.warn('Failed to unload audio source', unloadError);
+    }
+
     setCurrentUri(null);
     setPendingAutoplay(false);
     setIsLoading(false);

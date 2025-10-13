@@ -31,6 +31,8 @@ const STORAGE_KEYS = {
   DOWNLOADED_AUDIO: 'voice_service_downloaded_audio'
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const STATUS_COPY = {
   queued_for_slot: 'Twoja prośba jest w kolejce. Przydzielimy slot głosowy w ciągu kilku chwil.',
   allocating_voice: 'Twój głos jest aktywowany w ElevenLabs… odtwarzanie rozpocznie się automatycznie.',
@@ -66,6 +68,7 @@ export default function SynthesisScreen({ navigation }) {
   
   // Audio player hook
   const {
+    sound: audioPlayer,
     isPlaying,
     duration,
     position,
@@ -706,9 +709,14 @@ export default function SynthesisScreen({ navigation }) {
       return;
     }
 
-    // If audio is currently playing, stop it first
-    if (isPlaying && selectedStory?.id !== story.id) {
-      await unloadAudio();
+    // Stop currently playing audio before switching stories
+    if (selectedStory?.id !== story.id) {
+      try {
+        await audioPlayer?.stop?.();
+      } catch (stopError) {
+        console.warn('Failed to pause audio before switching story', stopError);
+      }
+      await sleep(60);
     }
 
     const hasLocalUri = !!story.localAudioUri;
@@ -729,18 +737,20 @@ export default function SynthesisScreen({ navigation }) {
 
     // Set as selected story
     setSelectedStory(story);
+    // Ensure playback controls are visible for the newly selected story
+    setAudioControlsVisible(true);
 
     // Check if already has locally saved audio
     if (hasLocalUri) {
       // Load local audio with auto-play
-      loadStoryAudio(story.localAudioUri, true);
+      await loadStoryAudio(story.localAudioUri, true);
       return;
     }
 
     // Check if already has audio on server
     if (hasServerUri) {
       // Load server audio with auto-play
-      loadStoryAudio(story.localUri, true);
+      await loadStoryAudio(story.localUri, true);
       return;
     }
 
@@ -1179,20 +1189,6 @@ export default function SynthesisScreen({ navigation }) {
     const isReady = isStoryPurchased(story);
     const affordable =
       typeof requiredCredits === 'number' ? balance >= requiredCredits : true;
-    const generationState = generationStatusByStory?.[story.id];
-    const queueLabel = generationState
-      ? formatQueueMessage(
-          generationState.queuePosition,
-          generationState.queueLength
-        )
-      : null;
-    const statusCopy =
-      generationState && generationState.status !== 'ready'
-        ? [generationState.message, queueLabel]
-            .filter(Boolean)
-            .join('\n')
-        : '';
-
     return (
       <StoryItem
         title={story.title}
@@ -1206,7 +1202,6 @@ export default function SynthesisScreen({ navigation }) {
         isCreditLoading={false}
         creditUnitLabel={unitLabel}
         isReady={isReady}
-        statusMessage={statusCopy}
         onPress={() => handleStorySelect(story)}
       />
     );
