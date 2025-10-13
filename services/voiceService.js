@@ -16,6 +16,7 @@ const MIN_VALID_AUDIO_SIZE_BYTES = 2048; // guard against empty/partial download
 const AUDIO_DOWNLOAD_RETRY_DELAY_MS = 750;
 const MAX_AUDIO_DOWNLOAD_ATTEMPTS = 6;
 const PLAYBACK_PROGRESS_KEY = STORAGE_KEYS.PLAYBACK_PROGRESS;
+const MAX_LOGGED_BODY_CHARS = 1024;
 
 const getFileInfoSafe = async (uri) => {
   if (!uri) {
@@ -1898,6 +1899,32 @@ export const downloadAudio = async (
   retryCount = 0
 ) => {
   let downloadResumable;
+  const attemptNumber = retryCount + 1;
+  const describeUrl = () => {
+    try {
+      const parsed = new URL(url);
+      return {
+        full: parsed.href,
+        origin: parsed.origin,
+        path: parsed.pathname
+      };
+    } catch (error) {
+      return {
+        full: url,
+        origin: null,
+        path: null
+      };
+    }
+  };
+  const isApiOrigin = () => {
+    try {
+      const parsedUrl = new URL(url);
+      const apiOrigin = new URL(API_BASE_URL);
+      return parsedUrl.origin === apiOrigin.origin;
+    } catch (error) {
+      return false;
+    }
+  };
   try {
     // Check if already downloaded
     const existingInfo = await getStoredAudioInfo(voiceId, storyId);
@@ -1949,13 +1976,21 @@ export const downloadAudio = async (
     
     // Get authentication token if available
     const token = await authService.getAccessToken();
-    const options = token 
-      ? { 
+    const includeAuthHeader = token && isApiOrigin();
+    const options = includeAuthHeader
+      ? {
           headers: {
-            'Authorization': `Bearer ${token}`
+            Authorization: `Bearer ${token}`
           }
-        } 
+        }
       : {};
+
+    // console.log('[downloadAudio] starting attempt', {
+      attempt: attemptNumber,
+      voiceId,
+      storyId,
+      url: describeUrl()
+    });
 
     downloadResumable = FileSystem.createDownloadResumable(
       url,
@@ -2015,9 +2050,43 @@ export const downloadAudio = async (
       fileSize <= MIN_VALID_AUDIO_SIZE_BYTES &&
       (expectedSize === null || expectedSize <= MIN_VALID_AUDIO_SIZE_BYTES);
 
+    // console.log('[downloadAudio] attempt result', {
+      attempt: attemptNumber,
+      voiceId,
+      storyId,
+      status,
+      headers: headerSnapshot,
+      fileSize,
+      looksLikePlaceholder
+    });
+
     if (!hasValidSize || looksLikePlaceholder) {
+      let nonAudioPreview = null;
+      if (fileSize > 0 && fileSize <= MAX_LOGGED_BODY_CHARS * 2) {
+        try {
+          nonAudioPreview = await FileSystem.readAsStringAsync(uri, {
+            encoding: FileSystem.EncodingType.UTF8
+          });
+          if (nonAudioPreview && nonAudioPreview.length > MAX_LOGGED_BODY_CHARS) {
+            nonAudioPreview = `${nonAudioPreview.slice(0, MAX_LOGGED_BODY_CHARS)}…`;
+          }
+        } catch (previewError) {
+          nonAudioPreview = `<<failed to read response body: ${previewError?.message || 'unknown'}>>`;
+        }
+      }
+
       await deleteFileQuietly(uri);
       await removeAudioReference(voiceId, storyId);
+      console.warn('[downloadAudio] received non-audio payload', {
+        attempt: attemptNumber,
+        voiceId,
+        storyId,
+        status,
+        headers: headerSnapshot,
+        fileSize,
+        looksLikePlaceholder,
+        preview: nonAudioPreview
+      });
       if (retryCount < MAX_AUDIO_DOWNLOAD_ATTEMPTS - 1) {
         const waitMs = computeDownloadRetryDelay(retryCount);
         console.warn(
@@ -2067,6 +2136,16 @@ export const downloadAudio = async (
     progressCallback?.(downloadCompleteEvent);
     reportTelemetry(downloadCompleteEvent);
 
+    // console.log('[downloadAudio] completed', {
+      attempt: attemptNumber,
+      voiceId,
+      storyId,
+      status,
+      fileSize: downloadedFileInfo.size ?? null,
+      headers: headerSnapshot,
+      uri
+    });
+
     return {
       success: true,
       uri,
@@ -2101,9 +2180,13 @@ export const downloadAudio = async (
     const status = extractHttpStatus(error);
     if (canRetryDownload(retryCount, status)) {
       const waitMs = computeDownloadRetryDelay(retryCount);
-      console.warn(
-        `Audio download failed (status: ${status || 'unknown'}). Retrying in ${waitMs}ms (attempt ${retryCount + 2}/${MAX_AUDIO_DOWNLOAD_ATTEMPTS}).`
-      );
+      console.warn('[downloadAudio] retrying after failure', {
+        attempt: attemptNumber,
+        voiceId,
+        storyId,
+        status,
+        waitMs
+      });
       await delay(waitMs);
       return downloadAudio(
         url,
