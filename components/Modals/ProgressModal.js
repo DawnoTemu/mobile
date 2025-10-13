@@ -45,28 +45,40 @@ const STATUS_ICONS = {
 
 const TIP_LIBRARY = {
   queued_for_slot: [
-    'Szepnij dziecku, że nawet bohaterowie muszą chwilę poczekać, nim zacznie się przygoda.',
-    'Zapal drobną lampkę – to znak dla historii, że zna drogę do Waszej kanapy.'
+    'Szepnij dziecku, że nawet bohaterowie muszą chwilę poczekać, zanim zacznie się przygoda.',
+    'Zapal małą lampkę – to znak dla bajki, że zna drogę do Waszej kanapy.',
+    'Niech maluch zamknie oczy i zgadnie, jak zacznie się opowieść – to trening wyobraźni!',
+    'Pomyślcie razem o tytule – może historia właśnie czeka, aż ją nazwiecie.'
   ],
   allocating_voice: [
-    'Zachęć malucha, by wyszeptał życzenie – głos baśni usłyszy każdy szept.',
-    'Przygotuj miękki kocyk, by opowieść miała miękkie lądowanie.'
+    'Zachęć malucha, by wyszeptał życzenie – bajkowy głos słyszy każdy szept.',
+    'Przygotuj miękki kocyk – niech opowieść ma miękkie lądowanie.',
+    'Niech dziecko wybierze pluszaka, który dziś będzie towarzyszem głosu.',
+    'Powiedz, że głos dopiero się budzi – ziewa, przeciąga i szykuje na wielką opowieść.'
   ],
   processing: [
-    'Poproś dziecko, by narysowało bohatera – ilustracja dodaje opowieści skrzydeł.',
-    'Powiedz, że mali narratorzy dopisują właśnie najciekawszy zwrot akcji.'
+    'Poproś dziecko, by narysowało bohatera – jego obraz doda historii skrzydeł.',
+    'Powiedz, że mali narratorzy właśnie dopisują najciekawszy zwrot akcji.',
+    'Zaproponuj zabawę: niech dziecko zgadnie, jak bajka mogłaby się skończyć.',
+    'Wymyślcie wspólnie imię dla bohatera – może trafi właśnie do tej historii.'
   ],
   downloading: [
-    'W ciszy lepiej słychać, jak magia kapie prosto do głośnika.',
-    'Zaproście pluszowego słuchacza – będzie pierwszym recenzentem baśni.'
+    'W ciszy najlepiej słychać, jak magia powoli spływa do głośnika.',
+    'Zaproście pluszowego słuchacza – będzie pierwszym recenzentem Waszej bajki.',
+    'Niech maluch usiądzie wygodnie – dźwięki już tańczą w drodze do jego uszu.',
+    'Zróbcie ciche odliczanie – trzy, dwa, jeden... magia zaraz wyląduje!'
   ],
   ready: [
-    'Przytulcie się i wybierzcie słowo, które pojawi się w przygodzie.',
-    'Zgaście światło i zostawcie jedną świeczkę – opowieści lubią taki blask.'
+    'Przytulcie się i wybierzcie słowo, które pojawi się w nowej przygodzie.',
+    'Zgaście światło i zostawcie jedną świeczkę – bajki lubią taki blask.',
+    'Niech dziecko wybierze, kto dziś pierwszy usłyszy opowieść – miś, lalka czy mama?',
+    'Zróbcie głęboki oddech razem – bajka już tu jest, czas zanurzyć się w świecie wyobraźni.'
   ],
   error: [
-    'Uspokój dziecko, mówiąc, że skrzaty porządkują jeszcze półki z bajkami.',
-    'Zaproponuj mini-zabawę w zgadywanie zakończenia – magia zaraz wróci.'
+    'Uspokój dziecko, mówiąc, że skrzaty jeszcze porządkują półki z bajkami.',
+    'Zaproponuj mini-zabawę w zgadywanie zakończenia – magia zaraz wróci.',
+    'Powiedz, że bajka się potknęła o własne słowo, ale już wstaje i otrzepuje kurz z liter.',
+    'Zróbcie wspólnie krótkie zaklęcie: Abrakadabra, bajko wróć! – działa w 99% przypadków.'
   ]
 };
 
