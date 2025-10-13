@@ -13,6 +13,7 @@ export default function useAudioPlayer() {
 
   const pendingCorruptionHandler = useRef(null);
   const pendingUriRef = useRef(null);
+  const initialSeekRef = useRef(null);
 
   const player = useExpoAudioPlayer(null, { updateInterval: 250, keepAudioSessionActive: false });
   const status = useAudioPlayerStatus(player);
@@ -27,6 +28,7 @@ export default function useAudioPlayer() {
   const resetPendingFailure = () => {
     pendingCorruptionHandler.current = null;
     pendingUriRef.current = null;
+    initialSeekRef.current = null;
   };
 
   useEffect(() => {
@@ -38,19 +40,36 @@ export default function useAudioPlayer() {
 
     if (isLoading && status?.isLoaded) {
       setIsLoading(false);
+    }
 
-      if (pendingAutoplay) {
-        try {
-          player.play();
-        } catch (playError) {
-          console.error('Error auto-playing audio:', playError);
-          setError('Nie udało się odtworzyć pliku audio.');
-        } finally {
-          setPendingAutoplay(false);
+    if (status?.isLoaded) {
+      const finalizePlaybackSetup = async () => {
+        if (initialSeekRef.current !== null) {
+          const targetPosition = Math.max(0, initialSeekRef.current);
+          try {
+            await player.seekTo(targetPosition);
+          } catch (seekError) {
+            console.warn('Failed to seek to resume position', seekError);
+          } finally {
+            initialSeekRef.current = null;
+          }
         }
-      }
 
-      resetPendingFailure();
+        if (pendingAutoplay) {
+          try {
+            await player.play();
+          } catch (playError) {
+            console.error('Error auto-playing audio:', playError);
+            setError('Nie udało się odtworzyć pliku audio.');
+          } finally {
+            setPendingAutoplay(false);
+          }
+        }
+
+        resetPendingFailure();
+      };
+
+      finalizePlaybackSetup();
     }
   }, [status?.isLoaded, currentUri, isLoading, pendingAutoplay, player]);
 
@@ -77,7 +96,7 @@ export default function useAudioPlayer() {
   }, [status]);
 
   const loadAudio = useCallback(
-    async (uri, autoPlay = true, onCorruptedFile = null) => {
+    async (uri, autoPlay = true, onCorruptedFile = null, startPosition = 0) => {
       if (!uri) {
         setError('Nieprawidłowy adres pliku audio.');
         return false;
@@ -90,6 +109,8 @@ export default function useAudioPlayer() {
 
       pendingCorruptionHandler.current = onCorruptedFile;
       pendingUriRef.current = uri;
+      initialSeekRef.current =
+        Number.isFinite(startPosition) && startPosition > 0 ? startPosition : null;
 
       try {
         await setAudioModeAsync({
@@ -115,6 +136,7 @@ export default function useAudioPlayer() {
         setError('Nie udało się załadować pliku audio.');
         setIsLoading(false);
         setPendingAutoplay(false);
+        initialSeekRef.current = null;
 
         const message = loadError?.message ?? '';
         const isCorruptionError =

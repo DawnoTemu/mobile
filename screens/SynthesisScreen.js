@@ -33,6 +33,9 @@ const STORAGE_KEYS = {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const PROGRESS_SAVE_INTERVAL_MS = 3000;
+const PROGRESS_FINISH_THRESHOLD_SECONDS = 5;
+
 const STATUS_COPY = {
   queued_for_slot: 'Twoja prośba jest w kolejce. Przydzielimy slot głosowy w ciągu kilku chwil.',
   allocating_voice: 'Twój głos jest aktywowany w ElevenLabs… odtwarzanie rozpocznie się automatycznie.',
@@ -109,6 +112,11 @@ export default function SynthesisScreen({ navigation }) {
   const [isGenerationConfirmVisible, setIsGenerationConfirmVisible] = useState(false);
   const [generationStatusByStory, setGenerationStatusByStory] = useState({});
   const [activeGenerationStoryId, setActiveGenerationStoryId] = useState(null);
+  const currentAudioUriRef = useRef(null);
+  const activeAudioStoryIdRef = useRef(null);
+  const lastProgressSaveRef = useRef(0);
+  const completedPlaybackRef = useRef(false);
+  const pendingResumeRef = useRef(null);
 
   const formatQueueMessage = useCallback((position, length) => {
     if (position === null || position === undefined) {
@@ -690,6 +698,52 @@ export default function SynthesisScreen({ navigation }) {
     showToast(message, 'ERROR');
   };
 
+  const resolveResumePosition = useCallback(
+    async (audioUri, storyId) => {
+      if (!voiceId || !storyId) {
+        return 0;
+      }
+    try {
+      const progress = await voiceService.getPlaybackProgress(voiceId, storyId);
+      if (!progress || typeof progress.position !== 'number') {
+        return 0;
+      }
+
+      const normalizedPosition = Math.max(0, progress.position);
+      if (normalizedPosition <= 0) {
+        return 0;
+      }
+
+      const storedDuration = Number.isFinite(progress.duration)
+        ? progress.duration
+        : null;
+      if (
+        storedDuration &&
+        storedDuration > 0 &&
+        storedDuration - normalizedPosition <= PROGRESS_FINISH_THRESHOLD_SECONDS
+      ) {
+        return 0;
+      }
+
+      if (typeof progress.sourceUri === 'string' && progress.sourceUri) {
+        const stored = progress.sourceUri;
+        const incoming = typeof audioUri === 'string' ? audioUri : null;
+        const storedIsLocal = stored.startsWith('file://');
+        const incomingIsLocal = incoming?.startsWith('file://');
+        if (storedIsLocal && incomingIsLocal && stored !== incoming) {
+          return 0;
+        }
+      }
+
+      return normalizedPosition;
+    } catch (error) {
+      console.warn('Failed to resolve playback progress', error);
+      return 0;
+    }
+    },
+    [voiceId]
+  );
+
   // Handle story selection
   const handleStorySelect = async (story) => {
     if (processingStories[story.id]) {
@@ -711,8 +765,25 @@ export default function SynthesisScreen({ navigation }) {
 
     // Stop currently playing audio before switching stories
     if (selectedStory?.id !== story.id) {
+      if (
+        voiceId &&
+        selectedStory?.id &&
+        position > 0 &&
+        duration > 0 &&
+        currentAudioUriRef.current
+      ) {
+        voiceService
+          .savePlaybackProgress(voiceId, selectedStory.id, {
+            position,
+            duration,
+            sourceUri: currentAudioUriRef.current,
+            updatedAt: Date.now()
+          })
+          .catch(() => {});
+      }
       try {
         await audioPlayer?.stop?.();
+        await audioPlayer?.seekTo?.(0);
       } catch (stopError) {
         console.warn('Failed to pause audio before switching story', stopError);
       }
@@ -743,14 +814,22 @@ export default function SynthesisScreen({ navigation }) {
     // Check if already has locally saved audio
     if (hasLocalUri) {
       // Load local audio with auto-play
-      await loadStoryAudio(story.localAudioUri, true);
+      const resumePosition = await resolveResumePosition(story.localAudioUri, story.id);
+      await loadStoryAudio(story, story.localAudioUri, {
+        autoPlay: true,
+        startPosition: resumePosition
+      });
       return;
     }
 
     // Check if already has audio on server
     if (hasServerUri) {
       // Load server audio with auto-play
-      await loadStoryAudio(story.localUri, true);
+      const resumePosition = await resolveResumePosition(story.localUri, story.id);
+      await loadStoryAudio(story, story.localUri, {
+        autoPlay: true,
+        startPosition: resumePosition
+      });
       return;
     }
 
@@ -863,7 +942,11 @@ export default function SynthesisScreen({ navigation }) {
       });
 
       if (result.success) {
-        await loadStoryAudio(result.uri, true);
+        const resumePosition = await resolveResumePosition(result.uri, story.id);
+        await loadStoryAudio(story, result.uri, {
+          autoPlay: true,
+          startPosition: resumePosition
+        });
         setStories((currentStories) =>
           currentStories.map((s) =>
             s.id === story.id
@@ -963,25 +1046,161 @@ export default function SynthesisScreen({ navigation }) {
   };
   
   // Load story audio
-  const loadStoryAudio = async (audioUri, autoPlay = true) => {
+  const loadStoryAudio = async (
+    storyContext,
+    audioUri,
+    { autoPlay = true, startPosition = null } = {}
+  ) => {
     try {
+      if (!audioUri) {
+        return;
+      }
+
+      const storyId = storyContext?.id ?? selectedStory?.id ?? null;
+      const previousStoryId = activeAudioStoryIdRef.current;
+      const previousUri = currentAudioUriRef.current;
+      activeAudioStoryIdRef.current = storyId;
+      currentAudioUriRef.current = audioUri;
+      completedPlaybackRef.current = false;
+      lastProgressSaveRef.current = 0;
+
+      let effectiveStart = startPosition;
+      if (
+        effectiveStart === null &&
+        voiceId &&
+        storyId
+      ) {
+        effectiveStart = await resolveResumePosition(audioUri, storyId);
+      }
+      if (effectiveStart && effectiveStart > 0) {
+        pendingResumeRef.current = {
+          storyId,
+          position: effectiveStart
+        };
+      } else {
+        pendingResumeRef.current = null;
+      }
+
       // First make sure audioControlsVisible is set to true before loading audio
       setAudioControlsVisible(true);
       
       // Pass a callback to handle corrupted files
-      const success = await loadAudio(audioUri, autoPlay, handleCorruptedAudio);
+      const success = await loadAudio(
+        audioUri,
+        autoPlay,
+        handleCorruptedAudio,
+        0
+      );
       
       if (!success) {
         showToast('Nie udało się załadować audio. Spróbuj ponownie.', 'ERROR');
         // If loading failed, hide the controls
         setAudioControlsVisible(false);
+        if (currentAudioUriRef.current === audioUri) {
+          currentAudioUriRef.current = null;
+        }
+        if (activeAudioStoryIdRef.current === storyId) {
+          activeAudioStoryIdRef.current = previousStoryId ?? null;
+        }
+        if (previousUri) {
+          currentAudioUriRef.current = previousUri;
+        }
       }
     } catch (error) {
       console.error('Error loading audio:', error);
       showToast('Wystąpił problem podczas ładowania audio.', 'ERROR');
       setAudioControlsVisible(false);
+      if (currentAudioUriRef.current === audioUri) {
+        currentAudioUriRef.current = null;
+      }
     }
   };
+
+  useEffect(() => {
+    const storyId = activeAudioStoryIdRef.current || selectedStory?.id;
+    if (!voiceId || !storyId || !currentAudioUriRef.current || isAudioLoading) {
+      return;
+    }
+
+    if (!duration || duration <= 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const remaining = duration - position;
+
+    if (remaining <= PROGRESS_FINISH_THRESHOLD_SECONDS) {
+      if (!completedPlaybackRef.current) {
+        voiceService.clearPlaybackProgress(voiceId, storyId).catch(() => {});
+        if (__DEV__) {
+          console.log('[PlaybackProgress] cleared after completion', {
+            voiceId,
+            storyId
+          });
+        }
+        completedPlaybackRef.current = true;
+      }
+      return;
+    }
+
+    completedPlaybackRef.current = false;
+
+    if (position <= 0) {
+      return;
+    }
+
+    const shouldSaveNow =
+      !isPlaying || now - lastProgressSaveRef.current >= PROGRESS_SAVE_INTERVAL_MS;
+
+    if (!shouldSaveNow) {
+      return;
+    }
+
+    lastProgressSaveRef.current = now;
+
+    voiceService.savePlaybackProgress(voiceId, storyId, {
+      position,
+      duration,
+      sourceUri: currentAudioUriRef.current,
+      updatedAt: now
+    }).catch(() => {});
+
+    if (__DEV__) {
+      console.log('[PlaybackProgress] saved progress', {
+        voiceId,
+        storyId,
+        position,
+        duration
+      });
+    }
+  }, [position, duration, isPlaying, selectedStory, voiceId, isAudioLoading]);
+
+  useEffect(() => {
+    const resume = pendingResumeRef.current;
+    const storyId = activeAudioStoryIdRef.current;
+    if (!resume || !storyId || resume.storyId !== storyId) {
+      return;
+    }
+    if (!duration || duration <= 0) {
+      return;
+    }
+
+    const safePosition = Math.min(
+      Math.max(0, resume.position),
+      Math.max(0, duration - 0.5)
+    );
+
+    seekTo(safePosition)
+      .then(() => {
+        if (!isPlaying) {
+          togglePlayPause();
+        }
+      })
+      .catch((error) => {
+        console.warn('Failed to apply resume position', error);
+      });
+    pendingResumeRef.current = null;
+  }, [duration, seekTo, togglePlayPause, isPlaying]);
 
   // This function handles corrupted audio files
   const handleCorruptedAudio = async (corruptedUri) => {
@@ -1064,7 +1283,11 @@ export default function SynthesisScreen({ navigation }) {
       if (result.success) {
         // Load the audio with auto-play
         setSelectedStory(matchingStory); // Re-set selected story
-        await loadStoryAudio(result.uri, true);
+        const resumePosition = await resolveResumePosition(result.uri, matchingStory.id);
+        await loadStoryAudio(matchingStory, result.uri, {
+          autoPlay: true,
+          startPosition: resumePosition
+        });
         
         // Update story in the list
         setStories(currentStories =>
@@ -1110,9 +1333,30 @@ export default function SynthesisScreen({ navigation }) {
 
   const handleResetAudio = async () => {
     try {
+      if (
+        voiceId &&
+        selectedStory?.id &&
+        position > 0 &&
+        duration > 0 &&
+        currentAudioUriRef.current
+      ) {
+        voiceService
+          .savePlaybackProgress(voiceId, selectedStory.id, {
+            position,
+            duration,
+            sourceUri: currentAudioUriRef.current,
+            updatedAt: Date.now()
+          })
+          .catch(() => {});
+      }
       await unloadAudio();
       setAudioControlsVisible(false);
       setSelectedStory(null);
+      currentAudioUriRef.current = null;
+      activeAudioStoryIdRef.current = null;
+      completedPlaybackRef.current = false;
+      lastProgressSaveRef.current = 0;
+      pendingResumeRef.current = null;
     } catch (error) {
       console.error('Error resetting audio:', error);
     }

@@ -15,6 +15,7 @@ import {
 const MIN_VALID_AUDIO_SIZE_BYTES = 2048; // guard against empty/partial downloads
 const AUDIO_DOWNLOAD_RETRY_DELAY_MS = 750;
 const MAX_AUDIO_DOWNLOAD_ATTEMPTS = 6;
+const PLAYBACK_PROGRESS_KEY = STORAGE_KEYS.PLAYBACK_PROGRESS;
 
 const getFileInfoSafe = async (uri) => {
   if (!uri) {
@@ -1618,6 +1619,105 @@ const storeAudioInfo = async (voiceId, storyId, localUri) => {
  * @param {string} storyId - Story ID
  * @returns {Promise<Object|null>} Audio info or null if not found
  */
+const getPlaybackProgressStore = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(PLAYBACK_PROGRESS_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    console.warn('Failed to read playback progress store', error);
+    return {};
+  }
+};
+
+const writePlaybackProgressStore = async (store) => {
+  try {
+    await AsyncStorage.setItem(PLAYBACK_PROGRESS_KEY, JSON.stringify(store));
+    return true;
+  } catch (error) {
+    console.warn('Failed to persist playback progress store', error);
+    return false;
+  }
+};
+
+export const getPlaybackProgress = async (voiceId, storyId) => {
+  if (!voiceId || storyId === undefined || storyId === null) {
+    return null;
+  }
+
+  const store = await getPlaybackProgressStore();
+  const voiceBucket = store?.[voiceId];
+  if (!voiceBucket) {
+    return null;
+  }
+  const entry = voiceBucket?.[storyId];
+  return entry && typeof entry === 'object' ? entry : null;
+};
+
+export const savePlaybackProgress = async (voiceId, storyId, progress = {}) => {
+  if (!voiceId || storyId === undefined || storyId === null) {
+    return { success: false, error: 'voiceId and storyId are required' };
+  }
+
+  const position = Number(progress.position);
+  if (!Number.isFinite(position) || position < 0) {
+    return { success: false, error: 'Invalid playback position' };
+  }
+
+  const duration = progress.duration !== undefined ? Number(progress.duration) : null;
+  const entry = {
+    position,
+    duration: Number.isFinite(duration) && duration > 0 ? duration : null,
+    updatedAt: progress.updatedAt || Date.now(),
+    sourceUri: typeof progress.sourceUri === 'string' ? progress.sourceUri : null
+  };
+
+  const store = await getPlaybackProgressStore();
+  if (!store[voiceId]) {
+    store[voiceId] = {};
+  }
+  store[voiceId][storyId] = entry;
+
+  const success = await writePlaybackProgressStore(store);
+  return { success };
+};
+
+export const clearPlaybackProgress = async (voiceId, storyId) => {
+  if (!voiceId) {
+    return { success: false, error: 'voiceId is required' };
+  }
+
+  const store = await getPlaybackProgressStore();
+  const voiceBucket = store?.[voiceId];
+  if (!voiceBucket) {
+    return { success: true };
+  }
+
+  if (storyId !== undefined && storyId !== null) {
+    delete voiceBucket[storyId];
+  } else {
+    delete store[voiceId];
+  }
+
+  if (Object.keys(voiceBucket).length === 0 || storyId === undefined || storyId === null) {
+    delete store[voiceId];
+  }
+
+  const success = await writePlaybackProgressStore(store);
+  return { success };
+};
+
+const clearPlaybackProgressForVoice = async (voiceId) => {
+  if (!voiceId) {
+    return;
+  }
+
+  await clearPlaybackProgress(voiceId);
+};
+
 const getStoredAudioInfo = async (voiceId, storyId) => {
   try {
     const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
@@ -1767,6 +1867,8 @@ const clearVoiceAudio = async (voiceId) => {
     
     // Save updated info
     await AsyncStorage.setItem(STORAGE_KEYS.DOWNLOADED_AUDIO, JSON.stringify(audioInfo));
+
+    await clearPlaybackProgressForVoice(voiceId);
     
     return { success: true };
   } catch (error) {
@@ -2713,5 +2815,8 @@ export default {
   clearGenerationStateSnapshot,
   purgeExpiredGenerationStateSnapshots,
   setVoiceGenerationTelemetryHandler,
+  getPlaybackProgress,
+  savePlaybackProgress,
+  clearPlaybackProgress,
   isOnline
 };
