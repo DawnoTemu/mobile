@@ -118,6 +118,157 @@ export default function SynthesisScreen({ navigation }) {
   const completedPlaybackRef = useRef(false);
   const pendingResumeRef = useRef(null);
 
+  const MIN_PROGRESS_STEP_DURATION_MS = 5000;
+  const progressStepQueueRef = useRef({});
+
+  useEffect(() => {
+    return () => {
+      Object.values(progressStepQueueRef.current || {}).forEach((entry) => {
+        if (entry?.timeoutId) {
+          clearTimeout(entry.timeoutId);
+        }
+      });
+      progressStepQueueRef.current = {};
+    };
+  }, []);
+
+  const processQueuedProgressUpdate = useCallback(
+    (storyId) => {
+      const entry = progressStepQueueRef.current[storyId];
+      if (!entry) {
+        return;
+      }
+
+      entry.timeoutId = null;
+      if (!entry.queue.length) {
+        return;
+      }
+
+      const next = entry.queue.shift();
+      if (!next || typeof next.apply !== 'function') {
+        if (entry.queue.length) {
+          entry.timeoutId = setTimeout(
+            () => processQueuedProgressUpdate(storyId),
+            MIN_PROGRESS_STEP_DURATION_MS
+          );
+        }
+        return;
+      }
+
+      next.apply();
+
+      if (next.statusKey && entry.lastStatusKey !== next.statusKey) {
+        entry.lastStatusKey = next.statusKey;
+        entry.lastUpdateAt = Date.now();
+      } else if (!entry.lastStatusKey && next.statusKey) {
+        entry.lastStatusKey = next.statusKey;
+        entry.lastUpdateAt = Date.now();
+      }
+
+      if (next.statusKey === 'ready' || next.statusKey === 'error') {
+        entry.queue = [];
+      }
+
+      if (entry.queue.length) {
+        entry.timeoutId = setTimeout(
+          () => processQueuedProgressUpdate(storyId),
+          MIN_PROGRESS_STEP_DURATION_MS
+        );
+      }
+    },
+    []
+  );
+
+  const scheduleProgressUpdate = useCallback(
+    (storyId, statusKey, apply) => {
+      if (typeof apply !== 'function') {
+        return;
+      }
+
+      const now = Date.now();
+      const entry =
+        progressStepQueueRef.current[storyId] || {
+          lastStatusKey: null,
+          lastUpdateAt: 0,
+          timeoutId: null,
+          queue: []
+        };
+
+      progressStepQueueRef.current[storyId] = entry;
+
+      const statusChanged =
+        statusKey && entry.lastStatusKey && statusKey !== entry.lastStatusKey;
+      const hasLastTimestamp =
+        entry.lastStatusKey && typeof entry.lastUpdateAt === 'number';
+      const elapsed = hasLastTimestamp ? now - entry.lastUpdateAt : Infinity;
+      const shouldDelay =
+        statusChanged &&
+        hasLastTimestamp &&
+        elapsed < MIN_PROGRESS_STEP_DURATION_MS;
+
+      if (!shouldDelay) {
+        apply();
+
+        if (statusKey && entry.lastStatusKey !== statusKey) {
+          entry.lastStatusKey = statusKey;
+          entry.lastUpdateAt = Date.now();
+        } else if (!entry.lastStatusKey && statusKey) {
+          entry.lastStatusKey = statusKey;
+          entry.lastUpdateAt = Date.now();
+        }
+
+        if (statusKey === 'ready' || statusKey === 'error') {
+          if (entry.timeoutId) {
+            clearTimeout(entry.timeoutId);
+            entry.timeoutId = null;
+          }
+          entry.queue = [];
+        } else if (entry.queue.length && !entry.timeoutId) {
+          entry.timeoutId = setTimeout(
+            () => processQueuedProgressUpdate(storyId),
+            MIN_PROGRESS_STEP_DURATION_MS
+          );
+        }
+
+        return;
+      }
+
+      const queue = entry.queue;
+      const queuedItem = { statusKey, apply };
+      if (queue.length && queue[queue.length - 1].statusKey === statusKey) {
+        queue[queue.length - 1] = queuedItem;
+      } else {
+        queue.push(queuedItem);
+      }
+
+      const remaining = Math.max(
+        MIN_PROGRESS_STEP_DURATION_MS - elapsed,
+        0
+      );
+
+      if (entry.timeoutId) {
+        clearTimeout(entry.timeoutId);
+      }
+
+      entry.timeoutId = setTimeout(
+        () => processQueuedProgressUpdate(storyId),
+        remaining
+      );
+    },
+    [processQueuedProgressUpdate]
+  );
+
+  const resetProgressTiming = useCallback((storyId) => {
+    const entry = progressStepQueueRef.current[storyId];
+    if (!entry) {
+      return;
+    }
+    if (entry.timeoutId) {
+      clearTimeout(entry.timeoutId);
+    }
+    delete progressStepQueueRef.current[storyId];
+  }, []);
+
   const formatQueueMessage = useCallback((position, length) => {
     if (position === null || position === undefined) {
       return null;
@@ -353,39 +504,43 @@ export default function SynthesisScreen({ navigation }) {
         setIsProgressModalVisible(true);
       }
 
-      setProgressData((prev) => {
-        const incomingProgress =
-          typeof event.progress === 'number'
-            ? Math.max(0, Math.min(event.progress, 1))
-            : null;
-        const progressFromStatus =
-          statusToProgress(normalizedStatus) ?? prev.progress ?? 0;
-        const shouldUseEventProgress =
-          incomingProgress !== null &&
-          !(
-            normalizedStatus === 'processing' &&
-            (!normalizedPhase || normalizedPhase === 'generation')
-          );
-        const computedProgress = shouldUseEventProgress
-          ? Math.round(incomingProgress * 100)
-          : progressFromStatus;
+      const applyProgressUpdate = () => {
+        setProgressData((prev) => {
+          const incomingProgress =
+            typeof event.progress === 'number'
+              ? Math.max(0, Math.min(event.progress, 1))
+              : null;
+          const progressFromStatus =
+            statusToProgress(normalizedStatus) ?? prev.progress ?? 0;
+          const shouldUseEventProgress =
+            incomingProgress !== null &&
+            !(
+              normalizedStatus === 'processing' &&
+              (!normalizedPhase || normalizedPhase === 'generation')
+            );
+          const computedProgress = shouldUseEventProgress
+            ? Math.round(incomingProgress * 100)
+            : progressFromStatus;
 
-        return {
-          progress: Number.isFinite(computedProgress)
-            ? computedProgress
-            : prev.progress,
-          status: message,
-          statusKey: normalizedStatus || prev.statusKey,
-          queuePosition: safeQueuePosition,
-          queueLength: safeQueueLength,
-          phase: normalizedPhase ?? prev.phase ?? null,
-          remoteVoiceId: resolvedRemoteVoiceId,
-          serviceProvider: resolvedServiceProvider ?? prev.serviceProvider,
-          storyId
-        };
-      });
+          return {
+            progress: Number.isFinite(computedProgress)
+              ? computedProgress
+              : prev.progress,
+            status: message,
+            statusKey: normalizedStatus || prev.statusKey,
+            queuePosition: safeQueuePosition,
+            queueLength: safeQueueLength,
+            phase: normalizedPhase ?? prev.phase ?? null,
+            remoteVoiceId: resolvedRemoteVoiceId,
+            serviceProvider: resolvedServiceProvider ?? prev.serviceProvider,
+            storyId
+          };
+        });
+      };
+
+      scheduleProgressUpdate(storyId, normalizedStatus, applyProgressUpdate);
     },
-    [statusToProgress, generationStatusByStory]
+    [statusToProgress, generationStatusByStory, scheduleProgressUpdate]
   );
 
   const createGenerationEventHandler = useCallback(
@@ -623,12 +778,23 @@ export default function SynthesisScreen({ navigation }) {
         // Update stories with audio existence status and cover URLs
         let storiesWithStatus = await Promise.all(
           storiesData.map(async (story) => {
-            // Check if audio exists
-            const audioExists = await voiceService.checkAudioExists(currentVoiceId, story.id);
+            // Check if audio exists, verifying server state to avoid stale cache
+            const audioExists = await voiceService.checkAudioExists(
+              currentVoiceId,
+              story.id,
+              {
+                verifyRemote: true,
+                cleanupOrphaned: true
+              }
+            );
+
+            const hasAudio =
+              audioExists.success &&
+              (audioExists.localExists || audioExists.remoteExists === true);
             
             return {
               ...story,
-              hasAudio: audioExists.success && audioExists.exists,
+              hasAudio,
               localUri: audioExists.localUri || null,
               cover_url: voiceService.getStoryCoverUrl(story.id),
             };
@@ -788,6 +954,7 @@ export default function SynthesisScreen({ navigation }) {
         console.warn('Failed to pause audio before switching story', stopError);
       }
       await sleep(60);
+      setAudioControlsVisible(false);
     }
 
     const hasLocalUri = !!story.localAudioUri;
@@ -808,8 +975,6 @@ export default function SynthesisScreen({ navigation }) {
 
     // Set as selected story
     setSelectedStory(story);
-    // Ensure playback controls are visible for the newly selected story
-    setAudioControlsVisible(true);
 
     // Check if already has locally saved audio
     if (hasLocalUri) {
@@ -1005,6 +1170,7 @@ export default function SynthesisScreen({ navigation }) {
         serviceProvider: null,
         storyId: null
       });
+      resetProgressTiming(story.id);
     }
   };
   
@@ -1027,6 +1193,9 @@ export default function SynthesisScreen({ navigation }) {
         voiceService.clearGenerationStateSnapshot(voiceId, activeGenerationStoryId).catch(
           () => {}
         );
+      }
+      if (activeGenerationStoryId) {
+        resetProgressTiming(activeGenerationStoryId);
       }
       setActiveGenerationStoryId(null);
       setProgressData({

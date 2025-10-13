@@ -1,53 +1,40 @@
 # Task & Context
-Add "resume playback" support so each story restarts from the last listened position, regardless of whether audio is cached locally or streamed/redownloaded.
+Polish the synthesis progress modal so it matches the proposed modern layout, tighter spacing, clearer hierarchy, and refreshed microcopy.
 
 ## Current State (codebase scan)
-- `screens/SynthesisScreen.js` orchestrates story selection, audio loading via `voiceService.getAudio`, and renders `AudioControls`.
-- `hooks/useAudioPlayer.js` wraps Expo Audio, tracks `position`, `duration`, autoplay, and exposes playback controls plus `loadAudio`, `unloadAudio`, etc.
-- `components/AudioControls.js` shows the player UI; slider changes call `onSeek`.
-- `services/voiceService.js` persists local audio metadata and cached downloads to AsyncStorage (`STORAGE_KEYS.DOWNLOADED_AUDIO`).
-- No persistence exists for playback position; when a story loads, playback always starts at time `0`.
+- `components/Modals/ProgressModal.js` renders the synthesis modal with icon, title, copy, spinner, tip box, and cancel button.
+- `styles/colors.js` exposes shared color tokens (`COLORS.peach`, `COLORS.text.*`, `COLORS.lavender`) but lacks the darker gray and lilac tints recommended in the proposal.
+- Modal strings live in `STATUS_TITLES`, `STATUS_DESCRIPTIONS`, and `TIP_LIBRARY` inside `ProgressModal.js`, still using older “TIP:” prefixed copy.
+- Layout uses wide padding, rounded corners (16px), and a lavender block tip (`backgroundColor: ${COLORS.lavender}20`) that currently pulls visual focus.
 
 ## Proposed Changes (files & functions)
-- `services/voiceService.js` or a new util: define a new AsyncStorage key (e.g. `STORAGE_KEYS.PLAYBACK_PROGRESS`) with helpers to read/write per-story progress.
-- `hooks/useAudioPlayer.js`: expose a way to notify listeners of position updates (e.g. callback or event) and accept an initial seek position when loading audio without breaking autoplay.
-- `screens/SynthesisScreen.js`: integrate progress persistence—on periodic updates or pause/unload, store `{ storyId, position, duration, updatedAt, localUri }`; when loading a story, restore last position if valid. Handle both cached (`localAudioUri`) and freshly downloaded URIs.
-- `components/AudioControls.js`: ensure seek slider interactions trigger saves (e.g. on release).
-- Optional: `utils/audioUtils.js` if shared helpers are needed (e.g. sanitizing URIs).
+- Update `ProgressModal.js` layout (container width/maxWidth, padding, spacing) and typography (font weights/sizes/colors) to align with the new hierarchy.
+- Refresh `STATUS_DESCRIPTIONS` (especially `processing`) and `TIP_LIBRARY` copy to remove hard-coded “TIP:” prefixes and incorporate the optional magical microcopy.
+- Restyle spinner and cancel button: center alignment, brand-accent color, outlined button look with hover/press feedback.
+- Extend `styles/colors.js` with reusable tokens for the darker text (`#333333`), medium gray (`#555555`/`#666666`), and soft lilac background (`#F8F4FF`) + accent border (`#C29BFF`).
+- Ensure accessibility labels remain accurate and the modal remains responsive (80% width with max 360px).
 
 ## Step-by-Step Plan
-1. Define storage helpers:
-   - Introduce new storage key (`voice_service_playback_progress`).
-   - Create helper functions (get/save/clear) for story playback state keyed by `voiceId` + `storyId`.
-2. Update `useAudioPlayer`:
-   - Allow `loadAudio` to accept an optional `startPosition` (seconds) and seek automatically before autoplay.
-   - Add a subscription/callback (e.g. `onStatus` or expose status via ref) so consumers can persist progress periodically (e.g. every 2–3 seconds or on pause).
-3. Wire persistence in `SynthesisScreen`:
-   - When loading a story, fetch saved progress and pass `startPosition` to `loadStoryAudio`.
-   - On playback progress (using callback from hook) update AsyncStorage (throttle/debounce writes).
-   - On completion (position close to duration) clear stored progress so next play starts from 0.
-   - Ensure state updates work for locally cached files, server URIs, and downloads (possibly normalized via story IDs and voice IDs).
-4. Handle seek & pause events:
-   - When user seeks or pauses/stops, immediately persist the new position.
-   - When audio is unloaded (story change), ensure final position is saved.
-5. Testing & adjustments:
-   - Verify switching between stories resumes correctly.
-   - Confirm progress is cleared when generating new audio or when story finishes.
+1. Introduce additional neutral and lilac tokens in `styles/colors.js`, keeping naming consistent (`text.deep`, `text.muted`, `lavenderSoft`, etc.).
+2. Refactor `ProgressModal` structure: adjust container styles (width, maxWidth, borderRadius 20, shadow), reorganize header to stack the icon and title with improved spacing, and ensure body text centers cleanly.
+3. Update copy constants: tweak `STATUS_DESCRIPTIONS.processing`, optionally consolidate the “TIP” messaging into the main body copy when applicable, and strip “TIP:” from `TIP_LIBRARY` entries or replace with intentionally crafted strings.
+4. Redesign tip section component: use new colors, add the `💡` prefix in the UI (not in copy), tighten padding, and ensure the spinner sits between body text and tip with balanced spacing.
+5. Move the cancel button styling to an outlined pattern (border, color, press state) and confirm focus/press accessibility while keeping it optional when synthesis is complete.
+6. Manually verify layout via Expo (or at least snapshot logic) and run `npm run lint` to catch style regressions.
 
 ## Risks & Assumptions
-- Resume point might become invalid if story audio is regenerated (URI changes); need to clear progress when audio URL changes or when `hasServerAudio` triggers a new download.
-- Frequent writes to AsyncStorage could impact performance; plan to throttle/debounce.
-- Must ensure autoplay still works when resuming mid-story.
-- Expo Audio seeking right after load can fail; may need to await `status.isLoaded` inside `loadAudio`.
+- Modal fonts (Quicksand variants) may not include a 600 weight; might need to map to existing `Bold/SemiBold` without breaking design intent.
+- Adding new color tokens could ripple into other components if naming clashes; ensure new keys are additive.
+- Without running the app, exact spacing/line height might need tweaking after visual QA.
+- Spinner customization is limited to color without extra animation unless we introduce new assets.
 
 ## Validation & Done Criteria
-- Selecting a previously played story resumes near the saved position (±1 second) for both cached and freshly downloaded audio.
-- Generating new audio resets progress (starts at 0).
-- Switching stories mid-playback does not produce errors, and newly selected story auto-plays from saved point.
-- No regressions in manual controls (play/pause/seek slider).
+- Modal renders with centered icon/title, balanced spacing, and max width ≈360px on devices.
+- Body copy and optional microcopy read clearly (no “TIP:” duplication) with improved contrast.
+- Tip block uses soft lilac background with left accent bar and `💡` prefix, drawing less attention than the title.
+- Spinner/cancel button align centered, feel cohesive with the rest of the modal.
+- `npm run lint` passes without new warnings; any manual UI check confirms visual polish.
 
 ## Open Questions
-- Should progress sync per user across devices (API) or remain local-only? (Assumed local-only.)
-Local-only
-- What threshold counts as “finished” (e.g. last 5% of audio) before auto-clearing saved position?
-last 5% of audio is good
+- Should we switch entirely to the combined magical microcopy (removing the tip library) or keep both body text + rotating tips?
+keep both body text + rotating tip

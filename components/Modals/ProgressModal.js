@@ -25,7 +25,7 @@ const STATUS_DESCRIPTIONS = {
   allocating_voice:
     'Leśne wróżki rozplątują wstążki głosu, by brzmiał dokładnie tak, jak Wasza rodzina lubi.',
   processing:
-    'Magiczne pióra zapisują każdy akapit, aby historia mogła rozbłysnąć w wyobraźni.',
+    'Magiczne pióra zapisują każdy akapit, by historia rozbłysła w Twojej wyobraźni.',
   downloading:
     'Kryształowy strumień niesie dźwięki prosto do Twojego urządzenia – wystarczy jeszcze chwila.',
   ready:
@@ -45,28 +45,28 @@ const STATUS_ICONS = {
 
 const TIP_LIBRARY = {
   queued_for_slot: [
-    'TIP: Szepnij dziecku, że nawet bohaterowie muszą chwilę poczekać, nim zacznie się przygoda.',
-    'TIP: Zapal drobną lampkę – to znak dla historii, że zna drogę do Waszej kanapy.'
+    'Szepnij dziecku, że nawet bohaterowie muszą chwilę poczekać, nim zacznie się przygoda.',
+    'Zapal drobną lampkę – to znak dla historii, że zna drogę do Waszej kanapy.'
   ],
   allocating_voice: [
-    'TIP: Zachęć malucha, by wyszeptał życzenie – głos baśni usłyszy każdy szept.',
-    'TIP: Przygotuj miękki kocyk, by opowieść miała miękkie lądowanie.'
+    'Zachęć malucha, by wyszeptał życzenie – głos baśni usłyszy każdy szept.',
+    'Przygotuj miękki kocyk, by opowieść miała miękkie lądowanie.'
   ],
   processing: [
-    'TIP: Poproś dziecko, by narysowało bohatera – ilustracja dodaje opowieści skrzydeł.',
-    'TIP: Powiedz, że mali narratorzy dopisują właśnie najciekawszy zwrot akcji.'
+    'Poproś dziecko, by narysowało bohatera – ilustracja dodaje opowieści skrzydeł.',
+    'Powiedz, że mali narratorzy dopisują właśnie najciekawszy zwrot akcji.'
   ],
   downloading: [
-    'TIP: W ciszy lepiej słychać, jak magia kapie prosto do głośnika.',
-    'TIP: Zaproście pluszowego słuchacza – będzie pierwszym recenzentem baśni.'
+    'W ciszy lepiej słychać, jak magia kapie prosto do głośnika.',
+    'Zaproście pluszowego słuchacza – będzie pierwszym recenzentem baśni.'
   ],
   ready: [
-    'TIP: Przytulcie się i wybierzcie słowo, które pojawi się w przygodzie.',
-    'TIP: Zgaście światło i zostawcie jedną świeczkę – opowieści lubią taki blask.'
+    'Przytulcie się i wybierzcie słowo, które pojawi się w przygodzie.',
+    'Zgaście światło i zostawcie jedną świeczkę – opowieści lubią taki blask.'
   ],
   error: [
-    'TIP: Uspokój dziecko, mówiąc, że skrzaty porządkują jeszcze półki z bajkami.',
-    'TIP: Zaproponuj mini-zabawę w zgadywanie zakończenia – magia zaraz wróci.'
+    'Uspokój dziecko, mówiąc, że skrzaty porządkują jeszcze półki z bajkami.',
+    'Zaproponuj mini-zabawę w zgadywanie zakończenia – magia zaraz wróci.'
   ]
 };
 
@@ -96,6 +96,7 @@ const ProgressModal = ({
     Math.floor(normalisedProgress / 100 * tipPool.length)
   );
   const tip = tipPool[Math.max(0, tipIndex)];
+  const hasTip = Boolean(tip);
 
   return (
     <Modal
@@ -109,7 +110,7 @@ const ProgressModal = ({
           <View style={styles.headerRow}>
             <Feather
               name={iconName}
-              size={40}
+              size={36}
               color={isError ? COLORS.error : COLORS.peach}
               style={[
                 styles.statusIcon,
@@ -145,19 +146,27 @@ const ProgressModal = ({
             )}
           </View>
 
-          <View style={styles.tipContainer}>
-            <Text style={styles.tipLabel}>TIP</Text>
-            <Text style={styles.tipText}>{tip}</Text>
-          </View>
+          {hasTip ? (
+            <View style={styles.tipContainer}>
+              <Text
+                style={styles.tipIcon}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+              >
+                💡
+              </Text>
+              <Text style={styles.tipText}>{tip}</Text>
+            </View>
+          ) : null}
 
           {canCancel ? (
             <TouchableOpacity
               style={styles.cancelButton}
               onPress={onCancel}
+              activeOpacity={0.85}
               accessibilityRole="button"
               accessibilityLabel="Anuluj generowanie"
             >
-              <Feather name="x" size={20} color={COLORS.text.secondary} />
               <Text style={styles.cancelText}>Anuluj</Text>
             </TouchableOpacity>
           ) : null}
@@ -176,80 +185,91 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     width: '80%',
+    maxWidth: 360,
     backgroundColor: COLORS.white,
-    borderRadius: 16,
-    padding: 24,
+    borderRadius: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 30,
+    elevation: 12,
   },
   headerRow: {
     width: '100%',
     alignItems: 'center',
-    marginBottom: 16
+    marginBottom: 20
   },
   statusIcon: {
-    marginBottom: 12
+    marginBottom: 14
   },
   title: {
-    fontFamily: 'Quicksand-Bold',
+    fontFamily: 'Quicksand-SemiBold',
     fontSize: 20,
-    color: COLORS.text.primary,
-    textAlign: 'center'
+    color: COLORS.text.deep,
+    textAlign: 'center',
+    lineHeight: 26,
   },
   description: {
     fontFamily: 'Quicksand-Regular',
     fontSize: 16,
-    color: COLORS.text.secondary,
+    color: COLORS.text.muted,
     textAlign: 'center',
-    marginBottom: 12,
-    lineHeight: 22
+    marginBottom: 16,
+    lineHeight: 24
   },
   status: {
     fontFamily: 'Quicksand-Medium',
-    fontSize: 16,
-    color: COLORS.text.secondary,
-    marginBottom: 16,
+    fontSize: 14,
+    color: COLORS.text.subtle,
+    marginBottom: 20,
     textAlign: 'center',
   },
   loadingIndicator: {
     marginBottom: 24,
-    alignItems: 'center'
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 56,
   },
   tipContainer: {
     width: '100%',
-    backgroundColor: `${COLORS.lavender}20`,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: COLORS.lavenderSoft,
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.lavenderAccent,
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 24,
   },
-  tipLabel: {
-    fontFamily: 'Quicksand-SemiBold',
-    fontSize: 12,
-    color: COLORS.peach,
-    marginBottom: 6,
-    letterSpacing: 1,
+  tipIcon: {
+    marginRight: 12,
+    fontSize: 16,
+    lineHeight: 20,
   },
   tipText: {
+    flex: 1,
     fontFamily: 'Quicksand-Regular',
     fontSize: 14,
-    color: COLORS.text.secondary,
+    color: COLORS.text.muted,
     lineHeight: 20,
   },
   cancelButton: {
-    flexDirection: 'row',
+    alignSelf: 'stretch',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border.light,
+    borderRadius: 24,
   },
   cancelText: {
     fontFamily: 'Quicksand-Medium',
     fontSize: 14,
-    color: COLORS.text.secondary,
-    marginLeft: 8,
+    color: COLORS.text.subtle,
   },
   iconSpinning: {
     // Placeholder class if we later wire animated rotation

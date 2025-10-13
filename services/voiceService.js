@@ -1045,46 +1045,64 @@ export const getStories = async (forceRefresh = false) => {
  * @param {string} storyId - Story ID
  * @returns {Promise<Object>} Result indicating if audio exists
  */
-export const checkAudioExists = async (voiceId, storyId) => {
+export const checkAudioExists = async (voiceId, storyId, options = {}) => {
+  const { verifyRemote = false, cleanupOrphaned = false } =
+    options && typeof options === 'object' ? options : {};
+
   // First check local storage
   const audioInfo = await getStoredAudioInfo(voiceId, storyId);
+  let localExists = false;
+  let localUri = null;
+
   if (audioInfo && audioInfo.localUri) {
     const fileInfo = await getFileInfoSafe(audioInfo.localUri);
     if (isAudioFileValid(fileInfo)) {
-      return {
-        success: true,
-        exists: true,
-        localUri: audioInfo.localUri,
-        fromCache: true
-      };
+      localExists = true;
+      localUri = audioInfo.localUri;
     }
   }
 
-  // If we're online, check the server using the updated endpoint
-  const online = await isOnline();
-  if (online) {
-    try {
-      // Use HEAD request to check if audio exists
-      const result = await apiRequest(`/voices/${voiceId}/stories/${storyId}/audio`, {
-        method: 'HEAD'
-      });
-      
-      // If we get a 200 response, the audio exists
-      return {
-        success: true,
-        exists: result.success,
-        fromCache: false
-      };
-    } catch (error) {
-      console.error('Error checking audio exists on server:', error);
-      // Fall through to return false
+  const shouldCheckRemote = verifyRemote || !localExists;
+  let remoteExists = null;
+  let remoteCheckKnown = false;
+
+  if (shouldCheckRemote) {
+    const online = await isOnline();
+    if (online) {
+      try {
+        const result = await apiRequest(`/voices/${voiceId}/stories/${storyId}/audio`, {
+          method: 'HEAD'
+        });
+        if (result.success) {
+          remoteExists = true;
+          remoteCheckKnown = true;
+        } else if (result.code === 'NOT_FOUND') {
+          remoteExists = false;
+          remoteCheckKnown = true;
+        }
+      } catch (error) {
+        console.error('Error checking audio exists on server:', error);
+      }
     }
   }
+
+  if (remoteExists === false && cleanupOrphaned && localExists) {
+    await deleteFileQuietly(localUri);
+    await removeAudioReference(voiceId, storyId);
+    localExists = false;
+    localUri = null;
+  }
   
-  // If we're here, we're either offline or the server check failed
+  const exists = localExists || remoteExists === true;
+
   return {
     success: true,
-    exists: false
+    exists,
+    localUri,
+    localExists,
+    remoteExists,
+    fromCache: localExists && !shouldCheckRemote,
+    remoteCheckPerformed: remoteCheckKnown
   };
 };
 
