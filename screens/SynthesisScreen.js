@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Image,
+  RefreshControl,
   BackHandler,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,7 +34,7 @@ const STORAGE_KEYS = {
 const STATUS_COPY = {
   queued_for_slot: 'Twoja prośba jest w kolejce. Przydzielimy slot głosowy w ciągu kilku chwil.',
   allocating_voice: 'Twój głos jest aktywowany w ElevenLabs… odtwarzanie rozpocznie się automatycznie.',
-  processing: 'Generujemy opowieść w Twoim głosie. To zwykle trwa ok. 30–90 sekund.',
+  processing: 'Poczekaj cierpliwie, to może potrwać do 90 sekund.',
   downloading: 'Pobieranie nagrania...',
   ready: 'Nagranie jest gotowe – możesz teraz odtworzyć historię.',
   error: 'Wystąpił problem podczas generowania bajki.'
@@ -42,7 +43,7 @@ const STATUS_COPY = {
 const STATUS_PROGRESS_MAP = {
   queued_for_slot: 8,
   allocating_voice: 20,
-  processing: 60,
+  processing: 30,
   downloading: 85,
   ready: 100
 };
@@ -87,12 +88,14 @@ export default function SynthesisScreen({ navigation }) {
   const [isConfirmModalVisible, setIsConfirmModalVisible] = useState(false);
   const [voiceId, setVoiceId] = useState(null);
   const [isProgressModalVisible, setIsProgressModalVisible] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [progressData, setProgressData] = useState({
     progress: 0,
     status: '',
     statusKey: null,
     queuePosition: null,
     queueLength: null,
+    phase: null,
     remoteVoiceId: null,
     serviceProvider: null,
     storyId: null
@@ -180,10 +183,6 @@ export default function SynthesisScreen({ navigation }) {
         const selectedSnapshot =
           selectedStory && voiceSnapshots?.[String(selectedStory.id)];
         if (selectedSnapshot && selectedSnapshot.status !== 'ready') {
-          const queueText = formatQueueMessage(
-            selectedSnapshot.queuePosition,
-            selectedSnapshot.queueLength
-          );
           const message =
             selectedSnapshot.message ||
             STATUS_COPY[selectedSnapshot.status] ||
@@ -197,6 +196,10 @@ export default function SynthesisScreen({ navigation }) {
             statusKey: selectedSnapshot.status,
             queuePosition: selectedSnapshot.queuePosition ?? null,
             queueLength: selectedSnapshot.queueLength ?? null,
+            phase:
+              (typeof selectedSnapshot.phase === 'string'
+                ? selectedSnapshot.phase
+                : null) ?? prev.phase ?? null,
             remoteVoiceId:
               selectedSnapshot.remoteVoiceId ??
               selectedSnapshot.voiceSlotMetadata?.elevenlabsVoiceId ??
@@ -219,6 +222,7 @@ export default function SynthesisScreen({ navigation }) {
             statusKey: null,
             queuePosition: null,
             queueLength: null,
+            phase: null,
             remoteVoiceId: null,
             serviceProvider: null,
             storyId: null
@@ -228,13 +232,7 @@ export default function SynthesisScreen({ navigation }) {
         console.error('Failed to hydrate generation state:', error);
       }
     },
-    [
-      activeGenerationStoryId,
-      formatQueueMessage,
-      progressData.progress,
-      selectedStory,
-      statusToProgress
-    ]
+    [activeGenerationStoryId, progressData.progress, selectedStory, statusToProgress]
   );
 
   const handleGenerationEvent = useCallback(
@@ -259,8 +257,6 @@ export default function SynthesisScreen({ navigation }) {
         Number.isFinite(queueLength) && queueLength >= 0
           ? Math.floor(queueLength)
           : null;
-      const queueText = formatQueueMessage(safeQueuePosition, safeQueueLength);
-
       const message =
         event.message ||
         (normalizedStatus && STATUS_COPY[normalizedStatus]) ||
@@ -275,6 +271,15 @@ export default function SynthesisScreen({ navigation }) {
         event.metadata?.serviceProvider ??
         generationStatusByStory?.[storyId]?.serviceProvider ??
         null;
+      const rawPhase =
+        event.phase ??
+        event.metadata?.phase ??
+        generationStatusByStory?.[storyId]?.phase ??
+        null;
+      const normalizedPhase =
+        typeof rawPhase === 'string' ? rawPhase.trim().toLowerCase() : null;
+      const isGenerationReady =
+        normalizedStatus === 'ready' && normalizedPhase === 'generation';
 
       if (normalizedStatus === 'ready') {
         setGenerationStatusByStory((prev) => {
@@ -301,7 +306,7 @@ export default function SynthesisScreen({ navigation }) {
             serviceProvider:
               resolvedServiceProvider ?? prev[storyId]?.serviceProvider ?? null,
             message,
-            phase: event.phase || prev[storyId]?.phase || null,
+            phase: normalizedPhase ?? prev[storyId]?.phase ?? null,
             updatedAt: Date.now(),
             metadata: event.metadata || prev[storyId]?.metadata || null
           }
@@ -311,12 +316,14 @@ export default function SynthesisScreen({ navigation }) {
       if (normalizedStatus) {
         setProcessingStories((prev) => {
           const next = { ...prev };
-          if (
+          const shouldMarkProcessing =
             normalizedStatus === 'queued_for_slot' ||
             normalizedStatus === 'allocating_voice' ||
             normalizedStatus === 'processing' ||
-            normalizedStatus === 'downloading'
-          ) {
+            normalizedStatus === 'downloading' ||
+            isGenerationReady;
+
+          if (shouldMarkProcessing) {
             next[storyId] = true;
           } else {
             delete next[storyId];
@@ -325,7 +332,11 @@ export default function SynthesisScreen({ navigation }) {
         });
       }
 
-      if (normalizedStatus === 'ready' || normalizedStatus === 'error') {
+      const shouldCloseModal =
+        normalizedStatus === 'error' ||
+        (normalizedStatus === 'ready' && !isGenerationReady);
+
+      if (shouldCloseModal) {
         setIsProgressModalVisible(false);
       } else if (normalizedStatus) {
         setIsProgressModalVisible(true);
@@ -338,10 +349,15 @@ export default function SynthesisScreen({ navigation }) {
             : null;
         const progressFromStatus =
           statusToProgress(normalizedStatus) ?? prev.progress ?? 0;
-        const computedProgress =
-          incomingProgress !== null
-            ? Math.round(incomingProgress * 100)
-            : progressFromStatus;
+        const shouldUseEventProgress =
+          incomingProgress !== null &&
+          !(
+            normalizedStatus === 'processing' &&
+            (!normalizedPhase || normalizedPhase === 'generation')
+          );
+        const computedProgress = shouldUseEventProgress
+          ? Math.round(incomingProgress * 100)
+          : progressFromStatus;
 
         return {
           progress: Number.isFinite(computedProgress)
@@ -351,13 +367,14 @@ export default function SynthesisScreen({ navigation }) {
           statusKey: normalizedStatus || prev.statusKey,
           queuePosition: safeQueuePosition,
           queueLength: safeQueueLength,
+          phase: normalizedPhase ?? prev.phase ?? null,
           remoteVoiceId: resolvedRemoteVoiceId,
           serviceProvider: resolvedServiceProvider ?? prev.serviceProvider,
           storyId
         };
       });
     },
-    [formatQueueMessage, statusToProgress, generationStatusByStory]
+    [statusToProgress, generationStatusByStory]
   );
 
   const createGenerationEventHandler = useCallback(
@@ -806,7 +823,11 @@ export default function SynthesisScreen({ navigation }) {
       setActiveGenerationStoryId(story.id);
       setProcessingStories((prev) => ({ ...prev, [story.id]: true }));
 
-      handleGenerationEvent(story.id, { status: 'processing', progress: 0 });
+      handleGenerationEvent(story.id, {
+        status: 'processing',
+        progress: 0,
+        phase: 'generation'
+      });
       setIsProgressModalVisible(true);
 
       const signal = createAbortController();
@@ -886,6 +907,9 @@ export default function SynthesisScreen({ navigation }) {
         statusKey: null,
         queuePosition: null,
         queueLength: null,
+        phase: null,
+        remoteVoiceId: null,
+        serviceProvider: null,
         storyId: null
       });
     }
@@ -918,6 +942,9 @@ export default function SynthesisScreen({ navigation }) {
         statusKey: null,
         queuePosition: null,
         queueLength: null,
+        phase: null,
+        remoteVoiceId: null,
+        serviceProvider: null,
         storyId: null
       });
       
@@ -1063,6 +1090,9 @@ export default function SynthesisScreen({ navigation }) {
         statusKey: null,
         queuePosition: null,
         queueLength: null,
+        phase: null,
+        remoteVoiceId: null,
+        serviceProvider: null,
         storyId: null
       });
     }
@@ -1112,15 +1142,25 @@ export default function SynthesisScreen({ navigation }) {
   };
   
   // Refresh stories
-  const handleRefresh = () => {
-    // Only refresh if online
+  const handleRefresh = useCallback(async () => {
     if (!isOnline) {
       showToast('Brak połączenia z internetem. Dostępne są tylko zapisane bajki.', 'WARNING');
       return;
     }
-    
-    fetchStoriesAndVoiceId(false, true);
-  };
+
+    setIsRefreshing(true);
+    try {
+      await fetchStoriesAndVoiceId(true, true);
+      if (refreshCredits) {
+        await refreshCredits({ force: true }).catch(() => {});
+      }
+    } catch (error) {
+      console.error('Error refreshing stories:', error);
+      showToast('Nie udało się odświeżyć listy bajek.', 'ERROR');
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [fetchStoriesAndVoiceId, isOnline, refreshCredits, showToast]);
   
   // Render story item
   const renderStoryItem = ({ item }) => {
@@ -1224,6 +1264,14 @@ export default function SynthesisScreen({ navigation }) {
               { paddingBottom: audioControlsVisible ? 140 : 16 },
             ]}
             showsVerticalScrollIndicator={false}
+            refreshControl={(
+              <RefreshControl
+                refreshing={isRefreshing}
+                onRefresh={handleRefresh}
+                tintColor={COLORS.peach}
+                colors={[COLORS.peach]}
+              />
+            )}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>
@@ -1234,10 +1282,10 @@ export default function SynthesisScreen({ navigation }) {
                 <TouchableOpacity
                   style={[
                     styles.refreshButton,
-                    !isOnline && styles.disabledButton
+                    (!isOnline || isRefreshing) && styles.disabledButton
                   ]}
                   onPress={handleRefresh}
-                  disabled={!isOnline}
+                  disabled={!isOnline || isRefreshing}
                 >
                   <Text style={styles.refreshButtonText}>Odśwież</Text>
                 </TouchableOpacity>

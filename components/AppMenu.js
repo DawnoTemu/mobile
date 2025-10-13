@@ -18,7 +18,7 @@ import authService from '../services/authService';
 import { COLORS } from '../styles/colors';
 import ConfirmModal from '../components/Modals/ConfirmModal';
 import { router } from 'expo-router'; 
-import { useCredits } from '../hooks/useCredits';
+import { useCredits, useCreditActions } from '../hooks/useCredits';
 import * as Linking from 'expo-linking';
 
 const { width, height } = Dimensions.get('window');
@@ -26,6 +26,7 @@ const { width, height } = Dimensions.get('window');
 export default function AppMenu({ navigation, isVisible, onClose }) {
   const { showToast } = useToast();
   const creditState = useCredits() || {};
+  const creditActions = useCreditActions();
   const {
     balance = 0,
     unitLabel = 'Punkty Magii',
@@ -53,7 +54,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
   const slideAnim = useRef(new Animated.Value(-width)).current; // Use useRef for animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   
-  // Get user info
+  // Get user info & refresh credits when menu opens
   useEffect(() => {
     const fetchUserInfo = async () => {
       const userData = await authService.getCurrentUser();
@@ -62,8 +63,9 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
     
     if (isVisible) {
       fetchUserInfo();
+      creditActions?.refreshCredits?.({ force: true }).catch(() => {});
     }
-  }, [isVisible]);
+  }, [isVisible, creditActions]);
   
   // Handle animations when visibility changes
   useEffect(() => {

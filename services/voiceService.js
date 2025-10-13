@@ -4,9 +4,17 @@ import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from './authService';
-import { API_BASE_URL, REQUEST_TIMEOUT, STORAGE_KEYS, CACHE_EXPIRATION, GENERATION_STATE_TTL } from './config'; 
+import {
+  API_BASE_URL,
+  REQUEST_TIMEOUT,
+  STORAGE_KEYS,
+  CACHE_EXPIRATION,
+  GENERATION_STATE_TTL
+} from './config';
 
 const MIN_VALID_AUDIO_SIZE_BYTES = 2048; // guard against empty/partial downloads
+const AUDIO_DOWNLOAD_RETRY_DELAY_MS = 750;
+const MAX_AUDIO_DOWNLOAD_ATTEMPTS = 6;
 
 const getFileInfoSafe = async (uri) => {
   if (!uri) {
@@ -106,6 +114,75 @@ const delay = (ms) =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+
+const computeDownloadRetryDelay = (attempt = 0) =>
+  AUDIO_DOWNLOAD_RETRY_DELAY_MS * Math.max(1, attempt + 1);
+
+const extractHttpStatus = (error) => {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+
+  if (typeof error.status === 'number') {
+    return error.status;
+  }
+
+  if (typeof error.statusCode === 'number') {
+    return error.statusCode;
+  }
+
+  if (typeof error.httpStatus === 'number') {
+    return error.httpStatus;
+  }
+
+  if (
+    error.response &&
+    typeof error.response === 'object' &&
+    typeof error.response.status === 'number'
+  ) {
+    return error.response.status;
+  }
+
+  if (typeof error.errorCode === 'number') {
+    return error.errorCode;
+  }
+
+  return null;
+};
+
+const shouldRetryDownloadStatus = (status) => {
+  if (status === null || status === undefined) {
+    return true;
+  }
+
+  if (status === 401 || status === 403) {
+    // Auth failure normally should not be retried without new token
+    return false;
+  }
+
+  if (status === 404 || status === 409 || status === 423) {
+    // API may still be finalising S3 upload; retry briefly
+    return true;
+  }
+
+  if (status >= 500 && status < 600) {
+    return true;
+  }
+
+  if (status === 425 || status === 429) {
+    return true;
+  }
+
+  return false;
+};
+
+const canRetryDownload = (retryCount, status = null) => {
+  if (retryCount >= MAX_AUDIO_DOWNLOAD_ATTEMPTS - 1) {
+    return false;
+  }
+
+  return shouldRetryDownloadStatus(status);
+};
 
 const toStringOrNull = (value) => {
   if (value === null || value === undefined) {
@@ -1815,14 +1892,36 @@ export const downloadAudio = async (
     }
     
     // Start download
-    const { uri } = await downloadResumable.downloadAsync();
+    const { uri, status, headers } = await downloadResumable.downloadAsync();
+    const headerSnapshot =
+      headers && typeof headers.forEach === 'function'
+        ? headersToObject(headers)
+        : Object.keys(headers || {}).reduce((acc, key) => {
+            acc[String(key).toLowerCase()] = headers[key];
+            return acc;
+          }, {});
+    const contentType = (headerSnapshot['content-type'] || '').toLowerCase();
+    const contentLengthHeader = headerSnapshot['content-length'];
+    const expectedSize = contentLengthHeader ? Number(contentLengthHeader) : null;
 
     const downloadedFileInfo = await getFileInfoSafe(uri);
-    if (!isAudioFileValid(downloadedFileInfo)) {
+    const hasValidSize = isAudioFileValid(downloadedFileInfo);
+    const fileSize = typeof downloadedFileInfo.size === 'number' ? downloadedFileInfo.size : 0;
+    const isAudioMime = contentType.startsWith('audio/');
+    const looksLikePlaceholder =
+      !isAudioMime &&
+      fileSize <= MIN_VALID_AUDIO_SIZE_BYTES &&
+      (expectedSize === null || expectedSize <= MIN_VALID_AUDIO_SIZE_BYTES);
+
+    if (!hasValidSize || looksLikePlaceholder) {
       await deleteFileQuietly(uri);
       await removeAudioReference(voiceId, storyId);
-      if (retryCount < 1) {
-        console.warn('Invalid audio file detected. Retrying download.');
+      if (retryCount < MAX_AUDIO_DOWNLOAD_ATTEMPTS - 1) {
+        const waitMs = computeDownloadRetryDelay(retryCount);
+        console.warn(
+          `Audio download not ready yet (status: ${status || 'unknown'}, type: ${contentType || 'unknown'}, size: ${fileSize}). Retrying in ${waitMs}ms (attempt ${retryCount + 2}/${MAX_AUDIO_DOWNLOAD_ATTEMPTS}).`
+        );
+        await delay(waitMs);
         return downloadAudio(
           url,
           voiceId,
@@ -1876,7 +1975,7 @@ export const downloadAudio = async (
     if (downloadResumable?.fileUri) {
       await deleteFileQuietly(downloadResumable.fileUri);
     }
-    
+
     // Handle AbortError specifically
     if (error.name === 'AbortError') {
       const cancelEvent = {
@@ -1896,7 +1995,24 @@ export const downloadAudio = async (
         code: 'DOWNLOAD_CANCELLED'
       };
     }
-    
+
+    const status = extractHttpStatus(error);
+    if (canRetryDownload(retryCount, status)) {
+      const waitMs = computeDownloadRetryDelay(retryCount);
+      console.warn(
+        `Audio download failed (status: ${status || 'unknown'}). Retrying in ${waitMs}ms (attempt ${retryCount + 2}/${MAX_AUDIO_DOWNLOAD_ATTEMPTS}).`
+      );
+      await delay(waitMs);
+      return downloadAudio(
+        url,
+        voiceId,
+        storyId,
+        progressCallback,
+        signal,
+        retryCount + 1
+      );
+    }
+
     const downloadErrorEvent = {
       category: 'voice_generation',
       phase: 'download',
@@ -1904,7 +2020,11 @@ export const downloadAudio = async (
       progress: null,
       error: error.message || 'Unknown error during download',
       code: 'DOWNLOAD_ERROR',
-      metadata: { voiceId, storyId }
+      metadata: {
+        voiceId,
+        storyId,
+        statusCode: status ?? null
+      }
     };
     progressCallback?.(downloadErrorEvent);
     reportTelemetry(downloadErrorEvent);

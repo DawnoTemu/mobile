@@ -13,7 +13,7 @@ import { COLORS } from '../../styles/colors';
 const STATUS_TITLES = {
   queued_for_slot: 'Twoja prośba w kolejce',
   allocating_voice: 'Aktywujemy głos',
-  processing: 'Generujemy nagranie',
+  processing: 'Tworzenie opowieści',
   downloading: 'Pobieranie nagrania',
   ready: 'Nagranie gotowe',
   error: 'Błąd generowania'
@@ -26,10 +26,6 @@ const STATUS_ICONS = {
   downloading: 'download-cloud',
   ready: 'check-circle',
   error: 'alert-circle'
-};
-
-const PROVIDER_LABELS = {
-  elevenlabs: 'ElevenLabs'
 };
 
 const ProgressModal = ({
@@ -68,22 +64,6 @@ const ProgressModal = ({
         }`
       : null;
 
-  const providerLabel = (() => {
-    if (!serviceProvider && !remoteVoiceId) {
-      return null;
-    }
-    const providerName =
-      (serviceProvider && PROVIDER_LABELS[serviceProvider.toLowerCase()]) ||
-      serviceProvider;
-    if (providerName && remoteVoiceId) {
-      return `${providerName} • ${remoteVoiceId}`;
-    }
-    if (providerName) {
-      return providerName;
-    }
-    return remoteVoiceId;
-  })();
-  
   return (
     <Modal
       transparent
@@ -110,14 +90,11 @@ const ProgressModal = ({
 
           {queueLabel ? (
             <View style={styles.queuePill}>
-              <Feather name="users" size={14} color={COLORS.peach} />
+              <Feather name="users" size={14} color={COLORS.white} />
               <Text style={styles.queueText}>{queueLabel}</Text>
             </View>
           ) : null}
 
-          {providerLabel ? (
-            <Text style={styles.providerText}>{providerLabel}</Text>
-          ) : null}
           
           {/* Progress bar */}
           <View style={styles.progressContainer}>
@@ -219,21 +196,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 16,
-    backgroundColor: `${COLORS.peach}20`,
+    backgroundColor: COLORS.peach,
     marginBottom: 8,
   },
   queueText: {
     fontFamily: 'Quicksand-SemiBold',
     fontSize: 13,
-    color: COLORS.peach,
+    color: COLORS.white,
     marginLeft: 6,
-  },
-  providerText: {
-    fontFamily: 'Quicksand-Regular',
-    fontSize: 12,
-    color: COLORS.text.tertiary,
-    marginBottom: 16,
-    textAlign: 'center'
   },
   progressContainer: {
     width: '100%',
