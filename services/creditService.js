@@ -61,7 +61,7 @@ const normalizeStoryCreditsPayload = (payload = {}) => {
 
 const normalizeCreditsPayload = (payload = {}) => ({
   balance: toNumber(payload.balance),
-  unitLabel: payload.unit_label ?? 'Story Points (Punkty Magii)',
+  unitLabel: payload.unit_label ?? 'Punkty Magii',
   unitSize: toNumber(payload.unit_size, 1000),
   lots: Array.isArray(payload.lots) ? payload.lots.map(normalizeLot) : [],
   recentTransactions: Array.isArray(payload.recent_transactions)

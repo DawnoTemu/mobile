@@ -57,7 +57,7 @@ describe('creditService', () => {
   test('getCredits returns cached data when offline', async () => {
     const cachedData = {
       balance: 10,
-      unitLabel: 'Story Points (Punkty Magii)',
+      unitLabel: 'Punkty Magii',
       unitSize: 1000,
       lots: [],
       recentTransactions: [],

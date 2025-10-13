@@ -55,7 +55,7 @@ export default function SynthesisScreen({ navigation }) {
   const creditActions = useCreditActions();
   const {
     balance = 0,
-    unitLabel = 'Story Points (Punkty Magii)',
+    unitLabel = 'Punkty Magii',
     loading: creditsLoading = false,
     error: creditsError = null,
     initializing: creditsInitializing = false
@@ -658,7 +658,7 @@ export default function SynthesisScreen({ navigation }) {
     }
     
     if (result.code === 'PAYMENT_REQUIRED') {
-      showToast('Brak wystarczających Story Points. Odwiedź ekran kredytów.', 'ERROR');
+      showToast('Brak wystarczających Punktów Magii. Odwiedź ekran kredytów.', 'ERROR');
       if (refreshCredits) {
         refreshCredits({ force: true }).catch(() => {});
       }
@@ -722,7 +722,7 @@ export default function SynthesisScreen({ navigation }) {
 
     if (requiresGeneration && creditStateReady && typeof requiredCredits === 'number') {
       if (balance < requiredCredits) {
-        showToast('Masz za mało Story Points, aby wygenerować tę bajkę.', 'INFO');
+        showToast('Brakuje Punktów Magii, aby wygenerować tę bajkę.', 'INFO');
         return;
       }
     }
@@ -872,7 +872,7 @@ export default function SynthesisScreen({ navigation }) {
           refreshCredits({ force: true }).catch(() => {});
         }
       } else if (result.code === 'PAYMENT_REQUIRED') {
-        showToast('Masz za mało Story Points, aby wygenerować tę bajkę.', 'ERROR');
+        showToast('Brakuje Punktów Magii, aby wygenerować tę bajkę.', 'ERROR');
         if (refreshCredits) {
           refreshCredits({ force: true }).catch(() => {});
         }

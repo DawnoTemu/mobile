@@ -102,7 +102,7 @@ describe('useCredits', () => {
         success: true,
         data: {
           balance: 8,
-          unitLabel: 'Story Points',
+          unitLabel: 'Punkty Magii',
           unitSize: 1000,
           lots: [],
           recentTransactions: [],
@@ -160,7 +160,7 @@ describe('useCredits', () => {
       success: true,
       data: {
         balance: 6,
-        unitLabel: 'Story Points',
+        unitLabel: 'Punkty Magii',
         unitSize: 1000,
         lots: [],
         recentTransactions: [],
@@ -248,7 +248,7 @@ describe('useCredits', () => {
         success: true,
         data: {
           balance: 99,
-          unitLabel: 'Story Points',
+          unitLabel: 'Punkty Magii',
           unitSize: 1000,
           lots: [],
           recentTransactions: [],
@@ -272,7 +272,7 @@ describe('useCredits', () => {
   test('applyDebitOptimistic updates balance and rollback restores it', async () => {
     const payload = {
       balance: 10,
-      unitLabel: 'Story Points',
+      unitLabel: 'Punkty Magii',
       unitSize: 1000,
       lots: [],
       recentTransactions: [],

@@ -22,7 +22,7 @@ const CreditContext = createContext(null);
 
 const initialState = {
   balance: 0,
-  unitLabel: 'Story Points (Punkty Magii)',
+  unitLabel: 'Punkty Magii',
   unitSize: 1000,
   lots: [],
   recentTransactions: [],
@@ -149,7 +149,7 @@ export const CreditProvider = ({ children }) => {
       payload: {
         data: {
           balance: result.data?.balance ?? 0,
-          unitLabel: result.data?.unitLabel ?? 'Story Points (Punkty Magii)',
+          unitLabel: result.data?.unitLabel ?? 'Punkty Magii',
           unitSize: result.data?.unitSize ?? 1000,
           lots: result.data?.lots ?? [],
           recentTransactions: result.data?.recentTransactions ?? []

@@ -60,10 +60,15 @@ export default function StoryItem({
     !isReady &&
     typeof requiredCredits === 'number' &&
     !Number.isNaN(requiredCredits);
+  const formattedCredits = hasNumericCredits
+    ? `${requiredCredits} ${normalizedUnitLabel}`
+    : null;
   const badgeLabel = isReady
     ? 'Gotowa bajka'
     : hasNumericCredits
-      ? `${requiredCredits} ${normalizedUnitLabel}`
+      ? isInsufficient
+        ? `Brak środków • ${formattedCredits}`
+        : formattedCredits
       : 'Brak danych';
   const badgeIcon = isReady
     ? 'check-circle'
@@ -80,7 +85,7 @@ export default function StoryItem({
       return <ActivityIndicator size="small" color={COLORS.lavender} />;
     }
 
-    if (!isAffordable && typeof requiredCredits === 'number') {
+    if (!isReady && !isAffordable && typeof requiredCredits === 'number') {
       return <Feather name="lock" size={20} color={COLORS.error} />;
     }
 
@@ -170,11 +175,6 @@ export default function StoryItem({
           )}
         </View>
 
-        {isInsufficient && (
-          <Text style={styles.creditWarning}>
-            Za mało Story Points
-          </Text>
-        )}
         {statusMessage ? (
           <Text style={styles.generationStatus} numberOfLines={2}>
             {statusMessage}
@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: `${COLORS.lavender}15`,
+    backgroundColor: `${COLORS.lavender}25`,
     borderRadius: 12,
     paddingVertical: 2,
     paddingHorizontal: 8,
@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.mint,
   },
   creditBadgeInsufficient: {
-    backgroundColor: `${COLORS.error}15`,
+    backgroundColor: `${COLORS.error}18`,
   },
   creditBadgeText: {
     fontFamily: 'Quicksand-Medium',
@@ -280,7 +280,7 @@ const styles = StyleSheet.create({
     color: COLORS.white,
   },
   creditBadgeTextInsufficient: {
-    color: COLORS.white,
+    color: COLORS.error,
   },
   creditBadgePlaceholder: {
     backgroundColor: `${COLORS.text.secondary}10`,
@@ -289,12 +289,6 @@ const styles = StyleSheet.create({
   },
   creditBadgePlaceholderText: {
     color: COLORS.text.secondary
-  },
-  creditWarning: {
-    marginTop: 6,
-    fontFamily: 'Quicksand-Regular',
-    fontSize: 12,
-    color: COLORS.error,
   },
   generationStatus: {
     marginTop: 8,

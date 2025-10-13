@@ -27,6 +27,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
   const { showToast } = useToast();
   const creditState = useCredits() || {};
   const creditActions = useCreditActions();
+  const refreshCreditsAction = creditActions?.refreshCredits;
   const {
     balance = 0,
     unitLabel = 'Punkty Magii',
@@ -36,10 +37,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
     stale: creditsStale = false
   } = creditState;
   const showCreditsLoading = creditsLoading || creditsInitializing;
-  const displayUnitLabel =
-    typeof unitLabel === 'string' && unitLabel.toLowerCase().includes('punkty')
-      ? 'Punkty Magii'
-      : 'Punkty Magii';
+  const displayUnitLabel = 'Punkty Magii';
   const handleOpenCredits = () => {
     Linking.openURL('https://www.dawnotemu.app/cennik').catch(() => {
       showToast('Nie udało się otworzyć strony. Spróbuj ponownie.', 'ERROR');
@@ -49,6 +47,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
   const [user, setUser] = useState(null);
   const [isConfirmLogoutVisible, setIsConfirmLogoutVisible] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const hasHydratedSessionRef = useRef(false);
   
   // Animation values
   const slideAnim = useRef(new Animated.Value(-width)).current; // Use useRef for animation values
@@ -56,16 +55,40 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
   
   // Get user info & refresh credits when menu opens
   useEffect(() => {
-    const fetchUserInfo = async () => {
-      const userData = await authService.getCurrentUser();
-      setUser(userData);
+    let cancelled = false;
+
+    const hydrateMenuSession = async () => {
+      try {
+        const userData = await authService.getCurrentUser();
+        if (!cancelled) {
+          setUser(userData);
+        }
+      } catch (error) {
+        console.error('Failed to load user info for menu', error);
+      }
+
+      if (typeof refreshCreditsAction === 'function') {
+        try {
+          await refreshCreditsAction({ force: true });
+        } catch (error) {
+          console.warn('Failed to refresh credits from menu', error);
+        }
+      }
     };
-    
-    if (isVisible) {
-      fetchUserInfo();
-      creditActions?.refreshCredits?.({ force: true }).catch(() => {});
+
+    if (isVisible && !hasHydratedSessionRef.current) {
+      hasHydratedSessionRef.current = true;
+      hydrateMenuSession();
     }
-  }, [isVisible, creditActions]);
+
+    if (!isVisible) {
+      hasHydratedSessionRef.current = false;
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isVisible, refreshCreditsAction]);
   
   // Handle animations when visibility changes
   useEffect(() => {

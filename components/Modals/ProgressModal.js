@@ -33,10 +33,10 @@ const ProgressModal = ({
   progress,
   status,
   statusKey,
-  queuePosition,
-  queueLength,
-  remoteVoiceId,
-  serviceProvider,
+  queuePosition: _queuePosition,
+  queueLength: _queueLength,
+  remoteVoiceId: _remoteVoiceId,
+  serviceProvider: _serviceProvider,
   onCancel
 }) => {
   const normalisedProgress =
@@ -54,15 +54,6 @@ const ProgressModal = ({
   const isComplete = normalizedStatusKey === 'ready';
   const isError = normalizedStatusKey === 'error';
   const canCancel = typeof onCancel === 'function' && !isComplete;
-
-  const queueLabel =
-    queuePosition !== null && queuePosition !== undefined
-      ? `Miejsce w kolejce: ${Math.max(1, Number(queuePosition) + 1)}${
-          queueLength !== null && queueLength !== undefined
-            ? `/${Math.max(1, Number(queueLength))}`
-            : ''
-        }`
-      : null;
 
   return (
     <Modal
@@ -87,14 +78,6 @@ const ProgressModal = ({
           </View>
 
           <Text style={styles.status}>{statusText}</Text>
-
-          {queueLabel ? (
-            <View style={styles.queuePill}>
-              <Feather name="users" size={14} color={COLORS.white} />
-              <Text style={styles.queueText}>{queueLabel}</Text>
-            </View>
-          ) : null}
-
           
           {/* Progress bar */}
           <View style={styles.progressContainer}>
@@ -188,22 +171,6 @@ const styles = StyleSheet.create({
     color: COLORS.text.secondary,
     marginBottom: 12,
     textAlign: 'center',
-  },
-  queuePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 16,
-    backgroundColor: COLORS.peach,
-    marginBottom: 8,
-  },
-  queueText: {
-    fontFamily: 'Quicksand-SemiBold',
-    fontSize: 13,
-    color: COLORS.white,
-    marginLeft: 6,
   },
   progressContainer: {
     width: '100%',
