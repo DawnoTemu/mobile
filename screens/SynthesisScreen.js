@@ -1132,12 +1132,6 @@ export default function SynthesisScreen({ navigation }) {
     if (remaining <= PROGRESS_FINISH_THRESHOLD_SECONDS) {
       if (!completedPlaybackRef.current) {
         voiceService.clearPlaybackProgress(voiceId, storyId).catch(() => {});
-        if (__DEV__) {
-          console.log('[PlaybackProgress] cleared after completion', {
-            voiceId,
-            storyId
-          });
-        }
         completedPlaybackRef.current = true;
       }
       return;
@@ -1164,15 +1158,6 @@ export default function SynthesisScreen({ navigation }) {
       sourceUri: currentAudioUriRef.current,
       updatedAt: now
     }).catch(() => {});
-
-    if (__DEV__) {
-      console.log('[PlaybackProgress] saved progress', {
-        voiceId,
-        storyId,
-        position,
-        duration
-      });
-    }
   }, [position, duration, isPlaying, selectedStory, voiceId, isAudioLoading]);
 
   useEffect(() => {
