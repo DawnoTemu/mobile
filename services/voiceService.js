@@ -1985,13 +1985,6 @@ export const downloadAudio = async (
         }
       : {};
 
-    // console.log('[downloadAudio] starting attempt', {
-      attempt: attemptNumber,
-      voiceId,
-      storyId,
-      url: describeUrl()
-    });
-
     downloadResumable = FileSystem.createDownloadResumable(
       url,
       fileUri,
