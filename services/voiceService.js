@@ -2043,16 +2043,6 @@ export const downloadAudio = async (
       fileSize <= MIN_VALID_AUDIO_SIZE_BYTES &&
       (expectedSize === null || expectedSize <= MIN_VALID_AUDIO_SIZE_BYTES);
 
-    // console.log('[downloadAudio] attempt result', {
-      attempt: attemptNumber,
-      voiceId,
-      storyId,
-      status,
-      headers: headerSnapshot,
-      fileSize,
-      looksLikePlaceholder
-    });
-
     if (!hasValidSize || looksLikePlaceholder) {
       let nonAudioPreview = null;
       if (fileSize > 0 && fileSize <= MAX_LOGGED_BODY_CHARS * 2) {
@@ -2128,16 +2118,6 @@ export const downloadAudio = async (
     };
     progressCallback?.(downloadCompleteEvent);
     reportTelemetry(downloadCompleteEvent);
-
-    // console.log('[downloadAudio] completed', {
-      attempt: attemptNumber,
-      voiceId,
-      storyId,
-      status,
-      fileSize: downloadedFileInfo.size ?? null,
-      headers: headerSnapshot,
-      uri
-    });
 
     return {
       success: true,
