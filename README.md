@@ -1,181 +1,114 @@
 # DawnoTemu
 
-DawnoTemu is a React Native mobile application that allows users to create a voice clone and then listen to stories narrated in their own voice. The app provides a personalized storytelling experience by combining high-quality story content with the user's voice characteristics.
+DawnoTemu is a React Native application that lets listeners experience narrated stories in their own cloned voice. The client bundles a guided cloning flow, rich playback controls, and offline queues so stories stay accessible even when a network connection drops.
 
 ![DawnoTemu Logo](./assets/images/logo.png)
 
 ## Features
 
-- **Voice Cloning**: Record your voice or upload an audio file to create a digital clone
-- **Story Selection**: Browse through a collection of stories
-- **Voice Synthesis**: Generate narration of stories using your cloned voice
-- **Audio Player**: Control playback with play/pause, rewind, fast-forward, and seek functionality
-- **Offline Support**: Queue operations when offline and process them when back online
-- **Caching**: Store generated audio files locally for quick access
-- **Story Points Credits**: Track balances, see per-story costs, and prevent synthesis when funds are low
+- **Voice cloning** – capture a voice sample or upload existing audio to build a personal voice profile
+- **Story library** – browse, favorite, and synthesize stories from the curated catalog
+- **Narration playback** – play, pause, seek, or adjust position with custom audio controls
+- **Offline queueing** – requests made offline are persisted and replayed when connectivity returns
+- **Credit tracking** – surface balances, per-story costs, and guardrails when credits are low
+- **Local caching** – generated audio and story metadata are cached for quick repeat sessions
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+ and npm
+- Expo CLI (installed automatically via npm scripts)
+- Xcode (iOS) and/or Android Studio SDKs when running on devices or simulators
+
+### Installation
+
+```bash
+git clone https://github.com/dawnotemu/mobile.git
+cd mobile
+npm install
+```
+
+### Running the app
+
+```bash
+npm run start     # Launch Metro bundler
+npm run ios       # Build and launch the iOS app
+npm run android   # Build and launch the Android app
+npm run web       # Preview the web build
+```
+
+Stop Metro before running tests to free the default port.
 
 ## Project Structure
 
 ```
-my-app/
-├── app/                       # Main app entry point
-├── assets/                    # Static assets (images, fonts, etc.)
-├── components/                # Reusable UI components
-│   ├── Modals/                # Modal components
-│   ├── AudioControls.js       # Audio player component
-│   ├── StatusToast.js         # Toast notification component
-│   └── StoryItem.js           # Story list item component
-├── hooks/                     # Custom React hooks
-│   ├── useAudioPlayer.js      # Hook for audio playback
-│   └── useAudioRecorder.js    # Hook for voice recording
-├── navigation/                # Navigation configuration
-│   └── AppNavigator.js        # Main navigation stack
-├── screens/                   # App screens
-│   ├── CloneScreen.js         # Voice cloning screen
-│   ├── SplashScreen.js        # Initial loading screen
-│   └── SynthesisScreen.js     # Story selection and playback screen
-├── services/                  # API and service integrations
-│   └── voiceService.js        # Voice cloning and synthesis service
-├── styles/                    # Global styles
-│   ├── colors.js              # Color definitions
-│   ├── fonts.js               # Typography styles
-│   └── theme.js               # Combined theme configuration
-└── utils/                     # Utility functions
-    └── audioUtils.js          # Audio-related utility functions
+app/index.js                # Root component bootstrapping navigation, providers, and Sentry
+assets/                     # Fonts, logos, and images bundled with the app
+components/                 # Shared UI pieces (modals, audio controls, toast provider, etc.)
+context/                    # React context providers such as the playback queue
+hooks/                      # Custom hooks (audio recorder, audio player, credit state, ...)
+navigation/                 # AppNavigator stack + routing helpers
+screens/                    # Route-level views for cloning, synthesis, playback, onboarding
+services/                   # API integrations, config resolution, and voice/credit services
+styles/                     # Color palettes, typography tokens, theming utilities
+utils/                      # Storage helpers, audio utilities, and misc shared helpers
+docs/                       # Supporting documentation (QA checklists, workflows)
 ```
 
-## Tech Stack
+`app/index.js` wraps the experience in `SafeAreaProvider`, `GestureHandlerRootView`, custom providers, and Sentry instrumentation before rendering `AppNavigator`.
 
-- **Expo SDK 54** on **React Native 0.81**
-- **React Native**: Cross-platform mobile framework
-- **Expo**: Development platform for React Native
-- **React Navigation**: Navigation library
-- **Expo Audio**: Audio recording and playback
-- **Expo FileSystem**: File management
-- **AsyncStorage**: Local data persistence
-- **NetInfo**: Network connectivity monitoring
-- **Expo Blur**: Visual blur effects
-- **Animated API**: Animation system
+## Environment Configuration
 
-## Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/dawnottemu.git
-   cd dawnottemu
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Start the development server:
-   ```bash
-   npx expo start
-   ```
-
-## Usage
-
-### Voice Cloning
-
-1. Launch the app and you'll be directed to the voice cloning screen
-2. Choose to either:
-   - Record your voice by reading the provided text
-   - Upload an existing audio file
-
-### Accessing Stories
-
-Once your voice is cloned:
-
-1. Browse through the available stories
-2. Tap on a story to select it
-3. The app will generate audio narration using your voice
-4. Use the audio controls to play, pause, rewind, or fast-forward
-
-## API Integration
-
-The app connects to a voice cloning and synthesis API. The service endpoints include:
-
-- `/clone`: Upload voice samples for cloning
-- `/synthesize`: Generate audio narration for stories
-- `/audio/{voiceId}/{storyId}`: Retrieve generated audio files
-- `/stories`: Get available stories
-
-## Customization
-
-### Colors
-
-You can customize the app's color scheme in `styles/colors.js`:
-
-```javascript
-export const COLORS = {
-  peach: '#FFB5A7',
-  lavender: '#D4C1EC',
-  mint: '#B8E0D2',
-  // ... other colors
-};
-```
-
-### Fonts
-
-Font configurations are in `styles/fonts.js`. The app uses Comfortaa and Quicksand font families.
-
-## Development Notes
-
-### Environment Configuration
-
-The client reads environment settings from `services/config.js`, with values driven by Expo environment variables. Create a `.env` file (or use `eas.json` secrets) and set:
+Runtime configuration is resolved in `services/config.js`. Create a `.env` file (or configure `eas.json` secrets) with:
 
 ```bash
-EXPO_PUBLIC_API_ENV=PROD   # or DEV / STAGING
-# Optional: point at a custom backend
+EXPO_PUBLIC_API_ENV=PROD       # DEV, STAGING, or PROD (default)
+# Optional override when testing on devices:
 # EXPO_PUBLIC_API_BASE_URL=https://api.dawnotemu.app
 ```
 
-If no variables are provided, the app defaults to `PROD`. `DEV` defaults to `http://localhost:8000`, so supply your LAN or tunnel URL via `EXPO_PUBLIC_API_BASE_URL` when testing on devices.
+`DEV` defaults to `http://localhost:8000`. When testing on physical devices, replace that with your LAN or tunnel URL via `EXPO_PUBLIC_API_BASE_URL`. Never hard-code environment URLs in source; rely on these environment variables instead.
 
-### Audio Processing
+## NPM Scripts
 
-The app handles audio in several formats:
-- Recording: WAV format
-- Playback: MP3 format
-- Storage: Files are cached in the app's temporary directory
+- `npm run start` – start the Metro bundler (Expo) for local development
+- `npm run ios` / `npm run android` – build and launch the native shells
+- `npm run web` – open the Expo web preview
+- `npm test` – execute the Jest (jest-expo) test suite
+- `npm run lint` – run Expo's ESLint configuration
+- `npm run reset-project` – clear caches and reinstall packages when builds misbehave
 
-### Offline Support
+## Development Notes
 
-The app queues operations when offline and processes them when connectivity is restored:
+- **Sentry instrumentation** – `app/index.js` initializes Sentry (including Replay) with the public DSN. Keep private keys and secrets out of the repo.
+- **Audio processing** – recording uses WAV, synthesized audio is stored as MP3, and cached files live in Expo's temporary directory.
+- **Offline behavior** – services queue cloning, synthesis, and download operations while offline and replay them once connectivity is restored.
+- **Credits QA** – see `docs/mobile-credits-testing.md` for automated scenarios and manual validation steps that cover story point balances.
 
-- Voice cloning operations
-- Story generation requests 
-- Download operations
+## Testing & QA
 
-### Credits QA & Testing
-
-Refer to [docs/mobile-credits-testing.md](docs/mobile-credits-testing.md) for automated test commands and a manual checklist covering Story Points functionality.
+- `npm test` runs Jest with the Expo preset; mock native modules as needed for deterministic tests.
+- Group new tests alongside the modules they cover (`*.test.js` or `__tests__/` folders).
+- Aim to cover success and failure paths for hooks and services, especially around async behaviors and credit calculations.
+- Run `npm run lint` before opening a PR to ensure coding standards are satisfied.
 
 ## Troubleshooting
 
-### Audio Permission Issues
+- **Recording issues** – confirm microphone permission, then check device settings (iOS: Settings → App → Microphone; Android: App Info → Permissions).
+- **Playback failures** – verify device volume, ensure audio assets finished downloading, and restart the app if the Expo cache is stale.
+- **Stale builds** – if changes fail to appear, run `npm run reset-project` to clear caches and restart Metro.
 
-If you encounter issues with recording:
+## Additional Resources
 
-1. Ensure microphone permissions are granted
-2. On iOS, check that "Microphone" permission is enabled in device settings
-3. On Android, verify recording permissions in app settings
-
-### Playback Problems
-
-If audio doesn't play:
-
-1. Check device volume
-2. Ensure the audio file was downloaded successfully
-3. Try restarting the app
+- `docs/mobile-credits-testing.md` – story points QA checklist
+- `AGENTS.md` – automation and tooling overview
+- `PLAN.md` – current development roadmap (if maintained)
 
 ## License
 
-[Add your license information here]
+[Add license details or link to LICENSE.md]
 
 ## Contact
 
-[Add your contact information here]
+[Add contact details or support channel]
