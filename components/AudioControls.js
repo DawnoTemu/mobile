@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Slider from '@react-native-community/slider';
 import { Feather } from '@expo/vector-icons';
 import { COLORS } from '../styles/colors';
+import { LOOP_MODES } from '../context/PlaybackQueueProvider';
 
 const { width, height } = Dimensions.get('window');
 
@@ -32,6 +33,14 @@ export default function AudioControls({
   formatTime,
   audioTitle,
   story,
+  onNext,
+  onPrevious,
+  canSkipNext = false,
+  canSkipPrevious = false,
+  loopMode = LOOP_MODES.NONE,
+  onToggleLoop,
+  queuePosition = null,
+  queueLength = null,
 }) {
   const insets = useSafeAreaInsets();
   // Reduced initial value from 100 to 50 for less extreme starting position
@@ -97,6 +106,38 @@ export default function AudioControls({
     }),
     [audioTitle, story, storyText]
   );
+
+  const hasNextHandler = typeof onNext === 'function';
+  const hasPreviousHandler = typeof onPrevious === 'function';
+
+  const queueSummary = useMemo(() => {
+    if (queuePosition && queueLength) {
+      return `${queuePosition}/${queueLength}`;
+    }
+
+    if (queueLength) {
+      return `${queueLength} w kolejce`;
+    }
+
+    return 'Kolejka pusta';
+  }, [queuePosition, queueLength]);
+
+  const loopState = useMemo(() => {
+    switch (loopMode) {
+      case LOOP_MODES.REPEAT_ONE:
+        return { label: 'Powtarzanie utworu', badge: '1', active: true };
+      case LOOP_MODES.REPEAT_ALL:
+        return { label: 'Powtarzanie kolejki', badge: null, active: true };
+      default:
+        return { label: 'Bez powtarzania', badge: null, active: false };
+    }
+  }, [loopMode]);
+
+  const loopToggleAvailable = typeof onToggleLoop === 'function';
+  const previousButtonDisabled = !hasPreviousHandler || !canSkipPrevious;
+  const nextButtonDisabled = !hasNextHandler || !canSkipNext;
+  const previousIconColor = previousButtonDisabled ? COLORS.text.tertiary : COLORS.text.primary;
+  const nextIconColor = nextButtonDisabled ? COLORS.text.tertiary : COLORS.text.primary;
 
   const coverSource = useMemo(() => {
     if (storyData.cover) {
@@ -546,6 +587,35 @@ const startSmoothScroll = (
             {/* Minimized Controls - shown when not expanded */}
             <Animated.View style={[styles.controls, { opacity: minimizedContentOpacity }]}>
               <View style={styles.minimizedControls}>
+                <View style={styles.queueMetaRow}>
+                  <View style={styles.queueInfo}>
+                    <Feather name="list" size={14} color={COLORS.text.secondary} />
+                    <Text style={styles.queueInfoText}>{queueSummary}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.loopButton,
+                      loopState.active && styles.loopButtonActive,
+                      !loopToggleAvailable && styles.loopButtonDisabled
+                    ]}
+                    onPress={onToggleLoop}
+                    disabled={!loopToggleAvailable}
+                    accessibilityLabel={`Tryb powtarzania: ${loopState.label}`}
+                    accessibilityRole="button"
+                    accessibilityHint="Stuknij, aby zmienić tryb powtarzania"
+                  >
+                    <Feather
+                      name="repeat"
+                      size={16}
+                      color={loopState.active ? COLORS.white : COLORS.text.secondary}
+                    />
+                    {loopState.badge ? (
+                      <View style={styles.loopBadgeContainer}>
+                        <Text style={styles.loopBadgeText}>{loopState.badge}</Text>
+                      </View>
+                    ) : null}
+                  </TouchableOpacity>
+                </View>
                 <View style={styles.sliderContainer}>
                   <Text style={styles.timeText}>{formatTime(position)}</Text>
                   <Slider
@@ -566,6 +636,19 @@ const startSmoothScroll = (
                 </View>
                 
                 <View style={styles.buttonsContainer}>
+                  <TouchableOpacity
+                    onPress={onPrevious}
+                    disabled={previousButtonDisabled}
+                    style={[
+                      styles.skipButton,
+                      previousButtonDisabled && styles.disabledControl
+                    ]}
+                    accessibilityLabel="Poprzednia bajka"
+                    accessibilityRole="button"
+                    accessibilityHint="Stuknij, aby odtworzyć poprzednią bajkę"
+                  >
+                    <Feather name="skip-back" size={22} color={previousIconColor} />
+                  </TouchableOpacity>
                   {/* Rewind Button */}
                   <TouchableOpacity 
                     onPress={() => onRewind(10)} 
@@ -607,6 +690,19 @@ const startSmoothScroll = (
                       <Text style={styles.buttonText}>10s</Text>
                       <Feather name="fast-forward" size={24} color={COLORS.text.secondary} />
                     </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={onNext}
+                    disabled={nextButtonDisabled}
+                    style={[
+                      styles.skipButton,
+                      nextButtonDisabled && styles.disabledControl
+                    ]}
+                    accessibilityLabel="Następna bajka"
+                    accessibilityRole="button"
+                    accessibilityHint="Stuknij, aby odtworzyć następną bajkę"
+                  >
+                    <Feather name="skip-forward" size={22} color={nextIconColor} />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -673,6 +769,35 @@ const startSmoothScroll = (
               
               {/* Player Controls in Expanded Mode */}
               <View style={styles.expandedPlayerControls}>
+                <View style={styles.queueMetaRow}>
+                  <View style={styles.queueInfo}>
+                    <Feather name="list" size={16} color={COLORS.text.secondary} />
+                    <Text style={styles.queueInfoText}>{queueSummary}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.loopButton,
+                      loopState.active && styles.loopButtonActive,
+                      !loopToggleAvailable && styles.loopButtonDisabled
+                    ]}
+                    onPress={onToggleLoop}
+                    disabled={!loopToggleAvailable}
+                    accessibilityLabel={`Tryb powtarzania: ${loopState.label}`}
+                    accessibilityRole="button"
+                    accessibilityHint="Stuknij, aby zmienić tryb powtarzania"
+                  >
+                    <Feather
+                      name="repeat"
+                      size={18}
+                      color={loopState.active ? COLORS.white : COLORS.text.secondary}
+                    />
+                    {loopState.badge ? (
+                      <View style={styles.loopBadgeContainer}>
+                        <Text style={styles.loopBadgeText}>{loopState.badge}</Text>
+                      </View>
+                    ) : null}
+                  </TouchableOpacity>
+                </View>
                 <View style={styles.sliderContainer}>
                   <Text style={styles.timeText}>{formatTime(position)}</Text>
                   <Slider
@@ -691,7 +816,20 @@ const startSmoothScroll = (
                 </View>
                 
                 <View style={styles.buttonsContainer}>
-                  <TouchableOpacity onPress={() => onRewind(10)}>
+                  <TouchableOpacity
+                    onPress={onPrevious}
+                    disabled={previousButtonDisabled}
+                    style={[
+                      styles.skipButton,
+                      previousButtonDisabled && styles.disabledControl
+                    ]}
+                    accessibilityLabel="Poprzednia bajka"
+                    accessibilityRole="button"
+                  >
+                    <Feather name="skip-back" size={24} color={previousIconColor} />
+                  </TouchableOpacity>
+
+                  <TouchableOpacity onPress={() => onRewind(10)} style={styles.sideButton}>
                     <View style={styles.buttonGroup}>
                       <Feather name="rewind" size={24} color={COLORS.text.secondary} />
                       <Text style={styles.buttonText}>10s</Text>
@@ -705,12 +843,24 @@ const startSmoothScroll = (
                       color={COLORS.white} 
                     />
                   </TouchableOpacity>
-                  
-                  <TouchableOpacity onPress={() => onForward(10)}>
+
+                  <TouchableOpacity onPress={() => onForward(10)} style={styles.sideButton}>
                     <View style={styles.buttonGroup}>
                       <Text style={styles.buttonText}>10s</Text>
                       <Feather name="fast-forward" size={24} color={COLORS.text.secondary} />
                     </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={onNext}
+                    disabled={nextButtonDisabled}
+                    style={[
+                      styles.skipButton,
+                      nextButtonDisabled && styles.disabledControl
+                    ]}
+                    accessibilityLabel="Następna bajka"
+                    accessibilityRole="button"
+                  >
+                    <Feather name="skip-forward" size={24} color={nextIconColor} />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -790,7 +940,7 @@ const styles = StyleSheet.create({
   },
   buttonsContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: 8,
   },
@@ -806,11 +956,22 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 3,
     elevation: 3,
+    marginHorizontal: 6,
   },
   sideButton: {
     padding: 12,
-    width: 80,
+    minWidth: 80,
     alignItems: 'center',
+    borderRadius: 12,
+    marginHorizontal: 6,
+  },
+  skipButton: {
+    padding: 10,
+    borderRadius: 12,
+    marginHorizontal: 6,
+  },
+  disabledControl: {
+    opacity: 0.35,
   },
   buttonGroup: {
     flexDirection: 'row',
@@ -821,6 +982,53 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.text.secondary,
     marginHorizontal: 4,
+  },
+  queueMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  queueInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  queueInfoText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 12,
+    color: COLORS.text.secondary,
+    marginLeft: 6,
+  },
+  loopButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(218, 143, 255, 0.4)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  loopButtonActive: {
+    backgroundColor: COLORS.lavender,
+    borderColor: COLORS.lavender,
+  },
+  loopButtonDisabled: {
+    opacity: 0.5,
+  },
+  loopBadgeContainer: {
+    position: 'absolute',
+    right: 4,
+    bottom: 4,
+    backgroundColor: COLORS.white,
+    borderRadius: 6,
+    paddingHorizontal: 3,
+    paddingVertical: 1,
+  },
+  loopBadgeText: {
+    fontFamily: 'Quicksand-Bold',
+    fontSize: 10,
+    color: COLORS.lavender,
   },
   sliderContainer: {
     flexDirection: 'row',

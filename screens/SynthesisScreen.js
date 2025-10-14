@@ -26,7 +26,7 @@ import { COLORS } from '../styles/colors';
 import AppMenu from '../components/AppMenu';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
-import { usePlaybackQueue, usePlaybackQueueDispatch } from '../context/PlaybackQueueProvider';
+import { usePlaybackQueue, usePlaybackQueueDispatch, LOOP_MODES } from '../context/PlaybackQueueProvider';
 
 const STORAGE_KEYS = {
   DOWNLOADED_AUDIO: 'voice_service_downloaded_audio'
@@ -52,6 +52,12 @@ const STATUS_PROGRESS_MAP = {
   processing: 30,
   downloading: 85,
   ready: 100
+};
+
+const LOOP_MODE_LABELS = {
+  [LOOP_MODES.NONE]: 'Bez powtarzania',
+  [LOOP_MODES.REPEAT_ALL]: 'Powtarzanie kolejki',
+  [LOOP_MODES.REPEAT_ONE]: 'Powtarzanie jednej bajki'
 };
 
 export default function SynthesisScreen({ navigation }) {
@@ -89,14 +95,17 @@ export default function SynthesisScreen({ navigation }) {
   const playbackQueueState = usePlaybackQueue();
   const {
     queue: playbackQueue,
-    activeIndex: activeQueueIndex
+    activeIndex: activeQueueIndex,
+    loopMode
   } = playbackQueueState;
   const {
     enqueue,
     enqueueNext,
     removeFromQueue: removeFromPlaybackQueue,
     setActiveItem: setActiveQueueItem,
-    clearQueue: clearPlaybackQueue
+    clearQueue: clearPlaybackQueue,
+    advance: advanceQueue,
+    setLoopMode: updateLoopMode
   } = usePlaybackQueueDispatch();
   
   // State
@@ -131,6 +140,8 @@ export default function SynthesisScreen({ navigation }) {
   const lastProgressSaveRef = useRef(0);
   const completedPlaybackRef = useRef(false);
   const pendingResumeRef = useRef(null);
+  const suppressQueueAutoRef = useRef(false);
+  const queueAdvanceRef = useRef(null);
 
   const resolveQueueStoryId = useCallback((item) => {
     if (item === null || item === undefined) {
@@ -161,6 +172,8 @@ export default function SynthesisScreen({ navigation }) {
     return map;
   }, [playbackQueue, resolveQueueStoryId]);
 
+  const queueLength = playbackQueue ? playbackQueue.length : 0;
+
   const storyHasPlayableAudio = useCallback((story) => {
     if (!story || typeof story !== 'object') {
       return false;
@@ -173,6 +186,20 @@ export default function SynthesisScreen({ navigation }) {
       story.localAudioUri
     );
   }, []);
+
+  const findStoryById = useCallback(
+    (storyId) => {
+      if (storyId === null || storyId === undefined) {
+        return null;
+      }
+
+      const normalized = String(storyId);
+      return (
+        stories.find((item) => String(item.id) === normalized) || null
+      );
+    },
+    [stories]
+  );
 
   const buildQueuePayload = useCallback(
     (story) => {
@@ -268,6 +295,63 @@ export default function SynthesisScreen({ navigation }) {
     ]
   );
 
+  useEffect(() => {
+    if (!playbackQueue || queueLength === 0) {
+      return;
+    }
+
+    if (
+      typeof activeQueueIndex !== 'number' ||
+      activeQueueIndex < 0 ||
+      activeQueueIndex >= playbackQueue.length
+    ) {
+      return;
+    }
+
+    if (suppressQueueAutoRef.current) {
+      suppressQueueAutoRef.current = false;
+      return;
+    }
+
+    const entry = playbackQueue[activeQueueIndex];
+    const storyId = resolveQueueStoryId(entry);
+    if (!storyId) {
+      return;
+    }
+
+    const resolvedStory =
+      findStoryById(storyId) ||
+      {
+        id: storyId,
+        title: entry?.title ?? `Bajka ${storyId}`,
+        author: entry?.author ?? 'Anonim',
+        hasAudio: entry?.hasAudio ?? true,
+        hasLocalAudio: entry?.hasLocalAudio ?? false,
+        localUri: entry?.localUri ?? null,
+        localAudioUri: entry?.localAudioUri ?? null,
+        cover_url: entry?.coverUrl ?? entry?.cover_url ?? null
+      };
+
+    const currentStoryId = selectedStory?.id != null ? String(selectedStory.id) : null;
+    if (currentStoryId === String(storyId) && activeAudioStoryIdRef.current === currentStoryId) {
+      return;
+    }
+
+    const maybePromise = handleStorySelectRef.current?.(resolvedStory, { skipQueueSync: true });
+    if (maybePromise && typeof maybePromise.then === 'function') {
+      maybePromise.catch((error) => {
+        console.warn('Queue playback failed to start', error);
+      });
+    }
+  }, [
+    activeQueueIndex,
+    playbackQueue,
+    queueLength,
+    resolveQueueStoryId,
+    findStoryById,
+    selectedStory
+  ]);
+
   const handleAutoFillQueue = useCallback(() => {
     if (!stories || !stories.length) {
       showToast('Brak bajek do dodania do kolejki.', 'INFO');
@@ -322,6 +406,79 @@ export default function SynthesisScreen({ navigation }) {
     clearPlaybackQueue();
     showToast('Wyczyszczono kolejkę.', 'SUCCESS');
   }, [playbackQueue, clearPlaybackQueue, showToast]);
+
+  const handleCycleLoopMode = useCallback(() => {
+    const order = [LOOP_MODES.NONE, LOOP_MODES.REPEAT_ALL, LOOP_MODES.REPEAT_ONE];
+    const currentIndex = order.indexOf(loopMode);
+    const nextMode = order[(currentIndex + 1) % order.length];
+    updateLoopMode(nextMode);
+    showToast(LOOP_MODE_LABELS[nextMode] || 'Zmieniono tryb powtarzania', 'INFO');
+  }, [loopMode, updateLoopMode, showToast]);
+
+  const handleSkipToNextFromControls = useCallback(() => {
+    if (queueLength === 0) {
+      return;
+    }
+
+    queueAdvanceRef.current = null;
+
+    if (queueLength === 1) {
+      seekTo(0).catch(() => {});
+      if (!isPlaying) {
+        togglePlayPause();
+      }
+      return;
+    }
+
+    let targetIndex = typeof activeQueueIndex === 'number' && activeQueueIndex >= 0
+      ? activeQueueIndex + 1
+      : 0;
+
+    if (targetIndex >= queueLength) {
+      if (loopMode === LOOP_MODES.REPEAT_ALL) {
+        targetIndex = 0;
+      } else {
+        return;
+      }
+    }
+
+    setActiveQueueItem({ index: targetIndex });
+  }, [queueLength, activeQueueIndex, loopMode, setActiveQueueItem, seekTo, isPlaying, togglePlayPause]);
+
+  const handleSkipToPreviousFromControls = useCallback(() => {
+    if (queueLength === 0) {
+      return;
+    }
+
+    queueAdvanceRef.current = null;
+
+    if (position > 5) {
+      seekTo(0).catch(() => {});
+      return;
+    }
+
+    if (queueLength === 1) {
+      seekTo(0).catch(() => {});
+      if (!isPlaying) {
+        togglePlayPause();
+      }
+      return;
+    }
+
+    let targetIndex = typeof activeQueueIndex === 'number' && activeQueueIndex >= 0
+      ? activeQueueIndex - 1
+      : queueLength - 1;
+
+    if (targetIndex < 0) {
+      if (loopMode === LOOP_MODES.REPEAT_ALL) {
+        targetIndex = queueLength - 1;
+      } else {
+        targetIndex = 0;
+      }
+    }
+
+    setActiveQueueItem({ index: targetIndex });
+  }, [queueLength, activeQueueIndex, loopMode, position, seekTo, isPlaying, togglePlayPause, setActiveQueueItem]);
 
   const MIN_PROGRESS_STEP_DURATION_MS = 5000;
   const progressStepQueueRef = useRef({});
@@ -849,9 +1006,13 @@ export default function SynthesisScreen({ navigation }) {
     );
   }, [stories, storyHasPlayableAudio]);
 
-  const queueLength = playbackQueue ? playbackQueue.length : 0;
   const autoFillDisabled = playableStoriesCount === 0;
   const clearQueueDisabled = queueLength === 0;
+  const currentQueuePosition = typeof activeQueueIndex === 'number' && activeQueueIndex >= 0
+    ? activeQueueIndex + 1
+    : null;
+  const canSkipNext = queueLength > 0 && (queueLength > 1 || loopMode !== LOOP_MODES.NONE);
+  const canSkipPrevious = queueLength > 0;
 
   const getStoryRequiredCredits = useCallback((story) => {
     if (!story || typeof story !== 'object') {
@@ -1130,7 +1291,14 @@ export default function SynthesisScreen({ navigation }) {
   );
 
   // Handle story selection
-  const handleStorySelect = async (story) => {
+  const handleStorySelect = async (story, { skipQueueSync = false } = {}) => {
+    if (!story || story.id === null || story.id === undefined) {
+      return;
+    }
+
+    const storyKey = String(story.id);
+    queueAdvanceRef.current = null;
+
     if (processingStories[story.id]) {
       if (selectedStory?.id !== story.id) {
         setSelectedStory(story);
@@ -1148,7 +1316,23 @@ export default function SynthesisScreen({ navigation }) {
       return;
     }
 
-    // Stop currently playing audio before switching stories
+    if (!skipQueueSync && storyHasPlayableAudio(story)) {
+      const existingIndex = queueIndexByStoryId.get(storyKey);
+      if (typeof existingIndex === 'number' && existingIndex >= 0) {
+        if (existingIndex !== activeQueueIndex) {
+          suppressQueueAutoRef.current = true;
+          setActiveQueueItem({ index: existingIndex });
+        }
+      } else {
+        const payload = buildQueuePayload(story);
+        if (payload) {
+          suppressQueueAutoRef.current = true;
+          enqueue(payload);
+          setActiveQueueItem({ storyId: storyKey });
+        }
+      }
+    }
+
     if (selectedStory?.id !== story.id) {
       if (
         voiceId &&
@@ -1194,14 +1378,6 @@ export default function SynthesisScreen({ navigation }) {
 
     // Set as selected story
     setSelectedStory(story);
-    const queueIndex = queueIndexByStoryId.get(String(story.id));
-    if (
-      typeof queueIndex === 'number' &&
-      queueIndex >= 0 &&
-      queueIndex !== activeQueueIndex
-    ) {
-      setActiveQueueItem({ index: queueIndex });
-    }
 
     // Check if already has locally saved audio
     if (hasLocalUri) {
@@ -1240,6 +1416,11 @@ export default function SynthesisScreen({ navigation }) {
       return;
     }
   };
+
+  const handleStorySelectRef = useRef(handleStorySelect);
+  useEffect(() => {
+    handleStorySelectRef.current = handleStorySelect;
+  }, [handleStorySelect]);
 
   const handleConfirmGeneration = async () => {
     const storyToGenerate = pendingGeneration?.story;
@@ -1530,9 +1711,27 @@ export default function SynthesisScreen({ navigation }) {
         voiceService.clearPlaybackProgress(voiceId, storyId).catch(() => {});
         completedPlaybackRef.current = true;
       }
+
+      const normalizedStoryId = String(storyId);
+      if (
+        !isPlaying &&
+        queueLength > 0 &&
+        queueIndexByStoryId.has(normalizedStoryId) &&
+        queueAdvanceRef.current !== normalizedStoryId
+      ) {
+        queueAdvanceRef.current = normalizedStoryId;
+
+        if (loopMode === LOOP_MODES.REPEAT_ONE) {
+          togglePlayPause();
+        } else {
+          advanceQueue();
+        }
+      }
+
       return;
     }
 
+    queueAdvanceRef.current = null;
     completedPlaybackRef.current = false;
 
     if (position <= 0) {
@@ -1554,7 +1753,19 @@ export default function SynthesisScreen({ navigation }) {
       sourceUri: currentAudioUriRef.current,
       updatedAt: now
     }).catch(() => {});
-  }, [position, duration, isPlaying, selectedStory, voiceId, isAudioLoading]);
+  }, [
+    position,
+    duration,
+    isPlaying,
+    selectedStory,
+    voiceId,
+    isAudioLoading,
+    queueLength,
+    queueIndexByStoryId,
+    loopMode,
+    advanceQueue,
+    togglePlayPause
+  ]);
 
   useEffect(() => {
     const resume = pendingResumeRef.current;
@@ -1994,6 +2205,14 @@ export default function SynthesisScreen({ navigation }) {
         formatTime={formatTime}
         audioTitle={selectedStory?.title}
         story={selectedStory}
+        onNext={handleSkipToNextFromControls}
+        onPrevious={handleSkipToPreviousFromControls}
+        canSkipNext={canSkipNext}
+        canSkipPrevious={canSkipPrevious}
+        loopMode={loopMode}
+        onToggleLoop={handleCycleLoopMode}
+        queuePosition={currentQueuePosition}
+        queueLength={queueLength}
       />
       
       {/* Generation Confirmation */}

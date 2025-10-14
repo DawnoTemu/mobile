@@ -17,3 +17,10 @@ Update the audio player to display queue position, next/previous buttons, and lo
 - Playback completion advances or repeats according to loop settings without user interaction.
 - Manual tests confirm next/prev buttons work and gracefully handle single-item queues.
 - Lint/test suites pass.
+
+## Manual QA Checklist (draft)
+- Verify queue position label updates when advancing through the queue in both minimized and expanded players.
+- Tap **Następna bajka** / **Poprzednia bajka** to ensure the correct stories play, including wrap-around in repeat-all mode.
+- Toggle loop mode through all states and confirm toast messaging plus icon/badge feedback.
+- Let a story finish naturally in each loop mode (none, repeat-all, repeat-one) to confirm auto-advance or restart behaviour.
+- Confirm skip buttons disable when the queue is empty and re-enable once items are enqueued.
