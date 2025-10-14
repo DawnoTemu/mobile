@@ -15,6 +15,7 @@ import ConfirmEmailScreen from '../screens/ConfirmEmailScreen';
 import SplashScreen from '../screens/SplashScreen';
 import CloneScreen from '../screens/CloneScreen';
 import SynthesisScreen from '../screens/SynthesisScreen';
+import QueueScreen from '../screens/QueueScreen';
 
 // Services
 import authService from '../services/authService';
@@ -68,6 +69,11 @@ export default function AppNavigator() {
       <Stack.Screen 
         name="Clone" 
         component={CloneScreen} 
+        options={{ cardStyleInterpolator: slideAnimation }}
+      />
+      <Stack.Screen
+        name="Queue"
+        component={QueueScreen}
         options={{ cardStyleInterpolator: slideAnimation }}
       />
     </Stack.Navigator>

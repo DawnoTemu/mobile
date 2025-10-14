@@ -7,7 +7,6 @@ import {
   Animated,
   Easing,
   Dimensions,
-  Platform,
   Image,
   ScrollView,
   PanResponder,
@@ -18,7 +17,7 @@ import { Feather } from '@expo/vector-icons';
 import { COLORS } from '../styles/colors';
 import { LOOP_MODES } from '../context/PlaybackQueueProvider';
 
-const { width, height } = Dimensions.get('window');
+const { height } = Dimensions.get('window');
 
 export default function AudioControls({
   isVisible,
@@ -192,7 +191,7 @@ export default function AudioControls({
       setExpanded(false);
       expandAnim.setValue(0);
     }
-  }, [isVisible, slideAnim, fadeAnim]);
+  }, [isVisible, slideAnim, fadeAnim, expandAnim]);
   
   // Animation for expanding/collapsing (JS driven - NOT using native driver)
   useEffect(() => {

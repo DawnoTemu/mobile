@@ -17,11 +17,10 @@ import { useToast } from '../components/StatusToast';
 import authService from '../services/authService';
 import { COLORS } from '../styles/colors';
 import ConfirmModal from '../components/Modals/ConfirmModal';
-import { router } from 'expo-router'; 
 import { useCredits, useCreditActions } from '../hooks/useCredits';
 import * as Linking from 'expo-linking';
 
-const { width, height } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 
 export default function AppMenu({ navigation, isVisible, onClose }) {
   const { showToast } = useToast();
@@ -30,7 +29,6 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
   const refreshCreditsAction = creditActions?.refreshCredits;
   const {
     balance = 0,
-    unitLabel = 'Punkty Magii',
     loading: creditsLoading = false,
     initializing: creditsInitializing = false,
     error: creditsError = null,
@@ -118,7 +116,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
         ]).start();
       }, 10);
     }
-  }, [isVisible, slideAnim, fadeAnim, width]);
+  }, [isVisible, slideAnim, fadeAnim]);
   
   // Handle logout
   const handleLogout = async () => {
@@ -252,6 +250,17 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
                 >
                   <Feather name="mic" size={20} color={COLORS.text.secondary} />
                   <Text style={styles.menuItemText}>Moje głosy</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => {
+                    handleClose();
+                    navigation.navigate('Queue');
+                  }}
+                >
+                  <Feather name="list" size={20} color={COLORS.text.secondary} />
+                  <Text style={styles.menuItemText}>Kolejka odtwarzania</Text>
                 </TouchableOpacity>
                 
                 <TouchableOpacity 
