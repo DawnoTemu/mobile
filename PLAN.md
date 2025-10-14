@@ -1,40 +1,61 @@
 # Task & Context
-Polish the synthesis progress modal so it matches the proposed modern layout, tighter spacing, clearer hierarchy, and refreshed microcopy.
+Design and implement a local playback queue for generated stories, including swipe-to-queue gestures, new queue management UI, autoplay sequencing, and loop controls similar to Spotify.
 
 ## Current State (codebase scan)
-- `components/Modals/ProgressModal.js` renders the synthesis modal with icon, title, copy, spinner, tip box, and cancel button.
-- `styles/colors.js` exposes shared color tokens (`COLORS.peach`, `COLORS.text.*`, `COLORS.lavender`) but lacks the darker gray and lilac tints recommended in the proposal.
-- Modal strings live in `STATUS_TITLES`, `STATUS_DESCRIPTIONS`, and `TIP_LIBRARY` inside `ProgressModal.js`, still using older “TIP:” prefixed copy.
-- Layout uses wide padding, rounded corners (16px), and a lavender block tip (`backgroundColor: ${COLORS.lavender}20`) that currently pulls visual focus.
+- `screens/SynthesisScreen.js` manages story selection/generation, audio loading (`loadStoryAudio`), and playback persistence; no concept of a playback queue yet.
+- `components/AudioControls.js` renders the player UI with play/pause and seek controls but no next/previous buttons or loop toggles.
+- `components/StoryItem.js` lists stories within the synthesis screen; currently only reacts to tap selection.
+- `components/AppMenu.js` opens the side menu without queue navigation options.
+- `hooks/useAudioPlayer.js` wraps Expo Audio playback but exposes no queue integration hooks; playback completion is handled in `SynthesisScreen`.
+- `styles/colors.js`, `services/voiceService.js`, and configuration files have no queue-related helpers or storage keys.
 
 ## Proposed Changes (files & functions)
-- Update `ProgressModal.js` layout (container width/maxWidth, padding, spacing) and typography (font weights/sizes/colors) to align with the new hierarchy.
-- Refresh `STATUS_DESCRIPTIONS` (especially `processing`) and `TIP_LIBRARY` copy to remove hard-coded “TIP:” prefixes and incorporate the optional magical microcopy.
-- Restyle spinner and cancel button: center alignment, brand-accent color, outlined button look with hover/press feedback.
-- Extend `styles/colors.js` with reusable tokens for the darker text (`#333333`), medium gray (`#555555`/`#666666`), and soft lilac background (`#F8F4FF`) + accent border (`#C29BFF`).
-- Ensure accessibility labels remain accurate and the modal remains responsive (80% width with max 360px).
+- Add a queue state manager (new `context/PlaybackQueueProvider.js` plus hook) using AsyncStorage for persistence (`STORAGE_KEYS.PLAYBACK_QUEUE`).
+- Extend `SynthesisScreen` to interact with the queue: enqueue stories, auto-fill with generated items, consume queue order when loading audio, and respect loop modes.
+- Update `StoryItem` to support swipe gestures (via `react-native-gesture-handler` `Swipeable`) for “play next”/“add to queue” actions.
+- Update `AudioControls` to show next/previous buttons, queue indicators, and loop toggle; wire callbacks supplied by queue context.
+- Add a dedicated `QueueScreen` listing queued stories, drag-to-reorder (if feasible) or reorder/remove controls, auto-fill button, and loop mode selector; link from `AppMenu`.
+- Introduce loop/lock settings (off, repeat-one, repeat-queue) stored locally and reflected in playback behaviour.
 
 ## Step-by-Step Plan
-1. Introduce additional neutral and lilac tokens in `styles/colors.js`, keeping naming consistent (`text.deep`, `text.muted`, `lavenderSoft`, etc.).
-2. Refactor `ProgressModal` structure: adjust container styles (width, maxWidth, borderRadius 20, shadow), reorganize header to stack the icon and title with improved spacing, and ensure body text centers cleanly.
-3. Update copy constants: tweak `STATUS_DESCRIPTIONS.processing`, optionally consolidate the “TIP” messaging into the main body copy when applicable, and strip “TIP:” from `TIP_LIBRARY` entries or replace with intentionally crafted strings.
-4. Redesign tip section component: use new colors, add the `💡` prefix in the UI (not in copy), tighten padding, and ensure the spinner sits between body text and tip with balanced spacing.
-5. Move the cancel button styling to an outlined pattern (border, color, press state) and confirm focus/press accessibility while keeping it optional when synthesis is complete.
-6. Manually verify layout via Expo (or at least snapshot logic) and run `npm run lint` to catch style regressions.
+1. **Queue Infrastructure**
+   - Define storage key in `services/config.js`.
+   - Implement `context/PlaybackQueueProvider` maintaining queue array, active index, loop mode, and helpers (enqueue, enqueueNext, dequeue, clear, advance, retreat, autoFill, setLoopMode).
+   - Expose hook for screens/components; ensure persistence with AsyncStorage and hydration.
+2. **Navigation & Menu**
+   - Create `screens/QueueScreen.js` to display queue list with controls (remove, clear, auto-fill, loop toggles).
+   - Register screen in `navigation/AppNavigator.js` and add entry in `components/AppMenu.js` to navigate there.
+3. **Story Interaction Updates**
+   - Enhance `components/StoryItem` with swipe gestures (left/right) to trigger queue actions (e.g., “Play next”, “Add to queue”), considering visual affordances.
+   - Update `SynthesisScreen` list rendering to pass queue callbacks and show subtle indicators when a story is queued or currently playing.
+   - Add buttons (e.g., overflow menu or header) to enqueue currently selected story or auto-fill from generated stories directly.
+4. **Playback Integration**
+   - Modify `SynthesisScreen` playback logic to consume queue state: when playback ends, advance according to queue and loop settings; handle manual next/previous actions from audio controls.
+   - Update `AudioControls` props/API to include next/prev callbacks, queue position display, and loop toggle; style icons accordingly.
+   - Ensure queue respects stories requiring generation (skip or handle gracefully).
+5. **Auto-Fill & Lock Behaviour**
+   - Implement auto-fill to populate queue with all `hasAudio` stories (optionally shuffle? clarify) and allow locking (loop-one, loop-all, no loop).
+   - Persist loop mode and currently locked story if applicable.
+6. **Polish & Testing**
+   - Verify queue persistence across app restarts, swipe gestures on both platforms, and playback continuity.
+   - Run `npm run lint`; perform manual tests for enqueueing, advancing, loop modes, and queue screen interactions.
 
 ## Risks & Assumptions
-- Modal fonts (Quicksand variants) may not include a 600 weight; might need to map to existing `Bold/SemiBold` without breaking design intent.
-- Adding new color tokens could ripple into other components if naming clashes; ensure new keys are additive.
-- Without running the app, exact spacing/line height might need tweaking after visual QA.
-- Spinner customization is limited to color without extra animation unless we introduce new assets.
+- Swipe gestures may conflict with list scrolling; need careful threshold tuning.
+- Queue auto-fill must avoid stories without audio; ensure generation state doesn’t block playback.
+- Managing state between Synthesis screen and queue screen requires shared context; race conditions during hydration must be handled.
+- Reordering queue might require additional library support; if complex, consider alternative (move up/down buttons).
 
 ## Validation & Done Criteria
-- Modal renders with centered icon/title, balanced spacing, and max width ≈360px on devices.
-- Body copy and optional microcopy read clearly (no “TIP:” duplication) with improved contrast.
-- Tip block uses soft lilac background with left accent bar and `💡` prefix, drawing less attention than the title.
-- Spinner/cancel button align centered, feel cohesive with the rest of the modal.
-- `npm run lint` passes without new warnings; any manual UI check confirms visual polish.
+- Users can swipe a story to add it next/upcoming without disrupting current playback.
+- The queue screen lists queued stories, supports removal/clear, auto-fill, and loop mode selection.
+- Audio player displays next/previous buttons and loop status; tapping advances/rewinds through the queue correctly.
+- When a story finishes, the next queued story plays automatically respecting loop settings; loop-one and loop-queue behave as expected.
+- Queue state persists locally (closing/reopening app retains queue and loop mode).
+- `npm run lint` passes (ignoring pre-existing warnings); manual playback tests demonstrate reliable sequencing.
 
 ## Open Questions
-- Should we switch entirely to the combined magical microcopy (removing the tip library) or keep both body text + rotating tips?
-keep both body text + rotating tip
+- Should auto-fill append to existing queue or replace it entirely?
+Append
+- Do we need drag-and-drop reordering, or are simple “move up/down” controls sufficient?
+we need drag-and-drop reorderinm and remove from queue button

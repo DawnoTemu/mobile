@@ -1,7 +1,7 @@
 // Colors based on the web app's CSS variables
 export const COLORS = {
   // Main theme colors
-  peach: '#rgb(251, 190, 159)',
+  peach: 'rgb(251, 190, 159)',
   lavender: 'rgb(218, 143, 255)',
   mint: 'rgb(99, 230, 226)',
   softYellow: 'rgb(250, 232, 176)',

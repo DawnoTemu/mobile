@@ -62,6 +62,7 @@ export default function StoryItem({
   const formattedCredits = hasNumericCredits
     ? `${requiredCredits} ${normalizedUnitLabel}`
     : null;
+  const isInsufficient = !isReady && hasNumericCredits && !isAffordable;
   const badgeLabel = isReady
     ? 'Gotowa bajka'
     : hasNumericCredits
@@ -74,7 +75,6 @@ export default function StoryItem({
     : hasNumericCredits
       ? 'star'
       : 'help-circle';
-  const isInsufficient = !isReady && hasNumericCredits && !isAffordable;
   const renderStatusIcon = () => {
     if (isGenerating) {
       return <ActivityIndicator size="small" color={COLORS.peach} />;

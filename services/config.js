@@ -43,6 +43,8 @@ export const STORAGE_KEYS = {
   LAST_STORIES_FETCH: 'voice_service_last_stories_fetch',
   GENERATION_STATE: 'voice_service_generation_state',
   PLAYBACK_PROGRESS: 'voice_service_playback_progress',
+  PLAYBACK_QUEUE: 'playback_queue_state',
+  PLAYBACK_LOOP_MODE: 'playback_loop_mode',
 
   // Credits
   CREDITS_CACHE: 'credit_service_cache',
