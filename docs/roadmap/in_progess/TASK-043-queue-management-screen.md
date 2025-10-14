@@ -18,3 +18,11 @@ Create a dedicated queue management screen accessible from the main menu, lettin
 - Users can remove, reorder (or at least move up/down), clear, and auto-fill the queue with visual/app feedback.
 - Loop mode adjustments from the queue screen update the shared queue context immediately.
 - Lint/test suites pass; manual QA confirms actions persist across app restarts.
+
+## Manual QA Checklist (draft)
+- Open the queue from the main menu and verify the list mirrors the queue order displayed on the synthesis screen.
+- Move items up and down, then return to playback to confirm the order takes effect and persists after reload.
+- Remove individual stories and use “Wyczyść”, ensuring confirmation modal appears and the queue clears.
+- Trigger auto-fill to append playable stories that are not already in the queue; confirm duplicates are skipped.
+- Shuffle the queue and observe the new order reflecting immediately in playback controls.
+- Cycle loop modes and check that loop state in the audio controls updates accordingly.
