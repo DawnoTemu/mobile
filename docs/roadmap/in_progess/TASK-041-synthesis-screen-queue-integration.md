@@ -17,3 +17,10 @@ Wire the playback queue into `SynthesisScreen` and the story list so users can e
 - Auto-fill button populates the queue with all playable stories and provides success/empty feedback.
 - Story list displays which item is playing/queued without disrupting existing synthesis behaviour.
 - Lint/test suites pass; manual QA confirms gestures work on both platforms.
+
+## Manual QA Checklist (draft)
+- Swipe a gotowa (ready) story left and tap **Dodaj do kolejki**; verify toast confirmation and badge `W kolejce • #N` appears.
+- Swipe a story that is already queued, select **Odtwórz jako następna**, and confirm it moves to position 2 with toast feedback.
+- Tap **Uzupełnij kolejkę**; ensure all playable stories not already queued are appended and the queue counter updates.
+- Tap **Wyczyść kolejkę**; confirm queue badges disappear and the summary shows zero with an info toast when trying again.
+- Attempt to queue a story without audio and confirm the info toast instructs to generate it first.

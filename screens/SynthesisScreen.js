@@ -26,6 +26,7 @@ import { COLORS } from '../styles/colors';
 import AppMenu from '../components/AppMenu';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
+import { usePlaybackQueue, usePlaybackQueueDispatch } from '../context/PlaybackQueueProvider';
 
 const STORAGE_KEYS = {
   DOWNLOADED_AUDIO: 'voice_service_downloaded_audio'
@@ -85,6 +86,19 @@ export default function SynthesisScreen({ navigation }) {
     unloadAudio,
   } = useAudioPlayer();
   
+  const playbackQueueState = usePlaybackQueue();
+  const {
+    queue: playbackQueue,
+    activeIndex: activeQueueIndex
+  } = playbackQueueState;
+  const {
+    enqueue,
+    enqueueNext,
+    removeFromQueue: removeFromPlaybackQueue,
+    setActiveItem: setActiveQueueItem,
+    clearQueue: clearPlaybackQueue
+  } = usePlaybackQueueDispatch();
+  
   // State
   const [stories, setStories] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -117,6 +131,197 @@ export default function SynthesisScreen({ navigation }) {
   const lastProgressSaveRef = useRef(0);
   const completedPlaybackRef = useRef(false);
   const pendingResumeRef = useRef(null);
+
+  const resolveQueueStoryId = useCallback((item) => {
+    if (item === null || item === undefined) {
+      return null;
+    }
+    if (typeof item === 'string' || typeof item === 'number') {
+      return String(item);
+    }
+    if (typeof item === 'object') {
+      if (item.storyId !== null && item.storyId !== undefined) {
+        return String(item.storyId);
+      }
+      if (item.id !== null && item.id !== undefined) {
+        return String(item.id);
+      }
+    }
+    return null;
+  }, []);
+
+  const queueIndexByStoryId = useMemo(() => {
+    const map = new Map();
+    (playbackQueue || []).forEach((entry, index) => {
+      const storyId = resolveQueueStoryId(entry);
+      if (storyId !== null) {
+        map.set(storyId, index);
+      }
+    });
+    return map;
+  }, [playbackQueue, resolveQueueStoryId]);
+
+  const storyHasPlayableAudio = useCallback((story) => {
+    if (!story || typeof story !== 'object') {
+      return false;
+    }
+
+    return Boolean(
+      story.hasAudio ||
+      story.hasLocalAudio ||
+      story.localUri ||
+      story.localAudioUri
+    );
+  }, []);
+
+  const buildQueuePayload = useCallback(
+    (story) => {
+      if (!story || typeof story !== 'object') {
+        return null;
+      }
+
+      return {
+        id: story.id,
+        storyId: story.id,
+        title: story.title ?? null,
+        author: story.author ?? null,
+        coverUrl: story.cover_url ?? story.coverUrl ?? null,
+        cover_url: story.cover_url ?? story.coverUrl ?? null,
+        duration: story.duration ?? null,
+        hasAudio: Boolean(story.hasAudio),
+        hasLocalAudio: Boolean(story.hasLocalAudio),
+        localUri: story.localUri ?? null,
+        localAudioUri: story.localAudioUri ?? null,
+        voiceId: voiceId ?? null
+      };
+    },
+    [voiceId]
+  );
+
+  const handleAddStoryToQueue = useCallback(
+    (story) => {
+      if (!story) {
+        return;
+      }
+
+      if (!storyHasPlayableAudio(story)) {
+        showToast('Ta bajka nie ma jeszcze nagrania. Wygeneruj ją przed dodaniem do kolejki.', 'INFO');
+        return;
+      }
+
+      const payload = buildQueuePayload(story);
+      if (!payload) {
+        return;
+      }
+
+      const storyKey = String(story.id);
+      const existingIndex = queueIndexByStoryId.get(storyKey);
+      if (typeof existingIndex === 'number' && existingIndex >= 0) {
+        removeFromPlaybackQueue({ index: existingIndex });
+      }
+
+      enqueue(payload);
+      showToast('Dodano bajkę do kolejki.', 'SUCCESS');
+    },
+    [
+      storyHasPlayableAudio,
+      buildQueuePayload,
+      queueIndexByStoryId,
+      removeFromPlaybackQueue,
+      enqueue,
+      showToast
+    ]
+  );
+
+  const handlePlayNextStory = useCallback(
+    (story) => {
+      if (!story) {
+        return;
+      }
+
+      if (!storyHasPlayableAudio(story)) {
+        showToast('Ta bajka nie ma jeszcze nagrania. Wygeneruj ją przed dodaniem do kolejki.', 'INFO');
+        return;
+      }
+
+      const payload = buildQueuePayload(story);
+      if (!payload) {
+        return;
+      }
+
+      const storyKey = String(story.id);
+      const existingIndex = queueIndexByStoryId.get(storyKey);
+      if (typeof existingIndex === 'number' && existingIndex >= 0) {
+        removeFromPlaybackQueue({ index: existingIndex });
+      }
+
+      enqueueNext(payload);
+      showToast('Ta bajka będzie odtworzona jako następna.', 'SUCCESS');
+    },
+    [
+      storyHasPlayableAudio,
+      buildQueuePayload,
+      queueIndexByStoryId,
+      removeFromPlaybackQueue,
+      enqueueNext,
+      showToast
+    ]
+  );
+
+  const handleAutoFillQueue = useCallback(() => {
+    if (!stories || !stories.length) {
+      showToast('Brak bajek do dodania do kolejki.', 'INFO');
+      return;
+    }
+
+    const candidates = stories.filter((story) => storyHasPlayableAudio(story));
+    if (!candidates.length) {
+      showToast('Brak bajek z gotowym nagraniem do dodania.', 'INFO');
+      return;
+    }
+
+    const itemsToAdd = [];
+    candidates.forEach((story) => {
+      const storyKey = String(story.id);
+      const existingIndex = queueIndexByStoryId.get(storyKey);
+      if (typeof existingIndex === 'number' && existingIndex >= 0) {
+        return;
+      }
+
+      const payload = buildQueuePayload(story);
+      if (payload) {
+        itemsToAdd.push(payload);
+      }
+    });
+
+    if (!itemsToAdd.length) {
+      showToast('Wszystkie gotowe bajki są już w kolejce.', 'INFO');
+      return;
+    }
+
+    enqueue(itemsToAdd);
+    const addedCount = itemsToAdd.length;
+    const label =
+      addedCount === 1 ? 'bajkę' : addedCount >= 5 ? 'bajek' : 'bajki';
+    showToast(`Dodano ${addedCount} ${label} do kolejki.`, 'SUCCESS');
+  }, [
+    stories,
+    storyHasPlayableAudio,
+    queueIndexByStoryId,
+    buildQueuePayload,
+    enqueue,
+    showToast
+  ]);
+
+  const handleClearQueue = useCallback(() => {
+    if (!playbackQueue || playbackQueue.length === 0) {
+      showToast('Kolejka jest już pusta.', 'INFO');
+      return;
+    }
+
+    clearPlaybackQueue();
+    showToast('Wyczyszczono kolejkę.', 'SUCCESS');
+  }, [playbackQueue, clearPlaybackQueue, showToast]);
 
   const MIN_PROGRESS_STEP_DURATION_MS = 5000;
   const progressStepQueueRef = useRef({});
@@ -634,6 +839,20 @@ export default function SynthesisScreen({ navigation }) {
     return items;
   }, [stories, isOnline, isStoryPurchased]);
 
+  const playableStoriesCount = useMemo(() => {
+    if (!stories || !stories.length) {
+      return 0;
+    }
+    return stories.reduce(
+      (count, story) => (storyHasPlayableAudio(story) ? count + 1 : count),
+      0
+    );
+  }, [stories, storyHasPlayableAudio]);
+
+  const queueLength = playbackQueue ? playbackQueue.length : 0;
+  const autoFillDisabled = playableStoriesCount === 0;
+  const clearQueueDisabled = queueLength === 0;
+
   const getStoryRequiredCredits = useCallback((story) => {
     if (!story || typeof story !== 'object') {
       return null;
@@ -975,6 +1194,14 @@ export default function SynthesisScreen({ navigation }) {
 
     // Set as selected story
     setSelectedStory(story);
+    const queueIndex = queueIndexByStoryId.get(String(story.id));
+    if (
+      typeof queueIndex === 'number' &&
+      queueIndex >= 0 &&
+      queueIndex !== activeQueueIndex
+    ) {
+      setActiveQueueItem({ index: queueIndex });
+    }
 
     // Check if already has locally saved audio
     if (hasLocalUri) {
@@ -1585,6 +1812,11 @@ export default function SynthesisScreen({ navigation }) {
     const story = item.story;
     const requiredCredits = getStoryRequiredCredits(story);
     const isReady = isStoryPurchased(story);
+    const storyKey = String(story.id);
+    const queueIndex = queueIndexByStoryId.get(storyKey);
+    const hasQueueEntry = typeof queueIndex === 'number' && queueIndex >= 0;
+    const queuePosition = hasQueueEntry ? queueIndex + 1 : null;
+    const isActiveQueueItem = hasQueueEntry && queueIndex === activeQueueIndex;
     const affordable =
       typeof requiredCredits === 'number' ? balance >= requiredCredits : true;
     return (
@@ -1601,6 +1833,10 @@ export default function SynthesisScreen({ navigation }) {
         creditUnitLabel={unitLabel}
         isReady={isReady}
         onPress={() => handleStorySelect(story)}
+        onAddToQueue={() => handleAddStoryToQueue(story)}
+        onPlayNext={() => handlePlayNextStory(story)}
+        queuePosition={queuePosition}
+        isActiveQueueItem={isActiveQueueItem}
       />
     );
   };
@@ -1648,43 +1884,99 @@ export default function SynthesisScreen({ navigation }) {
             <Text style={styles.loadingText}>Ładowanie...</Text>
           </View>
         ) : (
-          <FlatList
-            data={displayStories}
-            renderItem={renderStoryItem}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={[
-              styles.storiesList,
-              { paddingBottom: audioControlsVisible ? 140 : 16 },
-            ]}
-            showsVerticalScrollIndicator={false}
-            refreshControl={(
-              <RefreshControl
-                refreshing={isRefreshing}
-                onRefresh={handleRefresh}
-                tintColor={COLORS.peach}
-                colors={[COLORS.peach]}
-              />
-            )}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>
-                  {!isOnline 
-                    ? 'Brak dostępnych bajek offline. Połącz się z internetem, aby pobrać bajki.'
-                    : 'Nie znaleziono bajek. Spróbuj odświeżyć.'}
-                </Text>
+          <>
+            <View style={styles.queueControlsContainer}>
+              <View style={styles.queueSummary}>
+                <Feather name="list" size={16} color={COLORS.text.secondary} />
+                <Text style={styles.queueSummaryText}>W kolejce: {queueLength}</Text>
+              </View>
+              <View style={styles.queueActions}>
                 <TouchableOpacity
                   style={[
-                    styles.refreshButton,
-                    (!isOnline || isRefreshing) && styles.disabledButton
+                    styles.queueButton,
+                    styles.queueButtonFirst,
+                    styles.queueButtonPrimary,
+                    autoFillDisabled && styles.queueButtonDisabled
                   ]}
-                  onPress={handleRefresh}
-                  disabled={!isOnline || isRefreshing}
+                  onPress={handleAutoFillQueue}
+                  disabled={autoFillDisabled}
+                  activeOpacity={0.85}
                 >
-                  <Text style={styles.refreshButtonText}>Odśwież</Text>
+                  <Feather name="plus-circle" size={16} color={COLORS.white} />
+                  <Text
+                    style={[
+                      styles.queueButtonText,
+                      styles.queueButtonTextPrimary
+                    ]}
+                  >
+                    Uzupełnij kolejkę
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.queueButton,
+                    styles.queueButtonSecondary,
+                    clearQueueDisabled && styles.queueButtonDisabled
+                  ]}
+                  onPress={handleClearQueue}
+                  disabled={clearQueueDisabled}
+                  activeOpacity={0.85}
+                >
+                  <Feather
+                    name="trash-2"
+                    size={16}
+                    color={clearQueueDisabled ? COLORS.text.tertiary : COLORS.lavender}
+                  />
+                  <Text
+                    style={[
+                      styles.queueButtonText,
+                      styles.queueButtonTextSecondary,
+                      clearQueueDisabled && styles.queueButtonTextDisabled
+                    ]}
+                  >
+                    Wyczyść kolejkę
+                  </Text>
                 </TouchableOpacity>
               </View>
-            }
-          />
+            </View>
+            <FlatList
+              data={displayStories}
+              renderItem={renderStoryItem}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={[
+                styles.storiesList,
+                { paddingBottom: audioControlsVisible ? 140 : 16 },
+              ]}
+              showsVerticalScrollIndicator={false}
+              refreshControl={(
+                <RefreshControl
+                  refreshing={isRefreshing}
+                  onRefresh={handleRefresh}
+                  tintColor={COLORS.peach}
+                  colors={[COLORS.peach]}
+                />
+              )}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>
+                    {!isOnline 
+                      ? 'Brak dostępnych bajek offline. Połącz się z internetem, aby pobrać bajki.'
+                      : 'Nie znaleziono bajek. Spróbuj odświeżyć.'}
+                  </Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.refreshButton,
+                      (!isOnline || isRefreshing) && styles.disabledButton
+                    ]}
+                    onPress={handleRefresh}
+                    disabled={!isOnline || isRefreshing}
+                  >
+                    <Text style={styles.refreshButtonText}>Odśwież</Text>
+                  </TouchableOpacity>
+                </View>
+              }
+            />
+          </>
         )}
       </View>
       
@@ -1799,6 +2091,65 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingTop: 8,
+  },
+  queueControlsContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  queueSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  queueSummaryText: {
+    marginLeft: 6,
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 13,
+    color: COLORS.text.secondary,
+  },
+  queueActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  queueButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginLeft: 10,
+  },
+  queueButtonFirst: {
+    marginLeft: 0,
+  },
+  queueButtonPrimary: {
+    backgroundColor: COLORS.peach,
+    borderColor: COLORS.peach,
+  },
+  queueButtonSecondary: {
+    backgroundColor: 'rgba(218, 143, 255, 0.12)',
+    borderColor: 'rgba(218, 143, 255, 0.35)',
+  },
+  queueButtonDisabled: {
+    opacity: 0.6,
+  },
+  queueButtonText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 13,
+    marginLeft: 8,
+  },
+  queueButtonTextPrimary: {
+    color: COLORS.white,
+  },
+  queueButtonTextSecondary: {
+    color: COLORS.lavender,
+  },
+  queueButtonTextDisabled: {
+    color: COLORS.text.tertiary,
   },
   loadingContainer: {
     flex: 1,

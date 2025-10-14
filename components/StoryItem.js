@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { Swipeable } from 'react-native-gesture-handler';
 import { COLORS } from '../styles/colors';
 
 const deriveUnitLabel = (label) => {
@@ -53,7 +54,13 @@ export default function StoryItem({
   creditUnitLabel = 'Punkty Magii',
   isReady = false,
   onPress,
+  onAddToQueue,
+  onPlayNext,
+  queuePosition = null,
+  isActiveQueueItem = false,
+  disabled = false
 }) {
+  const swipeableRef = useRef(null);
   const normalizedUnitLabel = deriveUnitLabel(creditUnitLabel);
   const hasNumericCredits =
     !isReady &&
@@ -75,6 +82,38 @@ export default function StoryItem({
     : hasNumericCredits
       ? 'star'
       : 'help-circle';
+  const isQueued = queuePosition !== null && queuePosition !== undefined;
+
+  const queueBadgeLabel = useMemo(() => {
+    if (isActiveQueueItem) {
+      return 'Teraz odtwarzana';
+    }
+    if (isQueued) {
+      const safePosition =
+        typeof queuePosition === 'number' && Number.isFinite(queuePosition)
+          ? queuePosition
+          : null;
+      return safePosition ? `W kolejce • #${safePosition}` : 'W kolejce';
+    }
+    return null;
+  }, [isActiveQueueItem, isQueued, queuePosition]);
+
+  const closeSwipeable = () => {
+    if (swipeableRef.current && typeof swipeableRef.current.close === 'function') {
+      swipeableRef.current.close();
+    }
+  };
+
+  const handleAddToQueue = () => {
+    closeSwipeable();
+    onAddToQueue?.();
+  };
+
+  const handlePlayNext = () => {
+    closeSwipeable();
+    onPlayNext?.();
+  };
+
   const renderStatusIcon = () => {
     if (isGenerating) {
       return <ActivityIndicator size="small" color={COLORS.peach} />;
@@ -95,16 +134,80 @@ export default function StoryItem({
     return <Feather name="play-circle" size={20} color={COLORS.text.tertiary} />;
   };
 
-  return (
+  const renderQueueBadge = () => {
+    if (!queueBadgeLabel) {
+      return null;
+    }
+
+    return (
+      <View
+        style={[
+          styles.queueBadge,
+          isActiveQueueItem ? styles.queueBadgeActive : styles.queueBadgeQueued
+        ]}
+      >
+        <Feather
+          name={isActiveQueueItem ? 'volume-2' : 'list'}
+          size={12}
+          color={isActiveQueueItem ? COLORS.white : COLORS.lavender}
+        />
+        <Text
+          style={[
+            styles.queueBadgeText,
+            isActiveQueueItem ? styles.queueBadgeTextActive : styles.queueBadgeTextQueued
+          ]}
+          numberOfLines={1}
+        >
+          {queueBadgeLabel}
+        </Text>
+      </View>
+    );
+  };
+
+  const renderActions = () => {
+    if (!onAddToQueue && !onPlayNext) {
+      return null;
+    }
+
+    return (
+      <View style={styles.swipeActionsContainer}>
+        {onPlayNext ? (
+          <TouchableOpacity
+            style={[styles.swipeAction, styles.playNextAction]}
+            onPress={handlePlayNext}
+            activeOpacity={0.8}
+          >
+            <Feather name="corner-right-up" size={18} color={COLORS.white} />
+            <Text style={styles.swipeActionText}>Odtwórz jako następna</Text>
+          </TouchableOpacity>
+        ) : null}
+        {onAddToQueue ? (
+          <TouchableOpacity
+            style={[styles.swipeAction, styles.addToQueueAction]}
+            onPress={handleAddToQueue}
+            activeOpacity={0.8}
+          >
+            <Feather name="plus" size={18} color={COLORS.white} />
+            <Text style={styles.swipeActionText}>Dodaj do kolejki</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  };
+
+  const card = (
     <TouchableOpacity
       style={[
         styles.container,
         isSelected && styles.selected,
+        isQueued && styles.queued,
+        isActiveQueueItem && styles.activeQueue
       ]}
       onPress={onPress}
+      disabled={disabled}
       activeOpacity={0.7}
     >
-      {/* Left Side - Image */}
+      {renderQueueBadge()}
       <Image
         source={
           imageSource
@@ -113,11 +216,9 @@ export default function StoryItem({
         }
         style={styles.image}
         resizeMode="cover"
-        // Add error handling to fallback to default image if the URL fails to load
         onError={(e) => console.log('Image loading error:', e.nativeEvent.error)}
       />
-      
-      {/* Middle - Content */}
+
       <View style={styles.content}>
         <Text style={styles.title} numberOfLines={1}>
           {title}
@@ -125,14 +226,13 @@ export default function StoryItem({
         <Text style={styles.author} numberOfLines={1}>
           {author}
         </Text>
-        
-        {/* Duration */}
-        {duration && (
+
+        {duration ? (
           <View style={styles.durationContainer}>
             <Feather name="clock" size={12} color={COLORS.text.tertiary} />
             <Text style={styles.duration}>{duration}</Text>
           </View>
-        )}
+        ) : null}
 
         <View style={styles.creditsRow}>
           {isCreditLoading ? (
@@ -173,14 +273,27 @@ export default function StoryItem({
             </View>
           )}
         </View>
+      </View>
 
-      </View>
-      
-      {/* Right Side - Status */}
-      <View style={styles.status}>
-        {renderStatusIcon()}
-      </View>
+      <View style={styles.status}>{renderStatusIcon()}</View>
     </TouchableOpacity>
+  );
+
+  if (!onAddToQueue && !onPlayNext) {
+    return card;
+  }
+
+  return (
+    <Swipeable
+      ref={swipeableRef}
+      friction={2}
+      overshootLeft={false}
+      overshootRight={false}
+      renderRightActions={renderActions}
+      containerStyle={styles.swipeableContainer}
+    >
+      {card}
+    </Swipeable>
   );
 }
 
@@ -198,28 +311,30 @@ const styles = StyleSheet.create({
     elevation: 2,
     borderWidth: 2,
     borderColor: 'transparent',
+    position: 'relative',
   },
   selected: {
     borderColor: COLORS.peach,
-    backgroundColor: `${COLORS.peach}15`, // 15% opacity
-    transform: [{ translateY: -3 }],
-    shadowColor: COLORS.peach,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 3,
-    zIndex: 10,
+  },
+  queued: {
+    borderColor: 'rgba(218, 143, 255, 0.35)',
+  },
+  activeQueue: {
+    borderColor: COLORS.peach,
+    backgroundColor: 'rgba(251, 190, 159, 0.08)',
+  },
+  swipeableContainer: {
+    marginVertical: 0,
   },
   image: {
-    width: 70,
-    height: 70,
-    borderRadius: 8,
-    backgroundColor: COLORS.gradients.lavenderToPeach + '30', // 30% opacity
+    width: 64,
+    height: 64,
+    borderRadius: 12,
+    marginRight: 12,
   },
   content: {
     flex: 1,
-    marginLeft: 12,
-    justifyContent: 'center',
+    justifyContent: 'space-between',
   },
   title: {
     fontFamily: 'Quicksand-Bold',
@@ -232,43 +347,47 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.text.secondary,
     marginBottom: 6,
-    lineHeight: 18,
   },
   durationContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 8,
   },
   duration: {
-    fontFamily: 'Quicksand-Regular',
+    marginLeft: 4,
     fontSize: 12,
     color: COLORS.text.tertiary,
-    marginLeft: 4,
+    fontFamily: 'Quicksand-Regular',
   },
   creditsRow: {
-    marginTop: 6,
-    minHeight: 18,
-    justifyContent: 'center'
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
   },
   creditBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: `${COLORS.lavender}25`,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: 12,
-    paddingVertical: 2,
-    paddingHorizontal: 8,
+    backgroundColor: 'rgba(85, 95, 255, 0.08)',
   },
   creditBadgeReady: {
-    backgroundColor: COLORS.mint,
+    backgroundColor: COLORS.peach,
   },
   creditBadgeInsufficient: {
-    backgroundColor: `${COLORS.error}18`,
+    backgroundColor: 'rgba(255, 181, 167, 0.15)',
+    borderWidth: 1,
+    borderColor: COLORS.error,
+  },
+  creditBadgePlaceholder: {
+    backgroundColor: 'rgba(156, 163, 175, 0.1)',
   },
   creditBadgeText: {
-    fontFamily: 'Quicksand-Medium',
+    marginLeft: 6,
     fontSize: 12,
-    color: COLORS.white,
-    marginLeft: 4,
+    fontFamily: 'Quicksand-Medium',
+    color: COLORS.text.secondary,
   },
   creditBadgeReadyText: {
     color: COLORS.white,
@@ -276,16 +395,68 @@ const styles = StyleSheet.create({
   creditBadgeTextInsufficient: {
     color: COLORS.error,
   },
-  creditBadgePlaceholder: {
-    backgroundColor: `${COLORS.text.secondary}10`,
-    borderWidth: 1,
-    borderColor: `${COLORS.text.secondary}20`
-  },
   creditBadgePlaceholderText: {
-    color: COLORS.text.secondary
+    color: COLORS.text.tertiary,
   },
   status: {
     justifyContent: 'center',
-    paddingLeft: 8,
+    alignItems: 'flex-end',
+  },
+  queueBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(218, 143, 255, 0.12)',
+  },
+  queueBadgeQueued: {
+    backgroundColor: 'rgba(218, 143, 255, 0.12)',
+  },
+  queueBadgeActive: {
+    backgroundColor: COLORS.peach,
+  },
+  queueBadgeText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 11,
+    marginLeft: 4,
+  },
+  queueBadgeTextQueued: {
+    color: COLORS.lavender,
+  },
+  queueBadgeTextActive: {
+    color: COLORS.white,
+  },
+  swipeActionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    height: '100%',
+    paddingHorizontal: 8,
+    backgroundColor: 'transparent',
+  },
+  swipeAction: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 150,
+  },
+  playNextAction: {
+    backgroundColor: COLORS.lavender,
+    marginRight: 8,
+  },
+  addToQueueAction: {
+    backgroundColor: COLORS.peach,
+  },
+  swipeActionText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 12,
+    color: COLORS.white,
+    marginLeft: 6,
   },
 });
