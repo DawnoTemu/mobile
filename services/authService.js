@@ -50,6 +50,13 @@ const mapStatusToCode = (status) => {
   return 'API_ERROR';
 };
 
+const maskEmail = (email) => {
+  if (!email) return 'unknown';
+  const [user, domain = ''] = email.split('@');
+  const visible = user.slice(0, 3);
+  return `${visible}***@${domain}`;
+};
+
 /**
  * Make an API request with timeout
  * @param {string} endpoint - API endpoint
@@ -90,6 +97,12 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
         'Authorization': `Bearer ${token}`
       };
     }
+    console.log('[api] request', {
+      endpoint,
+      method: options.method || 'GET',
+      baseUrl: API_BASE_URL,
+      withAuth: !!token
+    });
     // Make request
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
@@ -139,6 +152,11 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
 
     return { success: true, status, data };
   } catch (error) {
+    console.error('[api] error', {
+      endpoint,
+      message: error?.message,
+      isAbort: error?.name === 'AbortError'
+    });
     if (timeoutId) clearTimeout(timeoutId);
 
     // Handle errors
@@ -188,6 +206,8 @@ export const register = async (email, password, passwordConfirm) => {
  * @returns {Promise<Object>} Login result
  */
 export const login = async (email, password) => {
+  const maskedEmail = maskEmail(email);
+  console.log('[auth] login attempt', { email: maskedEmail, baseUrl: API_BASE_URL });
   const result = await apiRequest('/auth/login', {
     method: 'POST',
     headers: {
@@ -208,6 +228,14 @@ export const login = async (email, password) => {
     ]);
 
     notifyAuthEvent('LOGIN', { user: result.data.user });
+    console.log('[auth] login success', { email: maskedEmail });
+  } else {
+    console.error('[auth] login failed', {
+      email: maskedEmail,
+      status: result.status,
+      code: result.code,
+      error: result.error
+    });
   }
   
   return result;
@@ -293,7 +321,9 @@ export const logout = async () => {
       SecureStore.deleteItemAsync(STORAGE_KEYS.ACCESS_TOKEN),
       SecureStore.deleteItemAsync(STORAGE_KEYS.REFRESH_TOKEN),
       AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA),
-      AsyncStorage.removeItem('voice_id') // Also remove voice_id
+      AsyncStorage.removeItem('voice_id'), // Also remove voice_id
+      AsyncStorage.removeItem(STORAGE_KEYS.PLAYBACK_QUEUE),
+      AsyncStorage.removeItem(STORAGE_KEYS.PLAYBACK_LOOP_MODE)
     ]);
     
     // Use Expo Router navigation if available, otherwise return true and handle navigation in components
@@ -323,6 +353,14 @@ export const getCurrentUser = async () => {
     console.error('Error getting user data:', error);
     return null;
   }
+};
+
+export const getCurrentUserId = async () => {
+  const user = await getCurrentUser();
+  if (user && typeof user === 'object') {
+    return user.id || user.userId || null;
+  }
+  return null;
 };
 
 /**
@@ -438,6 +476,7 @@ export default {
   getRefreshToken,
   refreshToken,
   getCurrentUser,
+  getCurrentUserId,
   updateUserData,
   isLoggedIn,
   resetPasswordRequest,

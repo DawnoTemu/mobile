@@ -7,10 +7,11 @@ import {
   Animated,
   Easing,
   Dimensions,
-  Image,
   ScrollView,
   PanResponder,
 } from 'react-native';
+import { Image } from 'expo-image';
+import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Slider from '@react-native-community/slider';
 import { Feather } from '@expo/vector-icons';
@@ -40,20 +41,20 @@ export default function AudioControls({
   onToggleLoop,
   queuePosition = null,
   queueLength = null,
+  onOpenQueue = null,
 }) {
   const insets = useSafeAreaInsets();
   // Reduced initial value from 100 to 50 for less extreme starting position
   const slideAnim = useRef(new Animated.Value(50)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  
+
   // JS-driven animation for height/layout (can't use native driver)
   const expandAnim = useRef(new Animated.Value(0)).current;
-  
+
   const [sliderValue, setSliderValue] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const hasAudio = duration > 0;
-  const hasAutoPlayed = useRef(false);
   const scrollViewRef = useRef(null);
   const [storyContentHeight, setStoryContentHeight] = useState(0);
   const [storyContainerHeight, setStoryContainerHeight] = useState(0);
@@ -65,7 +66,7 @@ export default function AudioControls({
   const pendingScrollYRef = useRef(0);
   const justJumpRef = useRef(false);
   const scrollLoopRef = useRef(null);
-  
+
   // Placeholder story data (will be replaced with real data later)
   const fallbackStoryText =
     "Once upon a time, in a land far, far away...\n\nThis is a placeholder for the full story text. When the server is extended, this will be replaced with the complete story content. For now, let's imagine this is a wonderful tale about brave knights, magical creatures, and exciting adventures.\n\nThe story continues with twists and turns, keeping children engaged and excited to hear what happens next. Every character has their own unique personality and challenges to overcome.\n\nAs the plot develops, valuable lessons about friendship, courage, and kindness are woven into the narrative. These stories help children develop empathy and understanding while enjoying the entertainment of a good story.";
@@ -144,14 +145,32 @@ export default function AudioControls({
     }
     return require('../assets/images/cover.png');
   }, [storyData.cover]);
-  
+
+  const handleOpenQueue = useCallback(() => {
+    if (typeof onOpenQueue !== 'function') {
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onOpenQueue();
+  }, [onOpenQueue]);
+
+  const QueueInfo = ({ iconSize = 14 }) => (
+    <View style={[styles.queueInfo, styles.queueLink]}>
+      <Feather name="list" size={iconSize} color={COLORS.text.secondary} />
+      <Text style={styles.queueInfoText}>{queueSummary}</Text>
+      {typeof onOpenQueue === 'function' ? (
+        <Feather name="chevron-right" size={iconSize} color={COLORS.text.secondary} />
+      ) : null}
+    </View>
+  );
+
   // Update slider value when position changes (unless user is seeking)
   useEffect(() => {
     if (!isSeeking && duration > 0) {
       setSliderValue(position / duration);
     }
   }, [position, duration, isSeeking]);
-  
+
   // Animate in/out when visibility changes (using native driver)
   useEffect(() => {
     if (isVisible) {
@@ -186,13 +205,13 @@ export default function AudioControls({
           useNativeDriver: true,
         }),
       ]).start();
-      
+
       // Reset expanded state when hiding
       setExpanded(false);
       expandAnim.setValue(0);
     }
   }, [isVisible, slideAnim, fadeAnim, expandAnim]);
-  
+
   // Animation for expanding/collapsing (JS driven - NOT using native driver)
   useEffect(() => {
     Animated.timing(expandAnim, {
@@ -202,10 +221,10 @@ export default function AudioControls({
       easing: Easing.out(Easing.cubic),
     }).start();
   }, [expanded, expandAnim]);
-  
-  // Calculate expanded container height (minus insets and player height)
+
+  // Calculate expanded container height (leave comfortable top margin for status bar/notch)
   const expandedHeight = height - insets.top - 80;
-  
+
   // Improved pan responder for more reliable gesture detection
   const panResponder = useRef(
     PanResponder.create({
@@ -248,17 +267,17 @@ export default function AudioControls({
       },
     })
   ).current;
-  
+
   // Handle slider value change when user is seeking
   const handleSliderChange = (value) => {
     setSliderValue(value);
   };
-  
+
   // Handle slider seek start
   const handleSlidingStart = () => {
     setIsSeeking(true);
   };
-  
+
   // Handle slider seek complete
   const handleSlidingComplete = (value) => {
     setIsSeeking(false);
@@ -289,28 +308,9 @@ export default function AudioControls({
   };
 
   // AUTO-Plays
-  useEffect(() => {
-    if (isVisible && hasAudio && !isPlaying && !hasAutoPlayed.current) {
-      hasAutoPlayed.current = true;
-      
-      const playTimer = setTimeout(() => {
-        onPlayPause();
-      }, 500);
-      
-      return () => clearTimeout(playTimer);
-    }
-  }, [isVisible, hasAudio, isPlaying, onPlayPause]);
-  
-  // Optional: Reset the auto-play flag when component becomes invisible
-  useEffect(() => {
-    if (!isVisible) {
-      hasAutoPlayed.current = false;
-    }
-  }, [isVisible]);
-  
   // Animated values for rotation using native driver
   const rotateAnim = useRef(new Animated.Value(0)).current;
-  
+
   // Update rotation animation when expanded state changes
   useEffect(() => {
     Animated.timing(rotateAnim, {
@@ -320,20 +320,20 @@ export default function AudioControls({
       easing: Easing.out(Easing.cubic),
     }).start();
   }, [expanded, rotateAnim]);
-  
+
   // Calculate styles separately for native and JS animations
   const containerHeightStyle = {
     height: expandAnim.interpolate({
       inputRange: [0, 1],
-      outputRange: [140, expandedHeight]
+      outputRange: [170, expandedHeight]
     }),
   };
-  
+
   const containerNativeStyle = {
     transform: [{ translateY: slideAnim }],
     opacity: fadeAnim,
   };
-  
+
   const pullIndicatorStyle = {
     transform: [{
       rotate: rotateAnim.interpolate({
@@ -342,77 +342,77 @@ export default function AudioControls({
       })
     }]
   };
-  
+
   // Create JS-driven animated values for content visibility
   const minimizedContentOpacity = expandAnim.interpolate({
     inputRange: [0, 0.3],
     outputRange: [1, 0],
     extrapolate: 'clamp'
   });
-  
+
   const expandedContentOpacity = expandAnim.interpolate({
     inputRange: [0.7, 1],
     outputRange: [0, 1],
     extrapolate: 'clamp'
   });
-  
-const stopAutoScroll = useCallback(() => {
-  if (scrollLoopRef.current) {
-    cancelAnimationFrame(scrollLoopRef.current);
-    scrollLoopRef.current = null;
-  }
-}, []);
 
-const startSmoothScroll = (
-  scrollViewRef,
-  currentScrollYRef,
-  targetScrollRef,
-  lastAutoScrollYRef,
-  expanded,
-  isUserScrollingStory,
-  isSeeking,
-  storyContentHeight,
-  storyContainerHeight
-) => {
-  if (scrollLoopRef.current || !scrollViewRef.current) {
-    return;
-  }
+  const stopAutoScroll = useCallback(() => {
+    if (scrollLoopRef.current) {
+      cancelAnimationFrame(scrollLoopRef.current);
+      scrollLoopRef.current = null;
+    }
+  }, []);
 
-  const step = () => {
-    scrollLoopRef.current = null;
-
-    if (
-      !expanded ||
-      isUserScrollingStory ||
-      isSeeking ||
-      storyContentHeight <= storyContainerHeight ||
-      !scrollViewRef.current
-    ) {
+  const startSmoothScroll = (
+    scrollViewRef,
+    currentScrollYRef,
+    targetScrollRef,
+    lastAutoScrollYRef,
+    expanded,
+    isUserScrollingStory,
+    isSeeking,
+    storyContentHeight,
+    storyContainerHeight
+  ) => {
+    if (scrollLoopRef.current || !scrollViewRef.current) {
       return;
     }
 
-    const current = currentScrollYRef.current;
-    const target = targetScrollRef.current;
-    const diff = target - current;
+    const step = () => {
+      scrollLoopRef.current = null;
 
-    if (Math.abs(diff) <= 0.6) {
-      scrollViewRef.current.scrollTo({ y: target, animated: false });
-      currentScrollYRef.current = target;
-      lastAutoScrollYRef.current = target;
-      justJumpRef.current = false;
-      return;
-    }
+      if (
+        !expanded ||
+        isUserScrollingStory ||
+        isSeeking ||
+        storyContentHeight <= storyContainerHeight ||
+        !scrollViewRef.current
+      ) {
+        return;
+      }
 
-    const eased = current + diff * 0.2;
-    currentScrollYRef.current = eased;
-    lastAutoScrollYRef.current = eased;
-    scrollViewRef.current.scrollTo({ y: eased, animated: false });
+      const current = currentScrollYRef.current;
+      const target = targetScrollRef.current;
+      const diff = target - current;
+
+      if (Math.abs(diff) <= 0.6) {
+        scrollViewRef.current.scrollTo({ y: target, animated: false });
+        currentScrollYRef.current = target;
+        lastAutoScrollYRef.current = target;
+        justJumpRef.current = false;
+        return;
+      }
+
+      const eased = current + diff * 0.2;
+      currentScrollYRef.current = eased;
+      lastAutoScrollYRef.current = eased;
+      scrollViewRef.current.scrollTo({ y: eased, animated: false });
+
+      scrollLoopRef.current = requestAnimationFrame(step);
+    };
 
     scrollLoopRef.current = requestAnimationFrame(step);
   };
-
-  scrollLoopRef.current = requestAnimationFrame(step);
-};
 
   const handleStoryScrollStart = useCallback(() => {
     if (userScrollTimeoutRef.current) {
@@ -552,12 +552,16 @@ const startSmoothScroll = (
     justJumpRef.current = false;
   }, [expanded, isUserScrollingStory, stopAutoScroll, storyContentHeight, storyContainerHeight]);
 
+  const bottomOffset = Math.max(insets.bottom, 12);
+
   return (
     <Animated.View
       style={[
         styles.container,
         {
-          paddingBottom: Math.max(insets.bottom, 10),
+          // lift above home indicator and give extra breathing room
+          paddingBottom: Math.max(bottomOffset + 4, 16),
+          bottom: bottomOffset,
         },
         containerNativeStyle,
       ]}
@@ -568,7 +572,7 @@ const startSmoothScroll = (
       {/* This wrapper handles the height animation separately */}
       <Animated.View style={[styles.heightContainer, containerHeightStyle]}>
         {/* Pull indicator */}
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.pullIndicatorContainer}
           onPress={toggleExpanded}
           {...panResponder.panHandlers}
@@ -577,7 +581,7 @@ const startSmoothScroll = (
             <Feather name="chevron-up" size={20} color={COLORS.text.tertiary} />
           </Animated.View>
         </TouchableOpacity>
-        
+
         {!hasAudio ? (
           <View style={styles.emptyState}>
           </View>
@@ -586,18 +590,27 @@ const startSmoothScroll = (
             {/* Minimized Controls - shown when not expanded */}
             <Animated.View style={[styles.controls, { opacity: minimizedContentOpacity }]}>
               <View style={styles.minimizedControls}>
-                <View style={styles.queueMetaRow}>
-                  <View style={styles.queueInfo}>
-                    <Feather name="list" size={14} color={COLORS.text.secondary} />
-                    <Text style={styles.queueInfoText}>{queueSummary}</Text>
-                  </View>
+                <TouchableOpacity
+                  style={[styles.queueMetaRow, styles.queueMetaRowPressable]}
+                  onPress={handleOpenQueue}
+                  activeOpacity={0.85}
+                  disabled={typeof onOpenQueue !== 'function'}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Otwórz kolejkę odtwarzania"
+                >
+                  <QueueInfo iconSize={14} />
                   <TouchableOpacity
                     style={[
                       styles.loopButton,
                       loopState.active && styles.loopButtonActive,
                       !loopToggleAvailable && styles.loopButtonDisabled
                     ]}
-                    onPress={onToggleLoop}
+                    onPress={(e) => {
+                      e?.stopPropagation?.();
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      onToggleLoop();
+                    }}
                     disabled={!loopToggleAvailable}
                     accessibilityLabel={`Tryb powtarzania: ${loopState.label}`}
                     accessibilityRole="button"
@@ -614,7 +627,7 @@ const startSmoothScroll = (
                       </View>
                     ) : null}
                   </TouchableOpacity>
-                </View>
+                </TouchableOpacity>
                 <View style={styles.sliderContainer}>
                   <Text style={styles.timeText}>{formatTime(position)}</Text>
                   <Slider
@@ -633,10 +646,13 @@ const startSmoothScroll = (
                   />
                   <Text style={styles.timeText}>{formatTime(duration)}</Text>
                 </View>
-                
+
                 <View style={styles.buttonsContainer}>
                   <TouchableOpacity
-                    onPress={onPrevious}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      onPrevious();
+                    }}
                     disabled={previousButtonDisabled}
                     style={[
                       styles.skipButton,
@@ -649,8 +665,8 @@ const startSmoothScroll = (
                     <Feather name="skip-back" size={22} color={previousIconColor} />
                   </TouchableOpacity>
                   {/* Rewind Button */}
-                  <TouchableOpacity 
-                    onPress={() => onRewind(10)} 
+                  <TouchableOpacity
+                    onPress={() => onRewind(10)}
                     style={styles.sideButton}
                     accessibilityLabel="Rewind 10 seconds"
                     accessibilityRole="button"
@@ -661,25 +677,28 @@ const startSmoothScroll = (
                       <Text style={styles.buttonText}>10s</Text>
                     </View>
                   </TouchableOpacity>
-                  
+
                   {/* Play/Pause Button */}
-                  <TouchableOpacity 
-                    onPress={onPlayPause} 
+                  <TouchableOpacity
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      onPlayPause();
+                    }}
                     style={styles.playButton}
                     accessibilityLabel={isPlaying ? "Pause" : "Play"}
                     accessibilityRole="button"
                     accessibilityHint={isPlaying ? "Double tap to pause" : "Double tap to play"}
                   >
-                    <Feather 
-                      name={isPlaying ? 'pause' : 'play'} 
-                      size={28} 
-                      color={COLORS.white} 
+                    <Feather
+                      name={isPlaying ? 'pause' : 'play'}
+                      size={28}
+                      color={COLORS.white}
                     />
                   </TouchableOpacity>
-                  
+
                   {/* Forward Button */}
-                  <TouchableOpacity 
-                    onPress={() => onForward(10)} 
+                  <TouchableOpacity
+                    onPress={() => onForward(10)}
                     style={styles.sideButton}
                     accessibilityLabel="Forward 10 seconds"
                     accessibilityRole="button"
@@ -706,16 +725,16 @@ const startSmoothScroll = (
                 </View>
               </View>
             </Animated.View>
-            
+
             {/* Expanded Content - visible when expanded */}
-            <Animated.View 
+            <Animated.View
               style={[
-                styles.expandedContent, 
+                styles.expandedContent,
                 { opacity: expandedContentOpacity }
               ]}
             >
               {/* Added explicit close button for expanded view */}
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.closeExpandedButton}
                 onPress={() => setExpanded(false)}
                 accessibilityLabel="Close expanded view"
@@ -723,16 +742,17 @@ const startSmoothScroll = (
               >
                 <Feather name="x" size={24} color={COLORS.text.secondary} />
               </TouchableOpacity>
-            
+
               {/* Story Header Section */}
               <View style={styles.storyHeader}>
                 <View style={styles.coverContainer}>
-                  <Image 
+                  <Image
                     source={coverSource}
-                    style={styles.coverImage} 
-                    resizeMode="cover"
+                    style={styles.coverImage}
+                    contentFit="cover"
+                    transition={200}
                     onError={(e) => {
-                      console.log('Cover image loading error:', e.nativeEvent.error);
+                      console.log('Cover image loading error:', e.error);
                     }}
                   />
                 </View>
@@ -742,7 +762,7 @@ const startSmoothScroll = (
                   <Text style={styles.storyDescription}>{storyData.description}</Text>
                 </View>
               </View>
-              
+
               {/* Story Text Scroll View */}
               <View
                 style={styles.storyTextContainer}
@@ -765,21 +785,30 @@ const startSmoothScroll = (
                   <Text style={styles.storyText}>{storyData.text}</Text>
                 </ScrollView>
               </View>
-              
+
               {/* Player Controls in Expanded Mode */}
               <View style={styles.expandedPlayerControls}>
-                <View style={styles.queueMetaRow}>
-                  <View style={styles.queueInfo}>
-                    <Feather name="list" size={16} color={COLORS.text.secondary} />
-                    <Text style={styles.queueInfoText}>{queueSummary}</Text>
-                  </View>
+                <TouchableOpacity
+                  style={[styles.queueMetaRow, styles.queueMetaRowPressable]}
+                  onPress={handleOpenQueue}
+                  activeOpacity={0.85}
+                  disabled={typeof onOpenQueue !== 'function'}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Otwórz kolejkę odtwarzania"
+                >
+                  <QueueInfo iconSize={16} />
                   <TouchableOpacity
                     style={[
                       styles.loopButton,
                       loopState.active && styles.loopButtonActive,
                       !loopToggleAvailable && styles.loopButtonDisabled
                     ]}
-                    onPress={onToggleLoop}
+                    onPress={(e) => {
+                      e?.stopPropagation?.();
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      onToggleLoop();
+                    }}
                     disabled={!loopToggleAvailable}
                     accessibilityLabel={`Tryb powtarzania: ${loopState.label}`}
                     accessibilityRole="button"
@@ -796,7 +825,7 @@ const startSmoothScroll = (
                       </View>
                     ) : null}
                   </TouchableOpacity>
-                </View>
+                </TouchableOpacity>
                 <View style={styles.sliderContainer}>
                   <Text style={styles.timeText}>{formatTime(position)}</Text>
                   <Slider
@@ -813,10 +842,13 @@ const startSmoothScroll = (
                   />
                   <Text style={styles.timeText}>{formatTime(duration)}</Text>
                 </View>
-                
+
                 <View style={styles.buttonsContainer}>
                   <TouchableOpacity
-                    onPress={onPrevious}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      onPrevious();
+                    }}
                     disabled={previousButtonDisabled}
                     style={[
                       styles.skipButton,
@@ -834,12 +866,17 @@ const startSmoothScroll = (
                       <Text style={styles.buttonText}>10s</Text>
                     </View>
                   </TouchableOpacity>
-                  
-                  <TouchableOpacity onPress={onPlayPause} style={styles.playButton}>
-                    <Feather 
-                      name={isPlaying ? 'pause' : 'play'} 
-                      size={28} 
-                      color={COLORS.white} 
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      onPlayPause();
+                    }}
+                    style={styles.playButton}>
+                    <Feather
+                      name={isPlaying ? 'pause' : 'play'}
+                      size={28}
+                      color={COLORS.white}
                     />
                   </TouchableOpacity>
 
@@ -850,7 +887,10 @@ const startSmoothScroll = (
                     </View>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={onNext}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      onNext();
+                    }}
                     disabled={nextButtonDisabled}
                     style={[
                       styles.skipButton,
@@ -874,7 +914,6 @@ const startSmoothScroll = (
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    bottom: 0,
     left: 0,
     right: 0,
     backgroundColor: COLORS.white,
@@ -897,7 +936,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   pullIndicatorContainer: {
-    height: 20,
+    height: 16,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
@@ -920,12 +959,12 @@ const styles = StyleSheet.create({
   },
   controls: {
     paddingTop: 0,
-    paddingBottom: 8,
-    height: 140,
+    paddingBottom: 10,
+    height: 160,
     position: 'absolute',
     left: 16,
     right: 16,
-    top: 20,
+    top: 10,
   },
   minimizedControls: {
     flex: 1,
@@ -987,10 +1026,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 6,
+    flex: 1,
   },
   queueInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  queueLink: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.06)',
+    flexShrink: 1,
   },
   queueInfoText: {
     fontFamily: 'Quicksand-Medium',
@@ -1051,7 +1098,7 @@ const styles = StyleSheet.create({
     right: 8,
     padding: 8,
   },
-  
+
   // Expanded content styles
   expandedContent: {
     flex: 1,

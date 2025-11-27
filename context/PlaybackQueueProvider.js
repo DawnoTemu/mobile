@@ -5,10 +5,18 @@ import React, {
   useEffect,
   useMemo,
   useReducer,
-  useRef
+  useRef,
+  useState
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../services/config';
+import authService from '../services/authService';
+import { createLogger } from '../utils/logger';
+import { recordEvent, recordError } from '../utils/metrics';
+
+const QUEUE_STATE_VERSION = 1;
+const MAX_QUEUE_ITEMS = 200;
+const log = createLogger('PlaybackQueue');
 
 export const LOOP_MODES = {
   NONE: 'NONE',
@@ -74,6 +82,16 @@ const ensureArray = (value) => {
   }
 
   return Array.isArray(value) ? value.filter((item) => item != null) : [value];
+};
+
+const clampQueueSize = (queue) => {
+  if (!Array.isArray(queue)) {
+    return [];
+  }
+  if (queue.length <= MAX_QUEUE_ITEMS) {
+    return queue;
+  }
+  return queue.slice(0, MAX_QUEUE_ITEMS);
 };
 
 export const initialQueueState = {
@@ -146,7 +164,7 @@ const queueEnqueue = (state, action) => {
     return state.initializing ? { ...state, initializing: false } : state;
   }
 
-  const queue = [...state.queue, ...items];
+  const queue = clampQueueSize([...state.queue, ...items]);
   const nextActiveIndex = state.activeIndex === -1 ? 0 : state.activeIndex;
 
   return {
@@ -179,6 +197,7 @@ const queueEnqueueNext = (state, action) => {
   } else {
     queue = [...state.queue, ...items];
   }
+  queue = clampQueueSize(queue);
 
   const nextActiveIndex = hasActive
     ? state.activeIndex
@@ -240,6 +259,80 @@ const queueClear = (state) => ({
   hydrated: true,
   hydrationError: null
 });
+
+const queueReorder = (state, action) => {
+  const incomingQueue = clampQueueSize(ensureArray(action.payload?.queue));
+  if (!incomingQueue.length) {
+    return queueClear(state);
+  }
+
+  const requestedActiveIndex = typeof action.payload?.activeIndex === 'number'
+    ? action.payload.activeIndex
+    : null;
+
+  const activeStoryId = getStoryId(state.queue[state.activeIndex]);
+  let nextActiveIndex = requestedActiveIndex != null
+    ? clampActiveIndex(incomingQueue, requestedActiveIndex)
+    : -1;
+
+  if (nextActiveIndex === -1 && activeStoryId != null) {
+    nextActiveIndex = incomingQueue.findIndex((item) => getStoryId(item) === activeStoryId);
+  }
+
+  if (nextActiveIndex === -1) {
+    nextActiveIndex = clampActiveIndex(incomingQueue, state.activeIndex);
+  }
+
+  if (nextActiveIndex === -1 && incomingQueue.length) {
+    nextActiveIndex = 0;
+  }
+
+  return {
+    ...state,
+    queue: incomingQueue,
+    activeIndex: clampActiveIndex(incomingQueue, nextActiveIndex),
+    lockedStoryId: ensureLockedStory(incomingQueue, state.lockedStoryId),
+    initializing: false,
+    hydrated: true,
+    hydrationError: null
+  };
+};
+
+const shuffleQueueItems = (queue) => {
+  const shuffled = [...queue];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+};
+
+const queueShuffle = (state) => {
+  if (!Array.isArray(state.queue) || state.queue.length <= 1) {
+    return state.initializing ? { ...state, initializing: false } : state;
+  }
+
+  const shuffled = clampQueueSize(shuffleQueueItems(state.queue));
+  const activeStoryId = getStoryId(state.queue[state.activeIndex]);
+  let activeIndex = clampActiveIndex(shuffled, state.activeIndex);
+
+  if (activeStoryId != null) {
+    const located = shuffled.findIndex((item) => getStoryId(item) === activeStoryId);
+    if (located >= 0) {
+      activeIndex = located;
+    }
+  }
+
+  return {
+    ...state,
+    queue: shuffled,
+    activeIndex,
+    lockedStoryId: ensureLockedStory(shuffled, state.lockedStoryId),
+    initializing: false,
+    hydrated: true,
+    hydrationError: null
+  };
+};
 
 const queueSetActiveIndex = (state, action) => {
   const { index, storyId } = action.payload || {};
@@ -373,6 +466,10 @@ export const queueReducer = (state, action) => {
       return queueAdvance(state);
     case 'QUEUE_RETREAT':
       return queueRetreat(state);
+    case 'QUEUE_REORDER':
+      return queueReorder(state, action);
+    case 'QUEUE_SHUFFLE':
+      return queueShuffle(state);
     case 'QUEUE_SET_LOOP_MODE':
       return queueSetLoopMode(state, action);
     case 'QUEUE_SET_LOCKED_STORY':
@@ -382,26 +479,59 @@ export const queueReducer = (state, action) => {
   }
 };
 
-export const serializeQueueState = (state) => {
-  const queue = Array.isArray(state.queue) ? state.queue : [];
+export const serializeQueueState = (state, owner = {}) => {
+  const queue = Array.isArray(state.queue) ? clampQueueSize(state.queue) : [];
   const activeIndex = clampActiveIndex(queue, state.activeIndex);
 
   return {
+    version: QUEUE_STATE_VERSION,
     queue,
     activeIndex,
-    lockedStoryId: ensureLockedStory(queue, state.lockedStoryId)
+    lockedStoryId: ensureLockedStory(queue, state.lockedStoryId),
+    userId: owner.userId || null,
+    voiceId: owner.voiceId || null
   };
 };
 
 const PlaybackQueueStateContext = createContext(initialQueueState);
 const PlaybackQueueDispatchContext = createContext(null);
 
-export const PlaybackQueueProvider = ({ children }) => {
-  const [state, dispatch] = useReducer(queueReducer, initialQueueState);
+export const PlaybackQueueProvider = ({ children, initialState = null, disableHydration = false }) => {
+  const [state, dispatch] = useReducer(
+    queueReducer,
+    initialQueueState,
+    (base) => {
+      if (!initialState) {
+        return base;
+      }
+      const seededQueue = clampQueueSize(ensureArray(initialState.queue));
+      const activeIndex = clampActiveIndex(seededQueue, initialState.activeIndex);
+      const loopMode = LOOP_MODE_VALUES.includes(initialState.loopMode)
+        ? initialState.loopMode
+        : LOOP_MODES.NONE;
+
+      return {
+        ...base,
+        ...initialState,
+        queue: seededQueue,
+        activeIndex,
+        loopMode,
+        initializing: false,
+        hydrated: true,
+        hydrationError: null
+      };
+    }
+  );
   const persistTimeoutRef = useRef(null);
   const hydrationRef = useRef(true);
+  const [queueOwner, setQueueOwner] = useState({ userId: null, voiceId: null });
 
   useEffect(() => {
+    if (disableHydration) {
+      hydrationRef.current = false;
+      return;
+    }
+
     let cancelled = false;
 
     const hydrate = async () => {
@@ -410,12 +540,16 @@ export const PlaybackQueueProvider = ({ children }) => {
       }
 
       dispatch({ type: 'HYDRATE_START' });
+      recordEvent('playback_queue_hydrate_start');
 
       try {
-        const [queueString, loopModeString] = await Promise.all([
+        const [queueString, loopModeString, currentVoiceId, currentUserId] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEYS.PLAYBACK_QUEUE),
-          AsyncStorage.getItem(STORAGE_KEYS.PLAYBACK_LOOP_MODE)
+          AsyncStorage.getItem(STORAGE_KEYS.PLAYBACK_LOOP_MODE),
+          AsyncStorage.getItem(STORAGE_KEYS.VOICE_ID),
+          authService.getCurrentUserId?.()
         ]);
+        setQueueOwner({ userId: currentUserId || null, voiceId: currentVoiceId || null });
 
         if (cancelled) {
           return;
@@ -426,26 +560,39 @@ export const PlaybackQueueProvider = ({ children }) => {
           try {
             parsed = JSON.parse(queueString);
           } catch (error) {
-            // eslint-disable-next-line no-console
-            console.warn('PlaybackQueueProvider: failed to parse persisted queue', error);
+            log.warn('Failed to parse persisted queue', error);
           }
         }
+
+        if (parsed && parsed.version && parsed.version !== QUEUE_STATE_VERSION) {
+          log.info('Discarding outdated queue state', { version: parsed.version });
+        }
+
+        const persistedState = parsed && parsed.version === QUEUE_STATE_VERSION ? parsed : null;
+        const ownerMatches = persistedState
+          ? (!persistedState.userId || persistedState.userId === currentUserId) &&
+            (!persistedState.voiceId || persistedState.voiceId === currentVoiceId)
+          : false;
 
         dispatch({
           type: 'HYDRATE_SUCCESS',
           payload: {
-            queue: Array.isArray(parsed?.queue) ? parsed.queue : [],
-            activeIndex: parsed?.activeIndex,
-            lockedStoryId: parsed?.lockedStoryId,
+            queue: ownerMatches && Array.isArray(persistedState?.queue) ? clampQueueSize(persistedState.queue) : [],
+            activeIndex: ownerMatches ? persistedState?.activeIndex : -1,
+            lockedStoryId: ownerMatches ? persistedState?.lockedStoryId : null,
             loopMode: loopModeString && LOOP_MODE_VALUES.includes(loopModeString)
               ? loopModeString
               : LOOP_MODES.NONE
           }
         });
+        recordEvent('playback_queue_hydrate_success', {
+          queueLength: persistedState?.queue?.length || 0,
+          loopMode: loopModeString || LOOP_MODES.NONE
+        });
       } catch (error) {
         if (!cancelled) {
-          // eslint-disable-next-line no-console
-          console.warn('PlaybackQueueProvider: hydration failed', error);
+          log.warn('Hydration failed', error);
+          recordError('playback_queue_hydrate_error', error);
           dispatch({ type: 'HYDRATE_ERROR', payload: { error } });
         }
       } finally {
@@ -461,29 +608,71 @@ export const PlaybackQueueProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    if (!state.hydrated || state.initializing) {
+    if (!state.hydrated || state.initializing || disableHydration) {
       return;
     }
 
-    if (persistTimeoutRef.current) {
-      clearTimeout(persistTimeoutRef.current);
-    }
+    let cancelled = false;
 
-    const queueSnapshot = serializeQueueState(state);
-    const loopMode = LOOP_MODE_VALUES.includes(state.loopMode) ? state.loopMode : LOOP_MODES.NONE;
+    const syncOwner = async () => {
+      const [currentVoiceId, currentUserId] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEYS.VOICE_ID),
+        authService.getCurrentUserId?.()
+      ]);
+      const voiceId = currentVoiceId || null;
+      const userId = currentUserId || null;
+      if (cancelled) {
+        return queueOwner;
+      }
+      if (queueOwner.voiceId !== voiceId || queueOwner.userId !== userId) {
+        setQueueOwner({ voiceId, userId });
+      }
+      return { voiceId, userId };
+    };
 
-    persistTimeoutRef.current = setTimeout(() => {
-      AsyncStorage.multiSet([
-        [STORAGE_KEYS.PLAYBACK_QUEUE, JSON.stringify(queueSnapshot)],
-        [STORAGE_KEYS.PLAYBACK_LOOP_MODE, loopMode]
-      ]).catch((error) => {
-        // eslint-disable-next-line no-console
-        console.warn('PlaybackQueueProvider: failed to persist queue state', error);
-      }).finally(() => {
-        persistTimeoutRef.current = null;
-      });
-    }, 150);
-  }, [state.queue, state.activeIndex, state.lockedStoryId, state.loopMode, state.hydrated, state.initializing]);
+    const persistQueue = async () => {
+      if (persistTimeoutRef.current) {
+        clearTimeout(persistTimeoutRef.current);
+      }
+
+      const owner = await syncOwner();
+
+      if (cancelled) {
+        return;
+      }
+
+      const queueSnapshot = serializeQueueState(state, owner || queueOwner);
+      const loopMode = LOOP_MODE_VALUES.includes(state.loopMode) ? state.loopMode : LOOP_MODES.NONE;
+
+      persistTimeoutRef.current = setTimeout(() => {
+        AsyncStorage.multiSet([
+          [STORAGE_KEYS.PLAYBACK_QUEUE, JSON.stringify(queueSnapshot)],
+          [STORAGE_KEYS.PLAYBACK_LOOP_MODE, loopMode]
+        ]).catch((error) => {
+          log.warn('Failed to persist queue state', error);
+          recordError('playback_queue_persist_error', error, { queueLength: queueSnapshot.queue.length });
+        }).finally(() => {
+          persistTimeoutRef.current = null;
+        });
+      }, 150);
+    };
+
+    persistQueue();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    state.queue,
+    state.activeIndex,
+    state.lockedStoryId,
+    state.loopMode,
+    state.hydrated,
+    state.initializing,
+    queueOwner.voiceId,
+    queueOwner.userId,
+    disableHydration
+  ]);
 
   useEffect(() => {
     return () => {
@@ -579,11 +768,41 @@ export const PlaybackQueueProvider = ({ children }) => {
     dispatch({ type: 'QUEUE_SET_LOCKED_STORY', payload: { storyId } });
   }, [dispatch]);
 
+  const reorderQueue = useCallback((queue, options = {}) => {
+    dispatch({ type: 'QUEUE_REORDER', payload: { queue, ...options } });
+  }, [dispatch]);
+
+  const shuffleQueue = useCallback(() => {
+    dispatch({ type: 'QUEUE_SHUFFLE' });
+  }, [dispatch]);
+
+  useEffect(() => {
+    const unsubscribe = authService.subscribeAuthEvents?.((event) => {
+      if (event === 'LOGOUT') {
+        clearQueue();
+        AsyncStorage.multiRemove([
+          STORAGE_KEYS.PLAYBACK_QUEUE,
+          STORAGE_KEYS.PLAYBACK_LOOP_MODE
+        ]).catch((error) => {
+          log.warn('Failed to clear queue on logout', error);
+        });
+      }
+    });
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [clearQueue]);
+
   const helpers = useMemo(() => ({
     enqueue,
     enqueueNext,
     removeFromQueue,
     clearQueue,
+    reorderQueue,
+    shuffleQueue,
     setActiveItem,
     advance,
     retreat,
@@ -594,6 +813,8 @@ export const PlaybackQueueProvider = ({ children }) => {
     enqueueNext,
     removeFromQueue,
     clearQueue,
+    reorderQueue,
+    shuffleQueue,
     setActiveItem,
     advance,
     retreat,
@@ -604,7 +825,7 @@ export const PlaybackQueueProvider = ({ children }) => {
   return (
     <PlaybackQueueStateContext.Provider value={state}>
       <PlaybackQueueDispatchContext.Provider value={helpers}>
-        {state.initializing ? null : children}
+        {children}
       </PlaybackQueueDispatchContext.Provider>
     </PlaybackQueueStateContext.Provider>
   );

@@ -2385,6 +2385,7 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
     
     // Create a unique identifier for this upload
     const uploadId = `voice_upload_${Date.now()}`;
+    const uploadUrl = `${API_BASE_URL}/voices`;
     
     // Set up upload with progress tracking
     const emitProgressEvent = (event) => {
@@ -2427,11 +2428,37 @@ export const cloneVoice = async (audioUri, progressCallback = null, signal = nul
     }
     
     // Upload file using Expo's FileSystem
-    const uploadResult = await FileSystem.uploadAsync(
-      `${API_BASE_URL}/voices`,
+    const performUpload = async () => FileSystem.uploadAsync(
+      uploadUrl,
       audioUri,
       uploadOptions
     );
+
+    let uploadResult = await performUpload();
+
+    if (uploadResult.status === 401) {
+      console.warn('Voice upload unauthorized, attempting token refresh');
+      const refreshed = await authService.refreshToken();
+      if (!refreshed) {
+        await authService.logout();
+        return {
+          success: false,
+          error: 'Twoja sesja wygasła. Zaloguj się ponownie.',
+          code: 'AUTH_EXPIRED'
+        };
+      }
+      const refreshedToken = await authService.getAccessToken();
+      uploadOptions.headers.Authorization = `Bearer ${refreshedToken}`;
+      uploadResult = await performUpload();
+      if (uploadResult.status === 401) {
+        await authService.logout();
+        return {
+          success: false,
+          error: 'Twoja sesja wygasła. Zaloguj się ponownie.',
+          code: 'AUTH_EXPIRED'
+        };
+      }
+    }
     
     if (uploadResult.status !== 200 && uploadResult.status !== 201 && uploadResult.status !== 202) {
       throw new Error(uploadResult.body || 'Upload failed');

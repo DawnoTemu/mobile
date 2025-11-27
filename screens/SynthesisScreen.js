@@ -6,9 +6,9 @@ import {
   FlatList,
   ActivityIndicator,
   TouchableOpacity,
-  Image,
   RefreshControl,
   BackHandler,
+  LayoutAnimation,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -27,6 +27,15 @@ import AppMenu from '../components/AppMenu';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import { usePlaybackQueue, usePlaybackQueueDispatch, LOOP_MODES } from '../context/PlaybackQueueProvider';
+import useQueueDerivedState, { resolveQueueStoryId as resolveQueueStoryIdHelper } from '../hooks/useQueueDerivedState';
+import { createLogger } from '../utils/logger';
+import useActiveQueuePlayback from '../hooks/useActiveQueuePlayback';
+import useQueueActions from '../hooks/useQueueActions';
+import useQueuePlaybackControls from '../hooks/useQueuePlaybackControls';
+import useSynthesisData from '../hooks/useSynthesisData';
+import { filterPlayableStories } from '../services/playbackQueueService';
+import { recordEvent } from '../utils/metrics';
+import SynthesisHeader from '../components/synthesis/SynthesisHeader';
 
 const STORAGE_KEYS = {
   DOWNLOADED_AUDIO: 'voice_service_downloaded_audio'
@@ -60,6 +69,8 @@ const LOOP_MODE_LABELS = {
   [LOOP_MODES.REPEAT_ONE]: 'Powtarzanie jednej bajki'
 };
 
+const log = createLogger('SynthesisScreen');
+
 export default function SynthesisScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { showToast } = useToast();
@@ -75,7 +86,7 @@ export default function SynthesisScreen({ navigation }) {
   const {
     refreshCredits
   } = creditActions || {};
-  
+
   // Audio player hook
   const {
     sound: audioPlayer,
@@ -91,7 +102,12 @@ export default function SynthesisScreen({ navigation }) {
     formatTime,
     unloadAudio,
   } = useAudioPlayer();
-  
+
+  const handleTogglePlayPause = useCallback(() => {
+    userPausedRef.current = isPlaying;
+    togglePlayPause();
+  }, [isPlaying, togglePlayPause]);
+
   const playbackQueueState = usePlaybackQueue();
   const {
     queue: playbackQueue,
@@ -107,9 +123,13 @@ export default function SynthesisScreen({ navigation }) {
     advance: advanceQueue,
     setLoopMode: updateLoopMode
   } = usePlaybackQueueDispatch();
-  
+
   // State
   const [stories, setStories] = useState([]);
+
+  useEffect(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+  }, [stories]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedStory, setSelectedStory] = useState(null);
   const [processingStories, setProcessingStories] = useState({});
@@ -135,6 +155,7 @@ export default function SynthesisScreen({ navigation }) {
   const [isGenerationConfirmVisible, setIsGenerationConfirmVisible] = useState(false);
   const [generationStatusByStory, setGenerationStatusByStory] = useState({});
   const [activeGenerationStoryId, setActiveGenerationStoryId] = useState(null);
+  const [storyProgress, setStoryProgress] = useState({});
   const currentAudioUriRef = useRef(null);
   const activeAudioStoryIdRef = useRef(null);
   const lastProgressSaveRef = useRef(0);
@@ -142,50 +163,36 @@ export default function SynthesisScreen({ navigation }) {
   const pendingResumeRef = useRef(null);
   const suppressQueueAutoRef = useRef(false);
   const queueAdvanceRef = useRef(null);
-
-  const resolveQueueStoryId = useCallback((item) => {
-    if (item === null || item === undefined) {
-      return null;
-    }
-    if (typeof item === 'string' || typeof item === 'number') {
-      return String(item);
-    }
-    if (typeof item === 'object') {
-      if (item.storyId !== null && item.storyId !== undefined) {
-        return String(item.storyId);
-      }
-      if (item.id !== null && item.id !== undefined) {
-        return String(item.id);
-      }
-    }
-    return null;
-  }, []);
-
-  const queueIndexByStoryId = useMemo(() => {
-    const map = new Map();
-    (playbackQueue || []).forEach((entry, index) => {
-      const storyId = resolveQueueStoryId(entry);
-      if (storyId !== null) {
-        map.set(storyId, index);
-      }
-    });
-    return map;
-  }, [playbackQueue, resolveQueueStoryId]);
-
-  const queueLength = playbackQueue ? playbackQueue.length : 0;
-
-  const storyHasPlayableAudio = useCallback((story) => {
-    if (!story || typeof story !== 'object') {
-      return false;
-    }
-
-    return Boolean(
-      story.hasAudio ||
-      story.hasLocalAudio ||
-      story.localUri ||
-      story.localAudioUri
-    );
-  }, []);
+  const userPausedRef = useRef(false);
+  const storyHasPlayableAudio = useCallback(
+    (story) => filterPlayableStories([story]).length > 0,
+    []
+  );
+  const {
+    queueIndexByStoryId,
+    queueLength,
+    currentQueuePosition,
+    canSkipNext,
+    canSkipPrevious
+  } = useQueueDerivedState(playbackQueue, activeQueueIndex, loopMode);
+  const {
+    handleAddStoryToQueue,
+    handlePlayNextStory,
+    handleSyncStoryToQueue
+  } = useQueueActions({
+    playbackQueue,
+    queueIndexByStoryId,
+    activeQueueIndex,
+    enqueue,
+    enqueueNext,
+    removeFromPlaybackQueue,
+    clearPlaybackQueue,
+    setActiveQueueItem,
+    showToast,
+    voiceId,
+    stories,
+    storyHasPlayableAudio
+  });
 
   const findStoryById = useCallback(
     (storyId) => {
@@ -201,211 +208,49 @@ export default function SynthesisScreen({ navigation }) {
     [stories]
   );
 
-  const buildQueuePayload = useCallback(
-    (story) => {
-      if (!story || typeof story !== 'object') {
-        return null;
-      }
-
-      return {
-        id: story.id,
-        storyId: story.id,
-        title: story.title ?? null,
-        author: story.author ?? null,
-        coverUrl: story.cover_url ?? story.coverUrl ?? null,
-        cover_url: story.cover_url ?? story.coverUrl ?? null,
-        duration: story.duration ?? null,
-        hasAudio: Boolean(story.hasAudio),
-        hasLocalAudio: Boolean(story.hasLocalAudio),
-        localUri: story.localUri ?? null,
-        localAudioUri: story.localAudioUri ?? null,
-        voiceId: voiceId ?? null
-      };
-    },
-    [voiceId]
-  );
-
-  const handleAddStoryToQueue = useCallback(
-    (story) => {
-      if (!story) {
-        return;
-      }
-
-      if (!storyHasPlayableAudio(story)) {
-        showToast('Ta bajka nie ma jeszcze nagrania. Wygeneruj ją przed dodaniem do kolejki.', 'INFO');
-        return;
-      }
-
-      const payload = buildQueuePayload(story);
-      if (!payload) {
-        return;
-      }
-
-      const storyKey = String(story.id);
-      const existingIndex = queueIndexByStoryId.get(storyKey);
-      if (typeof existingIndex === 'number' && existingIndex >= 0) {
-        removeFromPlaybackQueue({ index: existingIndex });
-      }
-
-      enqueue(payload);
-      showToast('Dodano bajkę do kolejki.', 'SUCCESS');
-    },
-    [
-      storyHasPlayableAudio,
-      buildQueuePayload,
-      queueIndexByStoryId,
-      removeFromPlaybackQueue,
-      enqueue,
-      showToast
-    ]
-  );
-
-  const handlePlayNextStory = useCallback(
-    (story) => {
-      if (!story) {
-        return;
-      }
-
-      if (!storyHasPlayableAudio(story)) {
-        showToast('Ta bajka nie ma jeszcze nagrania. Wygeneruj ją przed dodaniem do kolejki.', 'INFO');
-        return;
-      }
-
-      const payload = buildQueuePayload(story);
-      if (!payload) {
-        return;
-      }
-
-      const storyKey = String(story.id);
-      const existingIndex = queueIndexByStoryId.get(storyKey);
-      if (typeof existingIndex === 'number' && existingIndex >= 0) {
-        removeFromPlaybackQueue({ index: existingIndex });
-      }
-
-      enqueueNext(payload);
-      showToast('Ta bajka będzie odtworzona jako następna.', 'SUCCESS');
-    },
-    [
-      storyHasPlayableAudio,
-      buildQueuePayload,
-      queueIndexByStoryId,
-      removeFromPlaybackQueue,
-      enqueueNext,
-      showToast
-    ]
-  );
-
   useEffect(() => {
-    if (!playbackQueue || queueLength === 0) {
-      return;
-    }
+    let cancelled = false;
 
-    if (
-      typeof activeQueueIndex !== 'number' ||
-      activeQueueIndex < 0 ||
-      activeQueueIndex >= playbackQueue.length
-    ) {
-      return;
-    }
-
-    if (suppressQueueAutoRef.current) {
-      suppressQueueAutoRef.current = false;
-      return;
-    }
-
-    const entry = playbackQueue[activeQueueIndex];
-    const storyId = resolveQueueStoryId(entry);
-    if (!storyId) {
-      return;
-    }
-
-    const resolvedStory =
-      findStoryById(storyId) ||
-      {
-        id: storyId,
-        title: entry?.title ?? `Bajka ${storyId}`,
-        author: entry?.author ?? 'Anonim',
-        hasAudio: entry?.hasAudio ?? true,
-        hasLocalAudio: entry?.hasLocalAudio ?? false,
-        localUri: entry?.localUri ?? null,
-        localAudioUri: entry?.localAudioUri ?? null,
-        cover_url: entry?.coverUrl ?? entry?.cover_url ?? null
-      };
-
-    const currentStoryId = selectedStory?.id != null ? String(selectedStory.id) : null;
-    if (currentStoryId === String(storyId) && activeAudioStoryIdRef.current === currentStoryId) {
-      return;
-    }
-
-    const maybePromise = handleStorySelectRef.current?.(resolvedStory, { skipQueueSync: true });
-    if (maybePromise && typeof maybePromise.then === 'function') {
-      maybePromise.catch((error) => {
-        console.warn('Queue playback failed to start', error);
-      });
-    }
-  }, [
-    activeQueueIndex,
-    playbackQueue,
-    queueLength,
-    resolveQueueStoryId,
-    findStoryById,
-    selectedStory
-  ]);
-
-  const handleAutoFillQueue = useCallback(() => {
-    if (!stories || !stories.length) {
-      showToast('Brak bajek do dodania do kolejki.', 'INFO');
-      return;
-    }
-
-    const candidates = stories.filter((story) => storyHasPlayableAudio(story));
-    if (!candidates.length) {
-      showToast('Brak bajek z gotowym nagraniem do dodania.', 'INFO');
-      return;
-    }
-
-    const itemsToAdd = [];
-    candidates.forEach((story) => {
-      const storyKey = String(story.id);
-      const existingIndex = queueIndexByStoryId.get(storyKey);
-      if (typeof existingIndex === 'number' && existingIndex >= 0) {
+    const loadProgress = async () => {
+      if (!voiceId || !Array.isArray(stories) || stories.length === 0) {
+        setStoryProgress({});
         return;
       }
 
-      const payload = buildQueuePayload(story);
-      if (payload) {
-        itemsToAdd.push(payload);
+      try {
+        const results = await Promise.all(
+          stories.map(async (story) => {
+            const entry = await voiceService.getPlaybackProgress(voiceId, story.id);
+            if (!entry || !entry.duration || entry.duration <= 0) {
+              return { id: story.id, progress: 0 };
+            }
+            const ratio = Math.max(0, Math.min(1, entry.position / entry.duration));
+            return { id: story.id, progress: ratio };
+          })
+        );
+
+        if (cancelled) return;
+
+        const next = results.reduce((acc, item) => {
+          acc[item.id] = item.progress || 0;
+          return acc;
+        }, {});
+        setStoryProgress(next);
+      } catch (error) {
+        if (!cancelled) {
+          console.warn('Failed to load playback progress', error);
+          setStoryProgress({});
+        }
       }
-    });
+    };
 
-    if (!itemsToAdd.length) {
-      showToast('Wszystkie gotowe bajki są już w kolejce.', 'INFO');
-      return;
-    }
+    loadProgress();
 
-    enqueue(itemsToAdd);
-    const addedCount = itemsToAdd.length;
-    const label =
-      addedCount === 1 ? 'bajkę' : addedCount >= 5 ? 'bajek' : 'bajki';
-    showToast(`Dodano ${addedCount} ${label} do kolejki.`, 'SUCCESS');
-  }, [
-    stories,
-    storyHasPlayableAudio,
-    queueIndexByStoryId,
-    buildQueuePayload,
-    enqueue,
-    showToast
-  ]);
+    return () => {
+      cancelled = true;
+    };
+  }, [voiceId, stories]);
 
-  const handleClearQueue = useCallback(() => {
-    if (!playbackQueue || playbackQueue.length === 0) {
-      showToast('Kolejka jest już pusta.', 'INFO');
-      return;
-    }
-
-    clearPlaybackQueue();
-    showToast('Wyczyszczono kolejkę.', 'SUCCESS');
-  }, [playbackQueue, clearPlaybackQueue, showToast]);
 
   const handleCycleLoopMode = useCallback(() => {
     const order = [LOOP_MODES.NONE, LOOP_MODES.REPEAT_ALL, LOOP_MODES.REPEAT_ONE];
@@ -415,70 +260,27 @@ export default function SynthesisScreen({ navigation }) {
     showToast(LOOP_MODE_LABELS[nextMode] || 'Zmieniono tryb powtarzania', 'INFO');
   }, [loopMode, updateLoopMode, showToast]);
 
-  const handleSkipToNextFromControls = useCallback(() => {
-    if (queueLength === 0) {
-      return;
+  useEffect(() => {
+    if (isPlaying) {
+      userPausedRef.current = false;
     }
+  }, [isPlaying]);
 
-    queueAdvanceRef.current = null;
-
-    if (queueLength === 1) {
-      seekTo(0).catch(() => {});
-      if (!isPlaying) {
-        togglePlayPause();
-      }
-      return;
-    }
-
-    let targetIndex = typeof activeQueueIndex === 'number' && activeQueueIndex >= 0
-      ? activeQueueIndex + 1
-      : 0;
-
-    if (targetIndex >= queueLength) {
-      if (loopMode === LOOP_MODES.REPEAT_ALL) {
-        targetIndex = 0;
-      } else {
-        return;
-      }
-    }
-
-    setActiveQueueItem({ index: targetIndex });
-  }, [queueLength, activeQueueIndex, loopMode, setActiveQueueItem, seekTo, isPlaying, togglePlayPause]);
-
-  const handleSkipToPreviousFromControls = useCallback(() => {
-    if (queueLength === 0) {
-      return;
-    }
-
-    queueAdvanceRef.current = null;
-
-    if (position > 5) {
-      seekTo(0).catch(() => {});
-      return;
-    }
-
-    if (queueLength === 1) {
-      seekTo(0).catch(() => {});
-      if (!isPlaying) {
-        togglePlayPause();
-      }
-      return;
-    }
-
-    let targetIndex = typeof activeQueueIndex === 'number' && activeQueueIndex >= 0
-      ? activeQueueIndex - 1
-      : queueLength - 1;
-
-    if (targetIndex < 0) {
-      if (loopMode === LOOP_MODES.REPEAT_ALL) {
-        targetIndex = queueLength - 1;
-      } else {
-        targetIndex = 0;
-      }
-    }
-
-    setActiveQueueItem({ index: targetIndex });
-  }, [queueLength, activeQueueIndex, loopMode, position, seekTo, isPlaying, togglePlayPause, setActiveQueueItem]);
+  const {
+    handleSkipToNextFromControls,
+    handleSkipToPreviousFromControls,
+    handleAutoAdvanceOnComplete
+  } = useQueuePlaybackControls({
+    queueLength,
+    activeQueueIndex,
+    loopMode,
+    setActiveQueueItem,
+    seekTo,
+    togglePlayPause: handleTogglePlayPause,
+    isPlaying,
+    position,
+    advanceQueue
+  });
 
   const MIN_PROGRESS_STEP_DURATION_MS = 5000;
   const progressStepQueueRef = useRef({});
@@ -753,7 +555,7 @@ export default function SynthesisScreen({ navigation }) {
           });
         }
       } catch (error) {
-        console.error('Failed to hydrate generation state:', error);
+        log.error('Failed to hydrate generation state', error);
       }
     },
     [activeGenerationStoryId, progressData.progress, selectedStory, statusToProgress]
@@ -909,7 +711,7 @@ export default function SynthesisScreen({ navigation }) {
     (storyId) => (event) => handleGenerationEvent(storyId, event),
     [handleGenerationEvent]
   );
-  
+
   const getLocalizedUnitLabel = useCallback((label) => {
     if (typeof label !== 'string') {
       return 'Punkty Magii';
@@ -944,7 +746,7 @@ export default function SynthesisScreen({ navigation }) {
     () => getLocalizedUnitLabel(unitLabel),
     [unitLabel, getLocalizedUnitLabel]
   );
-  
+
   const isStoryPurchased = useCallback(
     (story) =>
       !!(
@@ -996,24 +798,6 @@ export default function SynthesisScreen({ navigation }) {
     return items;
   }, [stories, isOnline, isStoryPurchased]);
 
-  const playableStoriesCount = useMemo(() => {
-    if (!stories || !stories.length) {
-      return 0;
-    }
-    return stories.reduce(
-      (count, story) => (storyHasPlayableAudio(story) ? count + 1 : count),
-      0
-    );
-  }, [stories, storyHasPlayableAudio]);
-
-  const autoFillDisabled = playableStoriesCount === 0;
-  const clearQueueDisabled = queueLength === 0;
-  const currentQueuePosition = typeof activeQueueIndex === 'number' && activeQueueIndex >= 0
-    ? activeQueueIndex + 1
-    : null;
-  const canSkipNext = queueLength > 0 && (queueLength > 1 || loopMode !== LOOP_MODES.NONE);
-  const canSkipPrevious = queueLength > 0;
-
   const getStoryRequiredCredits = useCallback((story) => {
     if (!story || typeof story !== 'object') {
       return null;
@@ -1038,11 +822,11 @@ export default function SynthesisScreen({ navigation }) {
 
     return null;
   }, []);
-  
-  
+
+
   // Abort controller ref for cancellable operations
   const abortControllerRef = useRef(null);
-  
+
   // Initialize abort controller
   const createAbortController = () => {
     // Cancel any existing operations
@@ -1053,12 +837,12 @@ export default function SynthesisScreen({ navigation }) {
     abortControllerRef.current = new AbortController();
     return abortControllerRef.current.signal;
   };
-  
+
   // Load stories and voice ID on mount
   useEffect(() => {
     fetchStoriesAndVoiceId(false, true);
     const unsubscribe = setupNetworkListener();
-    
+
     // Clean up on unmount
     return () => {
       if (abortControllerRef.current) {
@@ -1068,14 +852,14 @@ export default function SynthesisScreen({ navigation }) {
       unsubscribe();
     };
   }, []);
-  
+
   // Set up network status listener
   const setupNetworkListener = () => {
     // Check initial status
     NetInfo.fetch().then(state => {
       setIsOnline(state.isConnected === true);
     });
-    
+
     // Subscribe to network changes
     const unsubscribe = NetInfo.addEventListener(state => {
       const newIsOnline = state.isConnected === true;
@@ -1091,26 +875,21 @@ export default function SynthesisScreen({ navigation }) {
         return newIsOnline;
       });
     });
-    
+
     return unsubscribe;
   };
-  
+
   // Process offline queue
   const processOfflineQueue = async () => {
-    
     try {
-      // Process any queued operations first
-      const result = await voiceService.processOfflineQueue();
-      
-      // Always refresh stories when coming back online, regardless of queue processing
+      await voiceService.processOfflineQueue();
       fetchStoriesAndVoiceId(true);
     } catch (error) {
-      console.error('Error processing offline queue:', error);
-      // Still try to fetch stories even if queue processing fails
+      log.error('Error processing offline queue', error);
       fetchStoriesAndVoiceId(true);
     }
   };
-  
+
   // Handle back button
   const onBackPress = useCallback(() => {
     setIsConfirmModalVisible(true);
@@ -1120,7 +899,7 @@ export default function SynthesisScreen({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
-      
+
       return () => {
         if (typeof subscription?.remove === 'function') {
           subscription.remove();
@@ -1128,164 +907,62 @@ export default function SynthesisScreen({ navigation }) {
       };
     }, [onBackPress])
   );
-  
-  // Fetch stories and voice ID
-  const fetchStoriesAndVoiceId = async (silent = false, forceRefresh = false) => {
-    try {
-      if (!silent) {
-        setIsLoading(true);
-      }
-      
-      // Get voice ID using the service
-      const voiceResult = await voiceService.getCurrentVoice();
-      if (!voiceResult.success || !voiceResult.voiceId) {
-        // No voice ID found, navigate back to clone screen
-        navigation.replace('Clone');
-        return;
-      }
-      
-      const currentVoiceId = voiceResult.voiceId;
-      setVoiceId(currentVoiceId);
-      setGenerationStatusByStory({});
-      setProcessingStories({});
-      
-      // Fetch available stories
-      const storiesResult = await voiceService.getStories(forceRefresh);
-      
-      if (storiesResult.success) {
-        let storiesData = storiesResult.stories;
-        
-        // Update stories with audio existence status and cover URLs
-        let storiesWithStatus = await Promise.all(
-          storiesData.map(async (story) => {
-            // Check if audio exists, verifying server state to avoid stale cache
-            const audioExists = await voiceService.checkAudioExists(
-              currentVoiceId,
-              story.id,
-              {
-                verifyRemote: true,
-                cleanupOrphaned: true
-              }
-            );
 
-            const hasAudio =
-              audioExists.success &&
-              (audioExists.localExists || audioExists.remoteExists === true);
-            
-            return {
-              ...story,
-              hasAudio,
-              localUri: audioExists.localUri || null,
-              cover_url: voiceService.getStoryCoverUrl(story.id),
-            };
-          })
-        );
-        
-        // Mark stories that have local audio
-        storiesWithStatus = await voiceService.markStoriesWithLocalAudio(
-          currentVoiceId, 
-          storiesWithStatus
-        );
-        
-        setStories(storiesWithStatus);
-        await hydrateGenerationState(currentVoiceId);
-      } else {
-        handleApiError(storiesResult, 'Nie udało się pobrać bajek.');
-      }
-    } catch (error) {
-      console.error('Error fetching stories and voice ID:', error);
-      if (!silent) {
-        showToast('Wystąpił problem podczas ładowania danych.', 'ERROR');
-      }
-    } finally {
-      if (!silent) {
-        setIsLoading(false);
-      }
-    }
-  };
-  
-  // Handle API errors with appropriate messages
-  const handleApiError = (result, defaultMessage) => {
-    // Handle authentication errors - redirect to login
-    if (result.code === 'AUTH_ERROR') {
-      showToast('Sesja wygasła. Zaloguj się ponownie.', 'ERROR');
-      // Clear any local auth data and redirect to login
-      navigation.replace('Login');
-      return;
-    }
-    
-    if (result.code === 'PAYMENT_REQUIRED') {
-      showToast('Brak wystarczających Punktów Magii. Odwiedź ekran kredytów.', 'ERROR');
-      if (refreshCredits) {
-        refreshCredits({ force: true }).catch(() => {});
-      }
-      return;
-    }
-    
-    // If the app is offline, don't show errors for network operations
-    if (!isOnline && result.code === 'OFFLINE') {
-      return;
-    }
-    
-    let message = defaultMessage;
-    
-    if (result.code === 'TIMEOUT') {
-      message = 'Upłynął limit czasu operacji. Spróbuj ponownie.';
-    } else if (result.code === 'STORAGE_ERROR') {
-      message = 'Problem z pamięcią urządzenia. Spróbuj ponownie.';
-    } else if (result.code === 'GENERATION_TIMEOUT') {
-      message = 'Generowanie bajki trwało zbyt długo. Spróbuj ponownie.';
-    } else if (result.code === 'DOWNLOAD_ERROR') {
-      message = 'Błąd podczas pobierania pliku audio. Spróbuj ponownie.';
-    } else if (result.error) {
-      message = `${defaultMessage} ${result.error}`;
-    }
-    
-    showToast(message, 'ERROR');
-  };
+  const { fetchStoriesAndVoiceId, handleApiError } = useSynthesisData({
+    navigation,
+    showToast,
+    refreshCredits,
+    isOnline,
+    hydrateGenerationState,
+    setVoiceId,
+    setGenerationStatusByStory,
+    setProcessingStories,
+    setStories,
+    setIsLoading
+  });
 
   const resolveResumePosition = useCallback(
     async (audioUri, storyId) => {
       if (!voiceId || !storyId) {
         return 0;
       }
-    try {
-      const progress = await voiceService.getPlaybackProgress(voiceId, storyId);
-      if (!progress || typeof progress.position !== 'number') {
-        return 0;
-      }
-
-      const normalizedPosition = Math.max(0, progress.position);
-      if (normalizedPosition <= 0) {
-        return 0;
-      }
-
-      const storedDuration = Number.isFinite(progress.duration)
-        ? progress.duration
-        : null;
-      if (
-        storedDuration &&
-        storedDuration > 0 &&
-        storedDuration - normalizedPosition <= PROGRESS_FINISH_THRESHOLD_SECONDS
-      ) {
-        return 0;
-      }
-
-      if (typeof progress.sourceUri === 'string' && progress.sourceUri) {
-        const stored = progress.sourceUri;
-        const incoming = typeof audioUri === 'string' ? audioUri : null;
-        const storedIsLocal = stored.startsWith('file://');
-        const incomingIsLocal = incoming?.startsWith('file://');
-        if (storedIsLocal && incomingIsLocal && stored !== incoming) {
+      try {
+        const progress = await voiceService.getPlaybackProgress(voiceId, storyId);
+        if (!progress || typeof progress.position !== 'number') {
           return 0;
         }
-      }
 
-      return normalizedPosition;
-    } catch (error) {
-      console.warn('Failed to resolve playback progress', error);
-      return 0;
-    }
+        const normalizedPosition = Math.max(0, progress.position);
+        if (normalizedPosition <= 0) {
+          return 0;
+        }
+
+        const storedDuration = Number.isFinite(progress.duration)
+          ? progress.duration
+          : null;
+        if (
+          storedDuration &&
+          storedDuration > 0 &&
+          storedDuration - normalizedPosition <= PROGRESS_FINISH_THRESHOLD_SECONDS
+        ) {
+          return 0;
+        }
+
+        if (typeof progress.sourceUri === 'string' && progress.sourceUri) {
+          const stored = progress.sourceUri;
+          const incoming = typeof audioUri === 'string' ? audioUri : null;
+          const storedIsLocal = stored.startsWith('file://');
+          const incomingIsLocal = incoming?.startsWith('file://');
+          if (storedIsLocal && incomingIsLocal && stored !== incoming) {
+            return 0;
+          }
+        }
+
+        return normalizedPosition;
+      } catch (error) {
+        log.warn('Failed to resolve playback progress', error);
+        return 0;
+      }
     },
     [voiceId]
   );
@@ -1311,26 +988,15 @@ export default function SynthesisScreen({ navigation }) {
 
       if (generationStatusByStory?.[story.id]) {
         setIsProgressModalVisible(true);
-        await getStoryAudio(story);
+        // Do not re-trigger generation; just surface progress
+        return;
       }
       return;
     }
 
     if (!skipQueueSync && storyHasPlayableAudio(story)) {
-      const existingIndex = queueIndexByStoryId.get(storyKey);
-      if (typeof existingIndex === 'number' && existingIndex >= 0) {
-        if (existingIndex !== activeQueueIndex) {
-          suppressQueueAutoRef.current = true;
-          setActiveQueueItem({ index: existingIndex });
-        }
-      } else {
-        const payload = buildQueuePayload(story);
-        if (payload) {
-          suppressQueueAutoRef.current = true;
-          enqueue(payload);
-          setActiveQueueItem({ storyId: storyKey });
-        }
-      }
+      suppressQueueAutoRef.current = true;
+      handleSyncStoryToQueue(story);
     }
 
     if (selectedStory?.id !== story.id) {
@@ -1348,13 +1014,13 @@ export default function SynthesisScreen({ navigation }) {
             sourceUri: currentAudioUriRef.current,
             updatedAt: Date.now()
           })
-          .catch(() => {});
+          .catch(() => { });
       }
       try {
         await audioPlayer?.stop?.();
         await audioPlayer?.seekTo?.(0);
       } catch (stopError) {
-        console.warn('Failed to pause audio before switching story', stopError);
+        log.warn('Failed to pause audio before switching story', stopError);
       }
       await sleep(60);
       setAudioControlsVisible(false);
@@ -1422,6 +1088,16 @@ export default function SynthesisScreen({ navigation }) {
     handleStorySelectRef.current = handleStorySelect;
   }, [handleStorySelect]);
 
+  useActiveQueuePlayback({
+    playbackQueue,
+    activeQueueIndex,
+    queueLength,
+    findStoryById,
+    selectedStory,
+    handleStorySelectRef,
+    suppressQueueAutoRef
+  });
+
   const handleConfirmGeneration = async () => {
     const storyToGenerate = pendingGeneration?.story;
 
@@ -1468,7 +1144,7 @@ export default function SynthesisScreen({ navigation }) {
       message: `Wygenerowanie bajki "${sanitizedTitle}" może wymagać wykorzystania ${localizedUnitLabel}. Czy chcesz kontynuować?`,
     };
   }, [pendingGeneration, localizedUnitLabel]);
-  
+
   // Get story audio with progress tracking
   const getStoryAudio = async (story, forceDownload = false) => {
     try {
@@ -1524,29 +1200,29 @@ export default function SynthesisScreen({ navigation }) {
           currentStories.map((s) =>
             s.id === story.id
               ? {
-                  ...s,
-                  hasAudio: true,
-                  localUri: result.uri,
-                  hasLocalAudio: true,
-                  localAudioUri: result.uri
-                }
+                ...s,
+                hasAudio: true,
+                localUri: result.uri,
+                hasLocalAudio: true,
+                localAudioUri: result.uri
+              }
               : s
           )
         );
 
         if (refreshCredits) {
-          refreshCredits({ force: true }).catch(() => {});
+          refreshCredits({ force: true }).catch(() => { });
         }
       } else if (result.code === 'PAYMENT_REQUIRED') {
         showToast('Brakuje Punktów Magii, aby wygenerować tę bajkę.', 'ERROR');
         if (refreshCredits) {
-          refreshCredits({ force: true }).catch(() => {});
+          refreshCredits({ force: true }).catch(() => { });
         }
       } else {
         handleApiError(result, 'Nie udało się wygenerować bajki:');
       }
     } catch (error) {
-      console.error('Error getting story audio:', error);
+      log.error('Error getting story audio', error);
       handleGenerationEvent(story.id, {
         status: 'error',
         progress: null,
@@ -1581,15 +1257,15 @@ export default function SynthesisScreen({ navigation }) {
       resetProgressTiming(story.id);
     }
   };
-  
+
   // Cancel current operation
   const handleCancelOperation = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
-      
+
       // Hide progress modal
       setIsProgressModalVisible(false);
-      
+
       // Clear processing states
       setProcessingStories({});
       if (activeGenerationStoryId && voiceId) {
@@ -1599,7 +1275,7 @@ export default function SynthesisScreen({ navigation }) {
           return next;
         });
         voiceService.clearGenerationStateSnapshot(voiceId, activeGenerationStoryId).catch(
-          () => {}
+          () => { }
         );
       }
       if (activeGenerationStoryId) {
@@ -1617,11 +1293,11 @@ export default function SynthesisScreen({ navigation }) {
         serviceProvider: null,
         storyId: null
       });
-      
+
       showToast('Operacja została anulowana.', 'INFO');
     }
   };
-  
+
   // Load story audio
   const loadStoryAudio = async (
     storyContext,
@@ -1660,15 +1336,15 @@ export default function SynthesisScreen({ navigation }) {
 
       // First make sure audioControlsVisible is set to true before loading audio
       setAudioControlsVisible(true);
-      
+
       // Pass a callback to handle corrupted files
       const success = await loadAudio(
         audioUri,
         autoPlay,
         handleCorruptedAudio,
-        0
+        effectiveStart ?? 0
       );
-      
+
       if (!success) {
         showToast('Nie udało się załadować audio. Spróbuj ponownie.', 'ERROR');
         // If loading failed, hide the controls
@@ -1684,7 +1360,7 @@ export default function SynthesisScreen({ navigation }) {
         }
       }
     } catch (error) {
-      console.error('Error loading audio:', error);
+      log.error('Error loading audio', error);
       showToast('Wystąpił problem podczas ładowania audio.', 'ERROR');
       setAudioControlsVisible(false);
       if (currentAudioUriRef.current === audioUri) {
@@ -1708,8 +1384,14 @@ export default function SynthesisScreen({ navigation }) {
 
     if (remaining <= PROGRESS_FINISH_THRESHOLD_SECONDS) {
       if (!completedPlaybackRef.current) {
-        voiceService.clearPlaybackProgress(voiceId, storyId).catch(() => {});
+        voiceService.clearPlaybackProgress(voiceId, storyId).catch(() => { });
         completedPlaybackRef.current = true;
+        setStoryProgress((prev) => {
+          if (prev[storyId] === 0) {
+            return prev;
+          }
+          return { ...prev, [storyId]: 0 };
+        });
       }
 
       const normalizedStoryId = String(storyId);
@@ -1717,15 +1399,21 @@ export default function SynthesisScreen({ navigation }) {
         !isPlaying &&
         queueLength > 0 &&
         queueIndexByStoryId.has(normalizedStoryId) &&
-        queueAdvanceRef.current !== normalizedStoryId
+        queueAdvanceRef.current !== normalizedStoryId &&
+        !userPausedRef.current
       ) {
         queueAdvanceRef.current = normalizedStoryId;
+        userPausedRef.current = false;
 
-        if (loopMode === LOOP_MODES.REPEAT_ONE) {
-          togglePlayPause();
-        } else {
-          advanceQueue();
-        }
+        handleAutoAdvanceOnComplete({
+          normalizedStoryId,
+          repeatOneBehavior: () => {
+            seekTo(0).catch(() => { });
+            if (!isPlaying) {
+              handleTogglePlayPause();
+            }
+          }
+        });
       }
 
       return;
@@ -1746,13 +1434,21 @@ export default function SynthesisScreen({ navigation }) {
     }
 
     lastProgressSaveRef.current = now;
+    const ratio = Math.max(0, Math.min(1, position / duration));
+    setStoryProgress((prev) => {
+      const current = prev[storyId];
+      if (typeof current === 'number' && Math.abs(current - ratio) < 0.005) {
+        return prev;
+      }
+      return { ...prev, [storyId]: ratio };
+    });
 
     voiceService.savePlaybackProgress(voiceId, storyId, {
       position,
       duration,
       sourceUri: currentAudioUriRef.current,
       updatedAt: now
-    }).catch(() => {});
+    }).catch(() => { });
   }, [
     position,
     duration,
@@ -1764,7 +1460,7 @@ export default function SynthesisScreen({ navigation }) {
     queueIndexByStoryId,
     loopMode,
     advanceQueue,
-    togglePlayPause
+    handleTogglePlayPause
   ]);
 
   useEffect(() => {
@@ -1785,40 +1481,40 @@ export default function SynthesisScreen({ navigation }) {
     seekTo(safePosition)
       .then(() => {
         if (!isPlaying) {
-          togglePlayPause();
+          handleTogglePlayPause();
         }
       })
       .catch((error) => {
-        console.warn('Failed to apply resume position', error);
+        log.warn('Failed to apply resume position', error);
       });
     pendingResumeRef.current = null;
-  }, [duration, seekTo, togglePlayPause, isPlaying]);
+  }, [duration, seekTo, handleTogglePlayPause, isPlaying]);
 
   // This function handles corrupted audio files
   const handleCorruptedAudio = async (corruptedUri) => {
-    console.log('Handling corrupted audio file:', corruptedUri);
-    
+    log.info('Handling corrupted audio file', corruptedUri);
+
     // First hide audio controls and reset audio state
     await handleResetAudio();
-    
+
     // Check which story this corrupted audio belongs to
-    const matchingStory = stories.find(story => 
+    const matchingStory = stories.find(story =>
       story.localAudioUri === corruptedUri || story.localUri === corruptedUri
     );
-    
+
     if (!matchingStory) {
       showToast('Plik audio jest uszkodzony. Spróbuj pobrać historię ponownie.', 'ERROR');
       return;
     }
-    
+
     // Show toast to inform user
     showToast('Plik audio uszkodzony. Ponowne pobieranie...', 'INFO');
-    
+
     try {
       // Remove the audio reference from storage
       const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
       const audioInfo = infoString ? JSON.parse(infoString) : {};
-      
+
       // Clean up the reference
       if (audioInfo[voiceId]) {
         for (const storyId in audioInfo[voiceId]) {
@@ -1826,18 +1522,18 @@ export default function SynthesisScreen({ navigation }) {
             delete audioInfo[voiceId][storyId];
           }
         }
-        
+
         await AsyncStorage.setItem(STORAGE_KEYS.DOWNLOADED_AUDIO, JSON.stringify(audioInfo));
       }
-      
+
       // Try to delete the corrupted file
       try {
         await FileSystem.deleteAsync(corruptedUri, { idempotent: true });
       } catch (deleteError) {
-        console.error('Error deleting corrupted file:', deleteError);
+        log.error('Error deleting corrupted file', deleteError);
         // Continue even if deletion fails
       }
-      
+
       setActiveGenerationStoryId(matchingStory.id);
       handleGenerationEvent(matchingStory.id, {
         status: 'downloading',
@@ -1871,7 +1567,7 @@ export default function SynthesisScreen({ navigation }) {
         delete next[matchingStory.id];
         return next;
       });
-      
+
       if (result.success) {
         // Load the audio with auto-play
         setSelectedStory(matchingStory); // Re-set selected story
@@ -1880,26 +1576,26 @@ export default function SynthesisScreen({ navigation }) {
           autoPlay: true,
           startPosition: resumePosition
         });
-        
+
         // Update story in the list
         setStories(currentStories =>
-          currentStories.map(s => 
-            s.id === matchingStory.id ? { 
-              ...s, 
-              hasAudio: true, 
+          currentStories.map(s =>
+            s.id === matchingStory.id ? {
+              ...s,
+              hasAudio: true,
               localUri: result.uri,
               hasLocalAudio: true,
               localAudioUri: result.uri
             } : s
           )
         );
-        
+
         showToast('Audio ponownie pobrane pomyślnie', 'SUCCESS');
       } else {
         handleApiError(result, 'Nie udało się ponownie pobrać audio:');
       }
     } catch (error) {
-      console.error('Error recovering from corrupted audio:', error);
+      log.error('Error recovering from corrupted audio', error);
       showToast('Nie udało się ponownie pobrać audio. Spróbuj ponownie.', 'ERROR');
       setIsProgressModalVisible(false);
       setGenerationStatusByStory((prev) => {
@@ -1939,7 +1635,7 @@ export default function SynthesisScreen({ navigation }) {
             sourceUri: currentAudioUriRef.current,
             updatedAt: Date.now()
           })
-          .catch(() => {});
+          .catch(() => { });
       }
       await unloadAudio();
       setAudioControlsVisible(false);
@@ -1950,17 +1646,17 @@ export default function SynthesisScreen({ navigation }) {
       lastProgressSaveRef.current = 0;
       pendingResumeRef.current = null;
     } catch (error) {
-      console.error('Error resetting audio:', error);
+      log.error('Error resetting audio', error);
     }
   };
 
   const performVoiceReset = async () => {
     try {
       setIsLoading(true);
-      
+
       // Unload any playing audio
       await unloadAudio();
-      
+
       // Delete voice from server using the voice service
       if (voiceId) {
         const deleteResult = await voiceService.deleteVoice(voiceId);
@@ -1970,23 +1666,23 @@ export default function SynthesisScreen({ navigation }) {
           return;
         }
       }
-      
+
       setIsConfirmModalVisible(false);
-      
+
       // Navigate back to clone screen
       navigation.replace('Clone');
     } catch (error) {
-      console.error('Error deleting voice:', error);
+      log.error('Error deleting voice', error);
       showToast('Wystąpił problem podczas usuwania głosu. Spróbuj ponownie.', 'ERROR');
       setIsLoading(false);
     }
   };
-  
+
   // Reset voice and go back to clone screen
   const handleResetVoice = () => {
     setIsConfirmModalVisible(true);
   };
-  
+
   // Refresh stories
   const handleRefresh = useCallback(async () => {
     if (!isOnline) {
@@ -1998,16 +1694,16 @@ export default function SynthesisScreen({ navigation }) {
     try {
       await fetchStoriesAndVoiceId(true, true);
       if (refreshCredits) {
-        await refreshCredits({ force: true }).catch(() => {});
+        await refreshCredits({ force: true }).catch(() => { });
       }
     } catch (error) {
-      console.error('Error refreshing stories:', error);
+      log.error('Error refreshing stories', error);
       showToast('Nie udało się odświeżyć listy bajek.', 'ERROR');
     } finally {
       setIsRefreshing(false);
     }
   }, [fetchStoriesAndVoiceId, isOnline, refreshCredits, showToast]);
-  
+
   // Render story item
   const renderStoryItem = ({ item }) => {
     if (item.type === 'divider') {
@@ -2028,6 +1724,7 @@ export default function SynthesisScreen({ navigation }) {
     const hasQueueEntry = typeof queueIndex === 'number' && queueIndex >= 0;
     const queuePosition = hasQueueEntry ? queueIndex + 1 : null;
     const isActiveQueueItem = hasQueueEntry && queueIndex === activeQueueIndex;
+    const playbackProgress = storyProgress[story.id] ?? null;
     const affordable =
       typeof requiredCredits === 'number' ? balance >= requiredCredits : true;
     return (
@@ -2048,46 +1745,19 @@ export default function SynthesisScreen({ navigation }) {
         onPlayNext={() => handlePlayNextStory(story)}
         queuePosition={queuePosition}
         isActiveQueueItem={isActiveQueueItem}
+        playbackProgress={playbackProgress}
       />
     );
   };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={styles.header}>
-        {isOnline ? (
-          // <TouchableOpacity
-          //   style={styles.backButton}
-          //   onPress={() => setIsConfirmModalVisible(true)}
-          // >
-          //   <Feather name="chevron-left" size={24} color={COLORS.peach} />
-          //   <Text style={styles.backButtonText}>Reset</Text>
-          // </TouchableOpacity>
-          <TouchableOpacity 
-            // style={{ position: 'absolute', top: 40, right: 20, zIndex: 100 }}
-            style={styles.backButton}
-            onPress={() => setIsMenuVisible(true)}
-          >
-            <Feather name="menu" size={24} color={COLORS.text.primary} />
-          </TouchableOpacity>
-        
-        ) : (
-          <View style={styles.backButton} />
-        )}
-        
-        <Text style={styles.headerTitle}>DawnoTemu</Text>
-        
-        <View style={styles.avatarContainer}>
-          <Image 
-            source={require('../assets/images/logo.png')} 
-            style={styles.avatar}
-            resizeMode="contain"
-          />
-        </View>
-              </View>
-        
-        {/* Content */}
+      <SynthesisHeader
+        isOnline={isOnline}
+        onMenuPress={() => setIsMenuVisible(true)}
+      />
+
+      {/* Content */}
       <View style={styles.content}>
         {isLoading ? (
           <View style={styles.loadingContainer}>
@@ -2096,60 +1766,6 @@ export default function SynthesisScreen({ navigation }) {
           </View>
         ) : (
           <>
-            <View style={styles.queueControlsContainer}>
-              <View style={styles.queueSummary}>
-                <Feather name="list" size={16} color={COLORS.text.secondary} />
-                <Text style={styles.queueSummaryText}>W kolejce: {queueLength}</Text>
-              </View>
-              <View style={styles.queueActions}>
-                <TouchableOpacity
-                  style={[
-                    styles.queueButton,
-                    styles.queueButtonFirst,
-                    styles.queueButtonPrimary,
-                    autoFillDisabled && styles.queueButtonDisabled
-                  ]}
-                  onPress={handleAutoFillQueue}
-                  disabled={autoFillDisabled}
-                  activeOpacity={0.85}
-                >
-                  <Feather name="plus-circle" size={16} color={COLORS.white} />
-                  <Text
-                    style={[
-                      styles.queueButtonText,
-                      styles.queueButtonTextPrimary
-                    ]}
-                  >
-                    Uzupełnij kolejkę
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.queueButton,
-                    styles.queueButtonSecondary,
-                    clearQueueDisabled && styles.queueButtonDisabled
-                  ]}
-                  onPress={handleClearQueue}
-                  disabled={clearQueueDisabled}
-                  activeOpacity={0.85}
-                >
-                  <Feather
-                    name="trash-2"
-                    size={16}
-                    color={clearQueueDisabled ? COLORS.text.tertiary : COLORS.lavender}
-                  />
-                  <Text
-                    style={[
-                      styles.queueButtonText,
-                      styles.queueButtonTextSecondary,
-                      clearQueueDisabled && styles.queueButtonTextDisabled
-                    ]}
-                  >
-                    Wyczyść kolejkę
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
             <FlatList
               data={displayStories}
               renderItem={renderStoryItem}
@@ -2170,7 +1786,7 @@ export default function SynthesisScreen({ navigation }) {
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <Text style={styles.emptyText}>
-                    {!isOnline 
+                    {!isOnline
                       ? 'Brak dostępnych bajek offline. Połącz się z internetem, aby pobrać bajki.'
                       : 'Nie znaleziono bajek. Spróbuj odświeżyć.'}
                   </Text>
@@ -2190,14 +1806,14 @@ export default function SynthesisScreen({ navigation }) {
           </>
         )}
       </View>
-      
+
       {/* Audio Controls */}
       <AudioControls
         isVisible={audioControlsVisible}
         isPlaying={isPlaying}
         duration={duration}
         position={position}
-        onPlayPause={togglePlayPause}
+        onPlayPause={handleTogglePlayPause}
         onRewind={rewind}
         onForward={forward}
         onSeek={seekTo}
@@ -2213,8 +1829,9 @@ export default function SynthesisScreen({ navigation }) {
         onToggleLoop={handleCycleLoopMode}
         queuePosition={currentQueuePosition}
         queueLength={queueLength}
+        onOpenQueue={() => navigation.navigate('Queue')}
       />
-      
+
       {/* Generation Confirmation */}
       <ConfirmModal
         visible={isGenerationConfirmVisible}
@@ -2236,7 +1853,7 @@ export default function SynthesisScreen({ navigation }) {
         onConfirm={performVoiceReset}
         onCancel={() => setIsConfirmModalVisible(false)}
       />
-      
+
       {/* Progress Modal */}
       <ProgressModal
         visible={isProgressModalVisible}
@@ -2249,11 +1866,11 @@ export default function SynthesisScreen({ navigation }) {
         serviceProvider={progressData.serviceProvider}
         onCancel={handleCancelOperation}
       />
-      <AppMenu 
-          navigation={navigation}
-          isVisible={isMenuVisible}
-          onClose={() => setIsMenuVisible(false)}
-        />
+      <AppMenu
+        navigation={navigation}
+        isVisible={isMenuVisible}
+        onClose={() => setIsMenuVisible(false)}
+      />
     </View>
   );
 }
@@ -2263,112 +1880,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    height: 64,
-    backgroundColor: COLORS.white,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0, 0, 0, 0.05)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    zIndex: 10,
-  },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  backButtonText: {
-    fontFamily: 'Quicksand-Medium',
-    fontSize: 14,
-    color: COLORS.peach,
-    marginLeft: 4,
-  },
-  headerTitle: {
-    fontFamily: 'Comfortaa-Regular',
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: COLORS.text.primary,
-    flex: 1,
-    textAlign: 'center',
-  },
-  avatarContainer: {
-    flex: 1,
-    alignItems: 'flex-end',
-  },
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16
-  },
   content: {
     flex: 1,
     paddingTop: 8,
-  },
-  queueControlsContainer: {
-    paddingHorizontal: 16,
-    paddingTop: 4,
-    paddingBottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  queueSummary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  queueSummaryText: {
-    marginLeft: 6,
-    fontFamily: 'Quicksand-Medium',
-    fontSize: 13,
-    color: COLORS.text.secondary,
-  },
-  queueActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  queueButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginLeft: 10,
-  },
-  queueButtonFirst: {
-    marginLeft: 0,
-  },
-  queueButtonPrimary: {
-    backgroundColor: COLORS.peach,
-    borderColor: COLORS.peach,
-  },
-  queueButtonSecondary: {
-    backgroundColor: 'rgba(218, 143, 255, 0.12)',
-    borderColor: 'rgba(218, 143, 255, 0.35)',
-  },
-  queueButtonDisabled: {
-    opacity: 0.6,
-  },
-  queueButtonText: {
-    fontFamily: 'Quicksand-Medium',
-    fontSize: 13,
-    marginLeft: 8,
-  },
-  queueButtonTextPrimary: {
-    color: COLORS.white,
-  },
-  queueButtonTextSecondary: {
-    color: COLORS.lavender,
-  },
-  queueButtonTextDisabled: {
-    color: COLORS.text.tertiary,
   },
   loadingContainer: {
     flex: 1,

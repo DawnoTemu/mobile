@@ -85,6 +85,7 @@ EXPO_PUBLIC_API_ENV=PROD       # DEV, STAGING, or PROD (default)
 - **Audio processing** – recording uses WAV, synthesized audio is stored as MP3, and cached files live in Expo's temporary directory.
 - **Offline behavior** – services queue cloning, synthesis, and download operations while offline and replay them once connectivity is restored.
 - **Credits QA** – see `docs/mobile-credits-testing.md` for automated scenarios and manual validation steps that cover story point balances.
+- **Playback queue** – queue state is persisted in AsyncStorage with versioned snapshots (capped at 200 items). Loop modes are stored separately. If the queue looks corrupted, clear `playback_queue_state`/`playback_loop_mode` (see `docs/runbooks/playback-queue.md`).
 
 ## Testing & QA
 
@@ -102,6 +103,7 @@ EXPO_PUBLIC_API_ENV=PROD       # DEV, STAGING, or PROD (default)
 ## Additional Resources
 
 - `docs/mobile-credits-testing.md` – story points QA checklist
+- `docs/runbooks/playback-queue.md` – runbook for queue corruption/looping issues
 - `AGENTS.md` – automation and tooling overview
 - `PLAN.md` – current development roadmap (if maintained)
 

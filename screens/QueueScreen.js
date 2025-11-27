@@ -15,6 +15,8 @@ import { usePlaybackQueue, usePlaybackQueueDispatch, LOOP_MODES } from '../conte
 import { COLORS } from '../styles/colors';
 import { useToast } from '../components/StatusToast';
 import voiceService from '../services/voiceService';
+import { collectQueueStoryIds, buildAutoFillItems, filterPlayableStories } from '../services/playbackQueueService';
+import { recordEvent } from '../utils/metrics';
 
 const LOOP_MODE_SEQUENCE = [LOOP_MODES.NONE, LOOP_MODES.REPEAT_ALL, LOOP_MODES.REPEAT_ONE];
 const LOOP_MODE_LABELS = {
@@ -34,7 +36,9 @@ export default function QueueScreen() {
     clearQueue,
     enqueue,
     setLoopMode,
-    setActiveItem
+    setActiveItem,
+    reorderQueue,
+    shuffleQueue
   } = usePlaybackQueueDispatch();
 
   const [pendingConfirmation, setPendingConfirmation] = useState(false);
@@ -60,48 +64,7 @@ export default function QueueScreen() {
     });
   }, [queue, activeQueueIndex]);
 
-  const resolveQueueStoryId = useCallback((entry) => {
-    if (entry == null) {
-      return null;
-    }
-
-    if (typeof entry === 'string' || typeof entry === 'number') {
-      return String(entry);
-    }
-
-    if (typeof entry === 'object') {
-      if (entry.storyId != null) {
-        return String(entry.storyId);
-      }
-      if (entry.id != null) {
-        return String(entry.id);
-      }
-    }
-
-    return null;
-  }, []);
-
-  const existingStoryIds = useMemo(() => {
-    const ids = new Set();
-    (queue || []).forEach((entry) => {
-      const id = resolveQueueStoryId(entry);
-      if (id) {
-        ids.add(id);
-      }
-    });
-    return ids;
-  }, [queue, resolveQueueStoryId]);
-
-  const applyQueueMutation = useCallback(
-    (nextQueue, nextActiveIndex = null) => {
-      clearQueue();
-      enqueue(nextQueue);
-      if (typeof nextActiveIndex === 'number' && nextActiveIndex >= 0) {
-        setActiveItem({ index: nextActiveIndex });
-      }
-    },
-    [clearQueue, enqueue, setActiveItem]
-  );
+  const existingStoryIds = useMemo(() => collectQueueStoryIds(queue), [queue]);
 
   const handleClearQueue = () => {
     if (!queueItems.length || pendingConfirmation) {
@@ -126,6 +89,7 @@ export default function QueueScreen() {
             clearQueue();
             setPendingConfirmation(false);
             showToast('Kolejka wyczyszczona.', 'SUCCESS');
+            recordEvent('queue_clear', { reason: 'user_action', location: 'QueueScreen' });
           }
         }
       ]
@@ -152,8 +116,13 @@ export default function QueueScreen() {
     const nextQueue = [...queue];
     const [movedItem] = nextQueue.splice(fromIndex, 1);
     nextQueue.splice(toIndex, 0, movedItem);
-    applyQueueMutation(nextQueue, toIndex);
+    const isMovingActive = fromIndex === activeQueueIndex;
+    reorderQueue(
+      nextQueue,
+      isMovingActive ? { activeIndex: toIndex } : {}
+    );
     showToast('Zmieniono kolejność w kolejce.', 'SUCCESS');
+    recordEvent('queue_reorder', { fromIndex, toIndex });
   };
 
   const handleMoveUp = (index) => handleMove(index, index - 1);
@@ -188,37 +157,35 @@ export default function QueueScreen() {
         return;
       }
 
-      const playableStories = storiesResult.stories.filter((story) => {
-        const hasRemoteAudio = Boolean(story.hasAudio);
-        const hasLocalAudio = Boolean(story.hasLocalAudio || story.localAudioUri);
-        const hasDownloadUri = Boolean(story.localUri);
-        return hasRemoteAudio || hasLocalAudio || hasDownloadUri;
-      });
+      const hydratedStories = await Promise.all(
+        storiesResult.stories.map(async (story) => {
+          const exists = await voiceService.checkAudioExists(
+            voiceResult.voiceId,
+            story.id,
+            {
+              verifyRemote: true,
+              cleanupOrphaned: true
+            }
+          );
+          const hasAudio = exists.success && (exists.localExists || exists.remoteExists);
+          return {
+            ...story,
+            hasAudio,
+            localUri: exists.localUri ?? story.localUri ?? null,
+            hasLocalAudio: Boolean(story.hasLocalAudio || story.localAudioUri)
+          };
+        })
+      );
 
-      const newItems = [];
-      playableStories.forEach((story) => {
-        if (story?.id == null) {
-          return;
-        }
-        const storyKey = String(story.id);
-        if (existingStoryIds.has(storyKey)) {
-          return;
-        }
-
-        newItems.push({
-          id: storyKey,
-          storyId: storyKey,
-          title: story.title ?? `Bajka ${storyKey}`,
-          author: story.author ?? 'Anonim',
-          duration: story.duration ?? null,
-          hasAudio: Boolean(story.hasAudio || story.hasLocalAudio || story.localUri),
-          hasLocalAudio: Boolean(story.hasLocalAudio || story.localAudioUri),
-          localUri: story.localUri ?? null,
-          localAudioUri: story.localAudioUri ?? null,
-          coverUrl: story.cover_url ?? story.coverUrl ?? voiceService.getStoryCoverUrl?.(story.id) ?? null,
-          voiceId: voiceResult.voiceId
-        });
-      });
+      const playableStories = filterPlayableStories(hydratedStories);
+      const newItems = buildAutoFillItems({
+        stories: playableStories,
+        existingIds: existingStoryIds,
+        voiceId: voiceResult.voiceId
+      }).map((item) => ({
+        ...item,
+        coverUrl: item.coverUrl ?? voiceService.getStoryCoverUrl?.(item.storyId) ?? null
+      }));
 
       if (!newItems.length) {
         showToast('Brak nowych bajek do dodania.', 'INFO');
@@ -231,6 +198,7 @@ export default function QueueScreen() {
       }
 
       showToast(`Dodano ${newItems.length} bajek do kolejki.`, 'SUCCESS');
+      recordEvent('queue_auto_fill', { added: newItems.length, location: 'QueueScreen' });
     } catch (error) {
       console.error('Queue auto-fill failed', error);
       showToast('Nie udało się uzupełnić kolejki.', 'ERROR');
@@ -245,9 +213,9 @@ export default function QueueScreen() {
       return;
     }
 
-    const shuffled = [...queue].sort(() => Math.random() - 0.5);
-    applyQueueMutation(shuffled);
+    shuffleQueue();
     showToast('Przetasowano kolejkę.', 'SUCCESS');
+    recordEvent('queue_shuffle', { queueLength: queue.length });
   };
 
   const handleSelectItem = (index) => {
@@ -318,15 +286,14 @@ export default function QueueScreen() {
 
       <View style={styles.actionsRow}>
         <TouchableOpacity
-          style={[styles.actionChip, queueEmpty && styles.actionChipDisabled]}
+          style={[styles.actionChip, styles.actionChipSpacer, queueEmpty && styles.actionChipDisabled]}
           onPress={handleClearQueue}
           disabled={queueEmpty}
         >
           <Feather name="trash" size={16} color={queueEmpty ? COLORS.text.tertiary : COLORS.error} />
-          <Text style={[styles.actionChipText, queueEmpty && styles.actionChipTextDisabled]}>Wyczyść</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.actionChip, autoFillLoading && styles.actionChipDisabled]}
+          style={[styles.actionChip, styles.actionChipSpacer, autoFillLoading && styles.actionChipDisabled]}
           onPress={handleAutoFill}
           disabled={autoFillLoading}
         >
@@ -335,15 +302,13 @@ export default function QueueScreen() {
           ) : (
             <Feather name="plus-circle" size={16} color={COLORS.lavender} />
           )}
-          <Text style={styles.actionChipText}>Uzupełnij</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.actionChip, queueEmpty && styles.actionChipDisabled]}
+          style={[styles.actionChip, styles.actionChipSpacer, queueEmpty && styles.actionChipDisabled]}
           onPress={handleShuffle}
           disabled={queueEmpty}
         >
           <Feather name="shuffle" size={16} color={queueEmpty ? COLORS.text.tertiary : COLORS.lavender} />
-          <Text style={[styles.actionChipText, queueEmpty && styles.actionChipTextDisabled]}>Tasuj</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionChip} onPress={handleCycleLoopMode}>
           <Feather
@@ -351,7 +316,6 @@ export default function QueueScreen() {
             size={16}
             color={loopMode === LOOP_MODES.NONE ? COLORS.text.secondary : COLORS.lavender}
           />
-          <Text style={styles.actionChipText}>{LOOP_MODE_LABELS[loopMode]}</Text>
         </TouchableOpacity>
       </View>
 
@@ -409,14 +373,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
     paddingHorizontal: 16,
     paddingVertical: 12,
     gap: 8,
   },
   actionChip: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 12,
@@ -425,16 +391,11 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     gap: 6,
   },
+  actionChipSpacer: {
+    marginRight: 8,
+  },
   actionChipDisabled: {
     opacity: 0.55,
-  },
-  actionChipText: {
-    fontFamily: 'Quicksand-Medium',
-    fontSize: 13,
-    color: COLORS.text.secondary,
-  },
-  actionChipTextDisabled: {
-    color: COLORS.text.tertiary,
   },
   listContainer: {
     flex: 1,

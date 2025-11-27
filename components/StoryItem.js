@@ -4,9 +4,10 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Image,
   ActivityIndicator,
 } from 'react-native';
+import { Image } from 'expo-image';
+import * as Haptics from 'expo-haptics';
 import { Feather } from '@expo/vector-icons';
 import { Swipeable } from 'react-native-gesture-handler';
 import { COLORS } from '../styles/colors';
@@ -46,6 +47,7 @@ export default function StoryItem({
   author,
   duration,
   imageSource,
+  playbackProgress = null,
   isSelected,
   isGenerating,
   requiredCredits,
@@ -71,7 +73,7 @@ export default function StoryItem({
     : null;
   const isInsufficient = !isReady && hasNumericCredits && !isAffordable;
   const badgeLabel = isReady
-    ? 'Gotowa bajka'
+    ? null
     : hasNumericCredits
       ? isInsufficient
         ? `Brak środków • ${formattedCredits}`
@@ -86,7 +88,7 @@ export default function StoryItem({
 
   const queueBadgeLabel = useMemo(() => {
     if (isActiveQueueItem) {
-      return 'Teraz odtwarzana';
+      return null;
     }
     if (isQueued) {
       const safePosition =
@@ -105,16 +107,30 @@ export default function StoryItem({
   };
 
   const handleAddToQueue = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     closeSwipeable();
     onAddToQueue?.();
   };
 
   const handlePlayNext = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     closeSwipeable();
     onPlayNext?.();
   };
 
+  const normalizedProgress = useMemo(() => {
+    const value = Number(playbackProgress);
+    if (!Number.isFinite(value) || value < 0) {
+      return 0;
+    }
+    return Math.min(1, value);
+  }, [playbackProgress]);
+
   const renderStatusIcon = () => {
+    if (isActiveQueueItem) {
+      return <Feather name="volume-2" size={20} color={COLORS.lavender} />;
+    }
+
     if (isGenerating) {
       return <ActivityIndicator size="small" color={COLORS.peach} />;
     }
@@ -135,7 +151,7 @@ export default function StoryItem({
   };
 
   const renderQueueBadge = () => {
-    if (!queueBadgeLabel) {
+    if (!queueBadgeLabel || isActiveQueueItem) {
       return null;
     }
 
@@ -203,21 +219,35 @@ export default function StoryItem({
         isQueued && styles.queued,
         isActiveQueueItem && styles.activeQueue
       ]}
-      onPress={onPress}
+      onPress={() => {
+        Haptics.selectionAsync();
+        onPress && onPress();
+      }}
       disabled={disabled}
       activeOpacity={0.7}
     >
       {renderQueueBadge()}
-      <Image
-        source={
-          imageSource
-            ? { uri: imageSource }
-            : require('../assets/images/cover.png')
-        }
-        style={styles.image}
-        resizeMode="cover"
-        onError={(e) => console.log('Image loading error:', e.nativeEvent.error)}
-      />
+      <View style={styles.imageWrapper}>
+        <Image
+          source={
+            imageSource
+              ? { uri: imageSource }
+              : require('../assets/images/cover.png')
+          }
+          style={styles.image}
+          contentFit="cover"
+          transition={200}
+          onError={(e) => console.log('Image loading error:', e.error)}
+        />
+        <View style={styles.progressTrack}>
+          <View
+            style={[
+              styles.progressFill,
+              { width: `${normalizedProgress * 100}%` }
+            ]}
+          />
+        </View>
+      </View>
 
       <View style={styles.content}>
         <Text style={styles.title} numberOfLines={1}>
@@ -235,43 +265,41 @@ export default function StoryItem({
         ) : null}
 
         <View style={styles.creditsRow}>
-          {isCreditLoading ? (
-            <ActivityIndicator size="small" color={COLORS.lavender} />
-          ) : (
-            <View
+      {isCreditLoading ? (
+        <ActivityIndicator size="small" color={COLORS.lavender} />
+      ) : !isReady ? (
+        <View
+          style={[
+            styles.creditBadge,
+            isInsufficient && styles.creditBadgeInsufficient,
+            !hasNumericCredits && !isReady && styles.creditBadgePlaceholder
+          ]}
+        >
+          <Feather
+            name={badgeIcon}
+            size={12}
+            color={
+              hasNumericCredits
+                ? isInsufficient
+                  ? COLORS.error
+                  : COLORS.white
+                : COLORS.text.secondary
+            }
+          />
+          {badgeLabel ? (
+            <Text
               style={[
-                styles.creditBadge,
-                isReady && styles.creditBadgeReady,
-                isInsufficient && styles.creditBadgeInsufficient,
-                !hasNumericCredits && !isReady && styles.creditBadgePlaceholder
+                styles.creditBadgeText,
+                isInsufficient && styles.creditBadgeTextInsufficient,
+                !hasNumericCredits && !isReady && styles.creditBadgePlaceholderText
               ]}
+              numberOfLines={1}
             >
-              <Feather
-                name={badgeIcon}
-                size={12}
-                color={
-                  isReady
-                    ? COLORS.white
-                    : hasNumericCredits
-                      ? isInsufficient
-                        ? COLORS.error
-                        : COLORS.white
-                      : COLORS.text.secondary
-                }
-              />
-              <Text
-                style={[
-                  styles.creditBadgeText,
-                  isReady && styles.creditBadgeReadyText,
-                  isInsufficient && styles.creditBadgeTextInsufficient,
-                  !hasNumericCredits && !isReady && styles.creditBadgePlaceholderText
-                ]}
-                numberOfLines={1}
-              >
-                {badgeLabel}
-              </Text>
-            </View>
-          )}
+              {badgeLabel}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
         </View>
       </View>
 
@@ -327,10 +355,18 @@ const styles = StyleSheet.create({
     marginVertical: 0,
   },
   image: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 12,
+  },
+  imageWrapper: {
     width: 64,
     height: 64,
     borderRadius: 12,
     marginRight: 12,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: 'rgba(0,0,0,0.04)',
   },
   content: {
     flex: 1,
@@ -429,6 +465,27 @@ const styles = StyleSheet.create({
   },
   queueBadgeTextActive: {
     color: COLORS.white,
+  },
+  queueBadgeNowPlaying: {
+    bottom: 8,
+    right: 8,
+    top: 'auto',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  progressTrack: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.12)',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: COLORS.peach,
+    borderTopRightRadius: 6,
+    borderTopLeftRadius: 6,
   },
   swipeActionsContainer: {
     flexDirection: 'row',

@@ -1,9 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React from 'react';
+import { NavigationContainer, NavigationIndependentTree } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { StatusBar } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { ToastProvider } from '../components/StatusToast';
 
 // Auth Screens
 import LoginScreen from '../screens/LoginScreen';
@@ -49,33 +47,37 @@ export default function AppNavigator() {
   };
 
   return (
-    <Stack.Navigator 
-      initialRouteName="Splash"
-      screenOptions={screenOptions}
-    >
-      <Stack.Screen name="Splash" component={SplashScreen} />
-      {/* Auth Screens */}
-      <Stack.Screen name="Login" component={LoginScreen} />
-      <Stack.Screen name="Register" component={RegistrationScreen} />
-      <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-      <Stack.Screen name="ConfirmEmail" component={ConfirmEmailScreen} />
-      
-      {/* App Screens with slide animation */}
-      <Stack.Screen 
-        name="Synthesis" 
-        component={SynthesisScreen} 
-        options={{ cardStyleInterpolator: slideAnimation }}
-      />
-      <Stack.Screen 
-        name="Clone" 
-        component={CloneScreen} 
-        options={{ cardStyleInterpolator: slideAnimation }}
-      />
-      <Stack.Screen
-        name="Queue"
-        component={QueueScreen}
-        options={{ cardStyleInterpolator: slideAnimation }}
-      />
-    </Stack.Navigator>
+    <NavigationIndependentTree>
+      <NavigationContainer>
+        <Stack.Navigator 
+          initialRouteName="Splash"
+          screenOptions={screenOptions}
+        >
+          <Stack.Screen name="Splash" component={SplashScreen} />
+          {/* Auth Screens */}
+          <Stack.Screen name="Login" component={LoginScreen} />
+          <Stack.Screen name="Register" component={RegistrationScreen} />
+          <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+          <Stack.Screen name="ConfirmEmail" component={ConfirmEmailScreen} />
+          
+          {/* App Screens with slide animation */}
+          <Stack.Screen 
+            name="Synthesis" 
+            component={SynthesisScreen} 
+            options={{ cardStyleInterpolator: slideAnimation }}
+          />
+          <Stack.Screen 
+            name="Clone" 
+            component={CloneScreen} 
+            options={{ cardStyleInterpolator: slideAnimation }}
+          />
+          <Stack.Screen
+            name="Queue"
+            component={QueueScreen}
+            options={{ cardStyleInterpolator: slideAnimation }}
+          />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </NavigationIndependentTree>
   );
 }
