@@ -14,6 +14,7 @@ import SplashScreen from '../screens/SplashScreen';
 import CloneScreen from '../screens/CloneScreen';
 import SynthesisScreen from '../screens/SynthesisScreen';
 import QueueScreen from '../screens/QueueScreen';
+import UserSettingsScreen from '../screens/UserSettingsScreen';
 
 // Services
 import authService from '../services/authService';
@@ -74,6 +75,11 @@ export default function AppNavigator() {
           <Stack.Screen
             name="Queue"
             component={QueueScreen}
+            options={{ cardStyleInterpolator: slideAnimation }}
+          />
+          <Stack.Screen
+            name="AccountSettings"
+            component={UserSettingsScreen}
             options={{ cardStyleInterpolator: slideAnimation }}
           />
         </Stack.Navigator>

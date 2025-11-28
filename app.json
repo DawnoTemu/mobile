@@ -2,7 +2,7 @@
   "expo": {
     "name": "DawnoTemu",
     "slug": "dawnotemu",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "dawnotemu",
@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.dawnotemu.mobile",
-      "buildNumber": "16",
+      "buildNumber": "17",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "We use the microphone to record a short voice sample, which is used to create a personalized AI voice model for generating children’s audiobooks narrated in your voice.",
         "UIBackgroundModes": [
@@ -25,6 +25,7 @@
     },
     "android": {
       "package": "com.dawnotemu.app",
+      "versionCode": 17,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#D4C1EC"
@@ -76,7 +77,7 @@
       }
     },
     "owner": "szymonpaluch",
-    "runtimeVersion": "1.0.3",
+    "runtimeVersion": "1.0.4",
     "updates": {
       "url": "https://u.expo.dev/9e719385-ec85-4354-a7dd-c1e4d8b3e35b"
     }

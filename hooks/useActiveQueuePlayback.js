@@ -9,7 +9,8 @@ const useActiveQueuePlayback = ({
   findStoryById,
   selectedStory,
   handleStorySelectRef,
-  suppressQueueAutoRef
+  suppressQueueAutoRef,
+  resolveAutoPlay
 }) => {
   useEffect(() => {
     if (!playbackQueue || queueLength === 0) {
@@ -53,7 +54,14 @@ const useActiveQueuePlayback = ({
       return;
     }
 
-    const maybePromise = handleStorySelectRef.current?.(resolvedStory, { skipQueueSync: true });
+    const shouldAutoPlay = resolveAutoPlay
+      ? resolveAutoPlay({ activeIndex: activeQueueIndex, entry })
+      : true;
+
+    const maybePromise = handleStorySelectRef.current?.(resolvedStory, {
+      skipQueueSync: true,
+      autoPlay: shouldAutoPlay
+    });
     if (maybePromise && typeof maybePromise.then === 'function') {
       maybePromise.catch((error) => {
         recordError('queue_playback_start_error', error);
@@ -68,7 +76,8 @@ const useActiveQueuePlayback = ({
     findStoryById,
     selectedStory,
     handleStorySelectRef,
-    suppressQueueAutoRef
+    suppressQueueAutoRef,
+    resolveAutoPlay
   ]);
 };
 

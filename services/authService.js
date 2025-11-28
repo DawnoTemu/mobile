@@ -379,6 +379,115 @@ export const updateUserData = async (userData) => {
 };
 
 /**
+ * Fetch latest user profile
+ * @returns {Promise<Object>} Profile result with user payload
+ */
+export const fetchProfile = async () => {
+  const result = await apiRequest('/auth/me');
+  const user = result?.data?.user || result?.data;
+
+  if (result.success && user && typeof user === 'object') {
+    await updateUserData(user);
+    notifyAuthEvent('PROFILE_UPDATED', { user });
+  }
+
+  return { ...result, user };
+};
+
+/**
+ * Update user profile (email/password)
+ * @param {Object} params
+ * @param {string} params.currentPassword - Required current password
+ * @param {string} [params.email] - New email
+ * @param {string} [params.newPassword] - New password
+ * @param {string} [params.newPasswordConfirm] - Confirm new password
+ * @returns {Promise<Object>} Update result with user payload
+ */
+export const updateProfile = async ({
+  currentPassword,
+  email,
+  newPassword,
+  newPasswordConfirm
+}) => {
+  if (!currentPassword) {
+    return {
+      success: false,
+      status: null,
+      error: 'Current password is required',
+      code: 'VALIDATION_ERROR'
+    };
+  }
+
+  const payload = {
+    current_password: currentPassword
+  };
+
+  if (email) {
+    payload.email = email;
+  }
+
+  if (newPassword) {
+    payload.new_password = newPassword;
+    payload.new_password_confirm = newPasswordConfirm || newPassword;
+  } else if (newPasswordConfirm) {
+    // Prevent sending confirm without the main password field
+    payload.new_password_confirm = newPasswordConfirm;
+  }
+
+  const result = await apiRequest('/auth/me', {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const user = result?.data?.user || result?.data;
+
+  if (result.success && user && typeof user === 'object') {
+    await updateUserData(user);
+    notifyAuthEvent('PROFILE_UPDATED', { user });
+  }
+
+  return { ...result, user };
+};
+
+/**
+ * Schedule account deletion and logout locally on success
+ * @param {Object} params
+ * @param {string} params.currentPassword - Required current password
+ * @param {string} [params.reason] - Optional reason
+ * @returns {Promise<Object>} Deletion result
+ */
+export const deleteAccount = async ({ currentPassword, reason } = {}) => {
+  if (!currentPassword) {
+    return {
+      success: false,
+      status: null,
+      error: 'Current password is required',
+      code: 'VALIDATION_ERROR'
+    };
+  }
+
+  const result = await apiRequest('/auth/me', {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      current_password: currentPassword,
+      reason
+    })
+  });
+
+  if (result.success) {
+    await logout();
+  }
+
+  return result;
+};
+
+/**
  * Check if user is logged in
  * @returns {Promise<boolean>} Whether user is logged in
  */
@@ -478,6 +587,9 @@ export default {
   getCurrentUser,
   getCurrentUserId,
   updateUserData,
+  fetchProfile,
+  updateProfile,
+  deleteAccount,
   isLoggedIn,
   resetPasswordRequest,
   resetPassword,

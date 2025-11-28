@@ -147,30 +147,11 @@ const useQueueActions = ({
     showToast('Wyczyszczono kolejkę.', 'SUCCESS');
   }, [clearPlaybackQueue, showToast]);
 
-  const handleSyncStoryToQueue = useCallback((story) => {
-    if (!story || !storyHasPlayableAudio(story)) {
-      return;
-    }
-    const storyKey = String(story.id);
-    const existingIndex = queueIndexByStoryId.get(storyKey);
-    if (typeof existingIndex === 'number' && existingIndex >= 0) {
-      setActiveQueueItem({ index: existingIndex });
-      return;
-    }
-    const payload = normalizeStoryToQueueItem(story, voiceId);
-    if (!payload) {
-      return;
-    }
-    enqueue(payload);
-    setActiveQueueItem({ storyId: storyKey });
-  }, [enqueue, queueIndexByStoryId, setActiveQueueItem, storyHasPlayableAudio, voiceId]);
-
   return {
     handleAddStoryToQueue,
     handlePlayNextStory,
     handleAutoFillQueue,
     handleClearQueue,
-    handleSyncStoryToQueue
   };
 };
 

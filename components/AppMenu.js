@@ -234,22 +234,11 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
                   style={styles.menuItem}
                   onPress={() => {
                     handleClose();
-                    // navigation.navigate('AccountSettings');
+                    navigation.navigate('AccountSettings');
                   }}
                 >
                   <Feather name="user" size={20} color={COLORS.text.secondary} />
                   <Text style={styles.menuItemText}>Moje konto</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity 
-                  style={styles.menuItem}
-                  onPress={() => {
-                    handleClose();
-                    // navigation.navigate('VoiceLibrary');
-                  }}
-                >
-                  <Feather name="mic" size={20} color={COLORS.text.secondary} />
-                  <Text style={styles.menuItemText}>Moje głosy</Text>
                 </TouchableOpacity>
                 
                 <TouchableOpacity
@@ -261,17 +250,6 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
                 >
                   <Feather name="list" size={20} color={COLORS.text.secondary} />
                   <Text style={styles.menuItemText}>Kolejka odtwarzania</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity 
-                  style={styles.menuItem}
-                  onPress={() => {
-                    handleClose();
-                    // navigation.navigate('Settings');
-                  }}
-                >
-                  <Feather name="settings" size={20} color={COLORS.text.secondary} />
-                  <Text style={styles.menuItemText}>Ustawienia</Text>
                 </TouchableOpacity>
               </View>
             </View>

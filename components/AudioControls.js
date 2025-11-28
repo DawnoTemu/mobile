@@ -559,9 +559,9 @@ export default function AudioControls({
       style={[
         styles.container,
         {
-          // lift above home indicator and give extra breathing room
-          paddingBottom: Math.max(bottomOffset + 4, 16),
-          bottom: bottomOffset,
+          // lift above home indicator while keeping bar flush to bottom
+          paddingBottom: bottomOffset,
+          bottom: 0,
         },
         containerNativeStyle,
       ]}
@@ -590,24 +590,27 @@ export default function AudioControls({
             {/* Minimized Controls - shown when not expanded */}
             <Animated.View style={[styles.controls, { opacity: minimizedContentOpacity }]}>
               <View style={styles.minimizedControls}>
-                <TouchableOpacity
-                  style={[styles.queueMetaRow, styles.queueMetaRowPressable]}
-                  onPress={handleOpenQueue}
-                  activeOpacity={0.85}
-                  disabled={typeof onOpenQueue !== 'function'}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Otwórz kolejkę odtwarzania"
-                >
-                  <QueueInfo iconSize={14} />
+                <View style={styles.queueMetaRow}>
+                  {typeof onOpenQueue === 'function' ? (
+                    <TouchableOpacity
+                      style={styles.queueButton}
+                      onPress={handleOpenQueue}
+                      activeOpacity={0.85}
+                      accessibilityRole="button"
+                      accessibilityLabel="Otwórz kolejkę odtwarzania"
+                    >
+                      <QueueInfo iconSize={14} />
+                    </TouchableOpacity>
+                  ) : (
+                    <QueueInfo iconSize={14} />
+                  )}
                   <TouchableOpacity
                     style={[
                       styles.loopButton,
                       loopState.active && styles.loopButtonActive,
                       !loopToggleAvailable && styles.loopButtonDisabled
                     ]}
-                    onPress={(e) => {
-                      e?.stopPropagation?.();
+                    onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       onToggleLoop();
                     }}
@@ -627,7 +630,7 @@ export default function AudioControls({
                       </View>
                     ) : null}
                   </TouchableOpacity>
-                </TouchableOpacity>
+                </View>
                 <View style={styles.sliderContainer}>
                   <Text style={styles.timeText}>{formatTime(position)}</Text>
                   <Slider
@@ -789,7 +792,7 @@ export default function AudioControls({
               {/* Player Controls in Expanded Mode */}
               <View style={styles.expandedPlayerControls}>
                 <TouchableOpacity
-                  style={[styles.queueMetaRow, styles.queueMetaRowPressable]}
+                  style={[styles.queueMetaRow, styles.queueButton]}
                   onPress={handleOpenQueue}
                   activeOpacity={0.85}
                   disabled={typeof onOpenQueue !== 'function'}
@@ -934,6 +937,7 @@ const styles = StyleSheet.create({
   heightContainer: {
     width: '100%',
     overflow: 'hidden',
+    backgroundColor: COLORS.white,
   },
   pullIndicatorContainer: {
     height: 16,
@@ -959,7 +963,7 @@ const styles = StyleSheet.create({
   },
   controls: {
     paddingTop: 0,
-    paddingBottom: 10,
+    paddingBottom: 0,
     height: 160,
     position: 'absolute',
     left: 16,
@@ -981,6 +985,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: 8,
+    paddingBottom: 6,
   },
   playButton: {
     width: 56,
@@ -1027,6 +1032,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 6,
     flex: 1,
+  },
+  queueButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 12,
   },
   queueInfo: {
     flexDirection: 'row',

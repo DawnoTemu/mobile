@@ -165,12 +165,12 @@ const queueEnqueue = (state, action) => {
   }
 
   const queue = clampQueueSize([...state.queue, ...items]);
-  const nextActiveIndex = state.activeIndex === -1 ? 0 : state.activeIndex;
+  const nextActiveIndex = clampActiveIndex(queue, state.activeIndex);
 
   return {
     ...state,
     queue,
-    activeIndex: clampActiveIndex(queue, nextActiveIndex),
+    activeIndex: nextActiveIndex,
     lockedStoryId: ensureLockedStory(queue, state.lockedStoryId),
     initializing: false,
     hydrated: true,
@@ -201,7 +201,7 @@ const queueEnqueueNext = (state, action) => {
 
   const nextActiveIndex = hasActive
     ? state.activeIndex
-    : clampActiveIndex(queue, state.activeIndex === -1 ? 0 : state.activeIndex);
+    : clampActiveIndex(queue, state.activeIndex);
 
   return {
     ...state,

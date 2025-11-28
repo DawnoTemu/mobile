@@ -40,7 +40,7 @@ describe('queueReducer', () => {
     expect(activeStoryId).toBe('c');
   });
 
-  it('enqueues items and activates the first entry when the queue was empty', () => {
+  it('enqueues items without auto-activating when no active item exists', () => {
     const result = queueReducer(initialQueueState, {
       type: 'QUEUE_ENQUEUE',
       payload: { items: [{ id: 'story-1' }] }
@@ -48,7 +48,7 @@ describe('queueReducer', () => {
 
     expect(result.queue).toHaveLength(1);
     expect(result.queue[0]).toEqual({ id: 'story-1' });
-    expect(result.activeIndex).toBe(0);
+    expect(result.activeIndex).toBe(-1);
     expect(result.initializing).toBe(false);
     expect(result.hydrated).toBe(true);
   });
