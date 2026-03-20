@@ -49,8 +49,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const hasHydratedSessionRef = useRef(false);
   
-  // Animation values
-  const slideAnim = useRef(new Animated.Value(-width)).current; // Use useRef for animation values
+  const slideAnim = useRef(new Animated.Value(-width)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   
   // Get user info & refresh credits when menu opens
@@ -132,14 +131,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
       
       if (success) {
         showToast('Wylogowano pomyślnie', 'SUCCESS');
-        
-        // Close menu
         onClose();
-        
-        // // Navigate to login screen
-        // setTimeout(() => {
-        //   router.replace('/')
-        // }, 500);
       } else {
         showToast('Wystąpił błąd podczas wylogowywania. Spróbuj ponownie.', 'ERROR');
       }

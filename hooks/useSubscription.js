@@ -5,10 +5,12 @@ import React, {
   useEffect,
   useMemo,
   useReducer,
-  useRef
+  useRef,
+  useState
 } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Sentry from '@sentry/react-native';
 import {
   configure,
   loginUser,
@@ -85,8 +87,8 @@ const persistSubscriptionState = async (isSubscribed) => {
       STORAGE_KEYS.LAST_SUBSCRIPTION_STATE,
       JSON.stringify({ isSubscribed, timestamp: Date.now() })
     );
-  } catch (_) {
-    // non-critical
+  } catch (error) {
+    Sentry.captureException(error);
   }
 };
 
@@ -94,7 +96,8 @@ const getLastSubscriptionState = async () => {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEYS.LAST_SUBSCRIPTION_STATE);
     return raw ? JSON.parse(raw) : null;
-  } catch (_) {
+  } catch (error) {
+    Sentry.captureException(error);
     return null;
   }
 };
@@ -102,7 +105,9 @@ const getLastSubscriptionState = async () => {
 export const SubscriptionProvider = ({ children }) => {
   const [state, dispatch] = useReducer(reducer, initialState);
   const mountedRef = useRef(true);
-  const configuredRef = useRef(false);
+  const hasInitializedRef = useRef(false);
+  const isConfiguredRef = useRef(false);
+  const refreshingRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -112,14 +117,17 @@ export const SubscriptionProvider = ({ children }) => {
   }, []);
 
   const initSDK = useCallback(async () => {
-    if (configuredRef.current) {
-      return;
+    if (isConfiguredRef.current) {
+      return { success: true };
     }
 
     const result = await configure();
     if (result.success) {
-      configuredRef.current = true;
+      isConfiguredRef.current = true;
+    } else {
+      Sentry.captureMessage(`RevenueCat SDK configuration failed: ${result.error}`, 'error');
     }
+    return result;
   }, []);
 
   const fetchTrialStatus = useCallback(async () => {
@@ -128,6 +136,9 @@ export const SubscriptionProvider = ({ children }) => {
 
     if (result.success) {
       dispatch({ type: 'SET_TRIAL_STATUS', payload: result.data.trial });
+    } else {
+      Sentry.captureMessage(`Failed to fetch trial status: ${result.error}`, 'warning');
+      // On failure, keep previous trial state rather than overwriting with defaults
     }
   }, []);
 
@@ -147,8 +158,8 @@ export const SubscriptionProvider = ({ children }) => {
       if (!seen && mountedRef.current) {
         dispatch({ type: 'SHOW_ONBOARDING' });
       }
-    } catch (_) {
-      // non-critical
+    } catch (error) {
+      Sentry.captureException(error);
     }
   }, []);
 
@@ -156,8 +167,8 @@ export const SubscriptionProvider = ({ children }) => {
     dispatch({ type: 'DISMISS_ONBOARDING' });
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.ONBOARDING_SEEN, 'true');
-    } catch (_) {
-      // non-critical
+    } catch (error) {
+      Sentry.captureException(error);
     }
   }, []);
 
@@ -166,86 +177,126 @@ export const SubscriptionProvider = ({ children }) => {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!configuredRef.current) {
-      await initSDK();
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+
+    try {
+      if (!isConfiguredRef.current) {
+        const initResult = await initSDK();
+        if (!initResult.success) return;
+      }
+
+      const result = await getCustomerInfo();
+      if (!mountedRef.current) return;
+
+      if (result.success) {
+        const parsed = parseCustomerInfo(result.data);
+        dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
+        await checkLapse(parsed.isSubscribed);
+      } else {
+        dispatch({ type: 'SET_ERROR', payload: result.error });
+      }
+
+      await fetchTrialStatus();
+    } catch (error) {
+      Sentry.captureException(error);
+      if (mountedRef.current) {
+        dispatch({ type: 'SET_ERROR', payload: error.message });
+      }
+    } finally {
+      refreshingRef.current = false;
     }
-
-    const result = await getCustomerInfo();
-    if (!mountedRef.current) return;
-
-    if (result.success) {
-      const parsed = parseCustomerInfo(result.data);
-      dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
-      await checkLapse(parsed.isSubscribed);
-    } else {
-      dispatch({ type: 'SET_ERROR', payload: result.error });
-    }
-
-    await fetchTrialStatus();
   }, [initSDK, checkLapse, fetchTrialStatus]);
 
+  // Initialization effect — guarded by ref to prevent double-fire
   useEffect(() => {
+    if (hasInitializedRef.current) return;
+    hasInitializedRef.current = true;
+
     const init = async () => {
-      await initSDK();
-      if (!configuredRef.current || !mountedRef.current) {
-        dispatch({ type: 'SET_ERROR', payload: 'SDK configuration failed' });
-        return;
-      }
+      try {
+        const initResult = await initSDK();
+        if (!initResult.success || !mountedRef.current) {
+          dispatch({ type: 'SET_ERROR', payload: initResult.error || 'SDK configuration failed' });
+          return;
+        }
 
-      const userId = await getCurrentUserId();
-      if (userId) {
-        await loginUser(String(userId));
-      }
+        const userId = await getCurrentUserId();
+        if (userId) {
+          const loginResult = await loginUser(String(userId));
+          if (!loginResult.success) {
+            Sentry.captureMessage(`RevenueCat login failed: ${loginResult.error}`, 'warning');
+          }
+        }
 
-      await refresh();
-      await checkOnboarding();
+        await refresh();
+        await checkOnboarding();
+      } catch (error) {
+        Sentry.captureException(error);
+        if (mountedRef.current) {
+          dispatch({ type: 'SET_ERROR', payload: error.message });
+        }
+      }
     };
 
     init();
   }, [initSDK, refresh, checkOnboarding]);
 
+  // Real-time subscription update listener
   useEffect(() => {
-    if (!configuredRef.current) return;
+    if (!isConfiguredRef.current) return;
 
-    const remove = onCustomerInfoUpdate((customerInfo) => {
+    const result = onCustomerInfoUpdate((customerInfo) => {
       if (!mountedRef.current) return;
       const parsed = parseCustomerInfo(customerInfo);
       dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
       persistSubscriptionState(parsed.isSubscribed);
     });
 
+    if (!result.success) {
+      Sentry.captureMessage(`Failed to register customer info listener: ${result.error}`, 'error');
+    }
+
     return () => {
-      if (typeof remove === 'function') {
-        remove();
-      } else if (remove && typeof remove.remove === 'function') {
-        remove.remove();
+      if (!result.success) return;
+      const listener = result.data;
+      // RevenueCat SDK returns either a removal function or an object with .remove()
+      if (typeof listener === 'function') {
+        listener();
+      } else if (listener && typeof listener.remove === 'function') {
+        listener.remove();
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run when SDK becomes configured
-  }, [configuredRef.current]);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = subscribeAuthEvents(async (event) => {
-      if (!configuredRef.current) return;
+      if (!isConfiguredRef.current) return;
 
-      if (event === 'LOGIN') {
-        const userId = await getCurrentUserId();
-        if (userId) {
-          await loginUser(String(userId));
-        }
-        await refresh();
-        await checkOnboarding();
-      } else if (event === 'LOGOUT') {
-        await logoutUser();
-        if (mountedRef.current) {
-          dispatch({ type: 'RESET' });
-        }
-        try {
+      try {
+        if (event === 'LOGIN') {
+          const userId = await getCurrentUserId();
+          if (userId) {
+            const loginResult = await loginUser(String(userId));
+            if (!loginResult.success) {
+              Sentry.captureMessage(`RevenueCat login failed on auth event: ${loginResult.error}`, 'warning');
+            }
+          }
+          await refresh();
+          await checkOnboarding();
+        } else if (event === 'LOGOUT') {
+          const logoutResult = await logoutUser();
+          if (!logoutResult.success) {
+            Sentry.captureMessage(`RevenueCat logout failed: ${logoutResult.error}`, 'warning');
+          }
+          if (mountedRef.current) {
+            dispatch({ type: 'RESET' });
+          }
           await AsyncStorage.removeItem(STORAGE_KEYS.LAST_SUBSCRIPTION_STATE);
           await AsyncStorage.removeItem(STORAGE_KEYS.ONBOARDING_SEEN);
-        } catch (_) {
-          // non-critical
         }
+      } catch (error) {
+        Sentry.captureException(error);
       }
     });
 
@@ -254,8 +305,8 @@ export const SubscriptionProvider = ({ children }) => {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active' && configuredRef.current) {
-        refresh();
+      if (nextState === 'active' && isConfiguredRef.current) {
+        refresh().catch((error) => Sentry.captureException(error));
       }
     });
     return () => subscription.remove();
@@ -263,32 +314,48 @@ export const SubscriptionProvider = ({ children }) => {
 
   const handlePurchasePackage = useCallback(async (pkg) => {
     dispatch({ type: 'SET_LOADING' });
-    const result = await purchasePkg(pkg);
-    if (!mountedRef.current) return result;
+    try {
+      const result = await purchasePkg(pkg);
+      if (!mountedRef.current) return result;
 
-    if (result.success) {
-      const parsed = parseCustomerInfo(result.data.customerInfo);
-      dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
-      await persistSubscriptionState(parsed.isSubscribed);
-    } else {
-      dispatch({ type: 'SET_ERROR', payload: result.error });
+      if (result.success) {
+        const parsed = parseCustomerInfo(result.data.customerInfo);
+        dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
+        await persistSubscriptionState(parsed.isSubscribed);
+      } else {
+        dispatch({ type: 'SET_ERROR', payload: result.error });
+      }
+      return result;
+    } catch (error) {
+      Sentry.captureException(error);
+      if (mountedRef.current) {
+        dispatch({ type: 'SET_ERROR', payload: error.message });
+      }
+      return { success: false, error: error.message };
     }
-    return result;
   }, []);
 
   const handleRestorePurchases = useCallback(async () => {
     dispatch({ type: 'SET_LOADING' });
-    const result = await restorePurchasesService();
-    if (!mountedRef.current) return result;
+    try {
+      const result = await restorePurchasesService();
+      if (!mountedRef.current) return result;
 
-    if (result.success) {
-      const parsed = parseCustomerInfo(result.data.customerInfo);
-      dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
-      await persistSubscriptionState(parsed.isSubscribed);
-    } else {
-      dispatch({ type: 'SET_ERROR', payload: result.error });
+      if (result.success) {
+        const parsed = parseCustomerInfo(result.data.customerInfo);
+        dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
+        await persistSubscriptionState(parsed.isSubscribed);
+      } else {
+        dispatch({ type: 'SET_ERROR', payload: result.error });
+      }
+      return result;
+    } catch (error) {
+      Sentry.captureException(error);
+      if (mountedRef.current) {
+        dispatch({ type: 'SET_ERROR', payload: error.message });
+      }
+      return { success: false, error: error.message };
     }
-    return result;
   }, []);
 
   const handleGetOfferings = useCallback(async () => {
@@ -340,3 +407,5 @@ export const useSubscriptionActions = () => {
   }
   return context.actions;
 };
+
+export const __TEST_ONLY__ = { reducer, initialState };

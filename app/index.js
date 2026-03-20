@@ -27,11 +27,9 @@ Sentry.init({
   // spotlight: __DEV__,
 });
 
-// Ignore specific warnings (if necessary)
 LogBox.ignoreLogs(['Remote debugger']);
 
 function App() {
-  // Load custom fonts
   const [fontsLoaded] = useFonts({
     'Comfortaa-Regular': require('../assets/fonts/Comfortaa.ttf'),
     'Quicksand-Regular': require('../assets/fonts/Quicksand.ttf'),
@@ -40,7 +38,7 @@ function App() {
   });
 
   if (!fontsLoaded) {
-    return null; // Don't render anything until fonts are loaded
+    return null;
   }
 
   return (

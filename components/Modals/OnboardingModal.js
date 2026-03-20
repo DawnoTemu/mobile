@@ -18,10 +18,12 @@ const WELCOME_FEATURES = [
   { icon: 'headphones', label: 'Odtwarzanie offline' }
 ];
 
-export default function OnboardingModal({ visible, trialDays, onDismiss }) {
+export default function OnboardingModal({ visible, trialDays, priceLabel, onDismiss }) {
   if (!visible) return null;
 
+  // Fallback of 14 must match the server-configured trial period
   const displayDays = typeof trialDays === 'number' && trialDays > 0 ? trialDays : 14;
+  const displayPrice = priceLabel || null;
 
   return (
     <Modal
@@ -53,9 +55,11 @@ export default function OnboardingModal({ visible, trialDays, onDismiss }) {
 
                 <View style={styles.separator} />
 
-                <Text style={styles.afterTrialText}>
-                  Po okresie próbnym: 39,99 zł/mies. za pełen dostęp i 26 punktów.
-                </Text>
+                {displayPrice && (
+                  <Text style={styles.afterTrialText}>
+                    Po okresie próbnym: {displayPrice}/mies. za pełen dostęp i 26 punktów.
+                  </Text>
+                )}
               </View>
 
               <TouchableOpacity

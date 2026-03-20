@@ -25,9 +25,9 @@ app/index.js          # Root: SafeAreaProvider, GestureHandler, providers, Sentr
 navigation/           # AppNavigator with stack-based routing
 screens/              # Route-level views (Login, Clone, Synthesis, Queue, etc.)
 components/           # Shared UI (modals, audio controls, toast, menus)
-hooks/                # Custom hooks (audio player/recorder, credits, queue playback)
+hooks/                # Custom hooks (audio player/recorder, credits, queue playback, subscription)
 context/              # React context providers (PlaybackQueueProvider)
-services/             # API clients and config (auth, voice, credit, playback queue)
+services/             # API clients and config (auth, voice, credit, playback queue, subscription)
 utils/                # Storage, audio helpers, logging, metrics
 styles/               # Color palettes, typography tokens
 ```
@@ -39,9 +39,10 @@ styles/               # Color palettes, typography tokens
 1. `GestureHandlerRootView`
 2. `SafeAreaProvider`
 3. `PlaybackQueueProvider` - queue state with AsyncStorage persistence
-4. `CreditProvider` - credit balance tracking
-5. `ToastProvider` - global notifications
-6. `AppNavigator` - navigation stack
+4. `SubscriptionProvider` - RevenueCat SDK, trial/lapse detection
+5. `CreditProvider` - credit balance tracking
+6. `ToastProvider` - global notifications
+7. `AppNavigator` - navigation stack
 
 #### Playback Queue System
 `context/PlaybackQueueProvider.js` manages a reducer-based queue with:
@@ -56,10 +57,12 @@ Services in `services/` handle API communication:
 - `authService.js` - JWT auth with token refresh, SecureStore for tokens, pub/sub for auth events
 - `voiceService.js` - Voice cloning and synthesis API calls
 - `creditService.js` - Credit balance and estimates with caching
+- `subscriptionService.js` - RevenueCat SDK wrapper for purchases and entitlement parsing
+- `subscriptionStatusService.js` - Backend API client for trial status and add-on credit grants
 - `playbackQueueService.js` - Queue persistence helpers
 - `config.js` - Environment resolution and storage keys
 
-Services return `{ success, data, status, error, code }` objects.
+Services return `{ success, data }` on success, or `{ success, error }` (with optional `code`/`status`) on failure.
 
 #### Audio Hooks
 - `useAudioPlayer.js` - Playback controls with expo-audio
@@ -104,6 +107,7 @@ Environment is resolved in `services/config.js`.
 - `context/PlaybackQueueProvider.js` - Queue state management
 - `services/authService.js` - Auth flow with token refresh
 - `hooks/useCredits.js` - Credit balance context and hook
+- `hooks/useSubscription.js` - Subscription context provider with RevenueCat integration, trial/lapse detection
 
 ## Known Quirks
 
@@ -112,3 +116,6 @@ Environment is resolved in `services/config.js`.
 - Cached audio lives in Expo's temporary directory
 - Queue state versioned (`QUEUE_STATE_VERSION = 1`); mismatches discard old state
 - Auth events broadcast via `authService.subscribeAuthEvents()` for cross-component coordination
+- Subscription lapse detection compares AsyncStorage-persisted state with live RevenueCat data; clearing app storage suppresses the lapse modal
+- RevenueCat SDK configured eagerly on mount; operations before configuration completes will fail
+- `canGenerate` is derived in two reducer branches (`SET_CUSTOMER_INFO` and `SET_TRIAL_STATUS`) because either data source may update independently

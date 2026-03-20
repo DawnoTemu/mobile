@@ -1,5 +1,6 @@
 import { API_BASE_URL, REQUEST_TIMEOUT } from './config';
 import { getAccessToken } from './authService';
+import * as Sentry from '@sentry/react-native';
 
 const DEFAULT_STATUS = {
   trial: {
@@ -14,6 +15,7 @@ const DEFAULT_STATUS = {
     willRenew: false
   },
   canGenerate: false,
+  // Must match server INITIAL_CREDITS config (default: 10)
   initialCredits: 10
 };
 
@@ -21,7 +23,7 @@ const fetchSubscriptionStatus = async () => {
   try {
     const token = await getAccessToken();
     if (!token) {
-      return { success: false, data: DEFAULT_STATUS, code: 'AUTH_REQUIRED' };
+      return { success: false, data: null, code: 'AUTH_REQUIRED' };
     }
 
     const controller = new AbortController();
@@ -39,11 +41,12 @@ const fetchSubscriptionStatus = async () => {
     clearTimeout(timeoutId);
 
     if (response.status === 404) {
-      return { success: true, data: DEFAULT_STATUS, fallback: true };
+      Sentry.captureMessage('Subscription status endpoint returned 404', 'warning');
+      return { success: false, data: null, error: 'Endpoint not found', code: 'NOT_FOUND' };
     }
 
     if (!response.ok) {
-      return { success: false, data: DEFAULT_STATUS, error: `HTTP ${response.status}` };
+      return { success: false, data: null, error: `HTTP ${response.status}` };
     }
 
     const body = await response.json();
@@ -69,10 +72,11 @@ const fetchSubscriptionStatus = async () => {
       }
     };
   } catch (error) {
+    Sentry.captureException(error);
     if (error.name === 'AbortError') {
-      return { success: false, data: DEFAULT_STATUS, error: 'Request timeout' };
+      return { success: false, data: null, error: 'Request timeout' };
     }
-    return { success: false, data: DEFAULT_STATUS, error: error.message };
+    return { success: false, data: null, error: error.message };
   }
 };
 
@@ -103,7 +107,13 @@ const grantAddonCredits = async ({ receiptToken, productId, platform }) => {
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
+      const responseText = await response.text().catch(() => '');
+      let body = {};
+      try {
+        body = JSON.parse(responseText);
+      } catch {
+        Sentry.captureMessage(`grantAddonCredits non-JSON error response: ${responseText.slice(0, 200)}`, 'warning');
+      }
       return {
         success: false,
         error: body.error || `HTTP ${response.status}`,
@@ -120,6 +130,7 @@ const grantAddonCredits = async ({ receiptToken, productId, platform }) => {
       }
     };
   } catch (error) {
+    Sentry.captureException(error);
     return { success: false, error: error.message };
   }
 };
