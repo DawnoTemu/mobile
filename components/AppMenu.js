@@ -18,12 +18,14 @@ import authService from '../services/authService';
 import { COLORS } from '../styles/colors';
 import ConfirmModal from '../components/Modals/ConfirmModal';
 import { useCredits, useCreditActions } from '../hooks/useCredits';
+import { useSubscription } from '../hooks/useSubscription';
 import * as Linking from 'expo-linking';
 
 const { width } = Dimensions.get('window');
 
 export default function AppMenu({ navigation, isVisible, onClose }) {
   const { showToast } = useToast();
+  const { isSubscribed, trial } = useSubscription();
   const creditState = useCredits() || {};
   const creditActions = useCreditActions();
   const refreshCreditsAction = creditActions?.refreshCredits;
@@ -245,6 +247,20 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
                   style={styles.menuItem}
                   onPress={() => {
                     handleClose();
+                    navigation.navigate('Subscription');
+                  }}
+                >
+                  <Feather name="credit-card" size={20} color={COLORS.text.secondary} />
+                  <Text style={styles.menuItemText}>Subskrypcja</Text>
+                  {!isSubscribed && (
+                    <View style={styles.menuItemIndicator} />
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => {
+                    handleClose();
                     navigation.navigate('Queue');
                   }}
                 >
@@ -287,6 +303,28 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
                   <Text style={styles.creditsDetailText}>Szczegóły kredytów</Text>
                   <Feather name="chevron-right" size={16} color={COLORS.lavender} />
                 </TouchableOpacity>
+
+                {trial?.active && !isSubscribed && (
+                  <View style={styles.trialBadge}>
+                    <Feather name="clock" size={14} color={COLORS.lavender} />
+                    <Text style={styles.trialBadgeText}>
+                      Okres próbny: {trial.daysRemaining > 0 ? `${trial.daysRemaining} dni` : 'ostatni dzień'}
+                    </Text>
+                  </View>
+                )}
+                {!trial?.active && !isSubscribed && (
+                  <TouchableOpacity
+                    style={styles.subscribeNudge}
+                    onPress={() => {
+                      handleClose();
+                      navigation.navigate('Subscription');
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.subscribeNudgeText}>Subskrybuj teraz</Text>
+                    <Feather name="chevron-right" size={14} color={COLORS.lavender} />
+                  </TouchableOpacity>
+                )}
               </View>
 
               <View style={styles.separator} />
@@ -449,6 +487,35 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     paddingVertical: 6,
   },
+  trialBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    backgroundColor: COLORS.lavenderSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  trialBadgeText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 12,
+    color: COLORS.lavender,
+    marginLeft: 6,
+  },
+  subscribeNudge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  subscribeNudgeText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 13,
+    color: COLORS.lavender,
+    marginRight: 4,
+  },
   creditsDetailText: {
     fontFamily: 'Quicksand-Medium',
     fontSize: 13,
@@ -469,6 +536,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.text.primary,
     marginLeft: 16,
+  },
+  menuItemIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.peach,
+    marginLeft: 8,
   },
   logoutButton: {
     flexDirection: 'row',

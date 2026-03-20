@@ -23,6 +23,9 @@ import useAudioPlayer from '../hooks/useAudioPlayer';
 import { useCredits, useCreditActions } from '../hooks/useCredits';
 import voiceService from '../services/voiceService';
 import { COLORS } from '../styles/colors';
+import { useSubscription, useSubscriptionActions } from '../hooks/useSubscription';
+import OnboardingModal from '../components/Modals/OnboardingModal';
+import SubscriptionLapseModal from '../components/Modals/SubscriptionLapseModal';
 import AppMenu from '../components/AppMenu';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
@@ -86,6 +89,17 @@ export default function SynthesisScreen({ navigation }) {
   const {
     refreshCredits
   } = creditActions || {};
+  const {
+    isSubscribed,
+    canGenerate,
+    trial,
+    showOnboarding,
+    showLapseModal
+  } = useSubscription();
+  const {
+    dismissOnboarding,
+    dismissLapseModal
+  } = useSubscriptionActions();
 
   // Audio player hook
   const {
@@ -1059,6 +1073,15 @@ export default function SynthesisScreen({ navigation }) {
 
     const requiredCredits = getStoryRequiredCredits(story);
 
+    if (requiresGeneration && !canGenerate) {
+      const message = trial?.active === false && !isSubscribed
+        ? 'Okres próbny się zakończył. Subskrybuj, aby generować nowe bajki.'
+        : 'Subskrypcja jest wymagana do generowania bajek.';
+      showToast(message, 'INFO');
+      navigation.navigate('Subscription');
+      return;
+    }
+
     if (requiresGeneration && creditStateReady && typeof requiredCredits === 'number') {
       if (balance < requiredCredits) {
         showToast('Brakuje Punktów Magii, aby wygenerować tę bajkę.', 'INFO');
@@ -1248,8 +1271,15 @@ export default function SynthesisScreen({ navigation }) {
         );
 
         if (refreshCredits) {
-          refreshCredits({ force: true }).catch(() => { });
+          const refreshResult = await refreshCredits({ force: true }).catch(() => null);
+          const updatedBalance = refreshResult?.data?.balance;
+          if (typeof updatedBalance === 'number' && updatedBalance < 3 && isSubscribed) {
+            showToast(`Zostało Ci ${updatedBalance} Punktów Magii. Dokup więcej w zakładce Subskrypcja.`, 'INFO');
+          }
         }
+      } else if (result.code === 'SUBSCRIPTION_REQUIRED') {
+        showToast('Subskrypcja jest wymagana do generowania bajek.', 'ERROR');
+        navigation.navigate('Subscription');
       } else if (result.code === 'PAYMENT_REQUIRED') {
         showToast('Brakuje Punktów Magii, aby wygenerować tę bajkę.', 'ERROR');
         if (refreshCredits) {
@@ -1907,6 +1937,19 @@ export default function SynthesisScreen({ navigation }) {
         navigation={navigation}
         isVisible={isMenuVisible}
         onClose={() => setIsMenuVisible(false)}
+      />
+      <OnboardingModal
+        visible={showOnboarding}
+        trialDays={trial?.daysRemaining}
+        onDismiss={dismissOnboarding}
+      />
+      <SubscriptionLapseModal
+        visible={showLapseModal}
+        onSubscribe={() => {
+          dismissLapseModal();
+          navigation.navigate('Subscription');
+        }}
+        onDismiss={dismissLapseModal}
       />
     </View>
   );

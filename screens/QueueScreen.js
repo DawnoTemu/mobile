@@ -304,13 +304,14 @@ export default function QueueScreen() {
           )}
         </TouchableOpacity>
         <TouchableOpacity
+          testID="shuffle-chip"
           style={[styles.actionChip, styles.actionChipSpacer, queueEmpty && styles.actionChipDisabled]}
           onPress={handleShuffle}
           disabled={queueEmpty}
         >
           <Feather name="shuffle" size={16} color={queueEmpty ? COLORS.text.tertiary : COLORS.lavender} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionChip} onPress={handleCycleLoopMode}>
+        <TouchableOpacity testID="repeat-chip" style={styles.actionChip} onPress={handleCycleLoopMode}>
           <Feather
             name="repeat"
             size={16}

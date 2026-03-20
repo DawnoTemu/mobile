@@ -48,7 +48,11 @@ export const STORAGE_KEYS = {
 
   // Credits
   CREDITS_CACHE: 'credit_service_cache',
-  CREDIT_ESTIMATES: 'credit_service_story_estimates'
+  CREDIT_ESTIMATES: 'credit_service_story_estimates',
+
+  // Subscription
+  ONBOARDING_SEEN: 'subscription_onboarding_seen',
+  LAST_SUBSCRIPTION_STATE: 'subscription_last_known_state'
 };
 
 // Cache expiration time (24 hours in milliseconds)

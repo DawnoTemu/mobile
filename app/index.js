@@ -9,6 +9,7 @@ import { useFonts } from 'expo-font';
 import { COLORS } from '../styles/colors';
 import * as Sentry from '@sentry/react-native';
 import { PlaybackQueueProvider } from '../context/PlaybackQueueProvider';
+import { SubscriptionProvider } from '../hooks/useSubscription';
 
 Sentry.init({
   dsn: 'https://e7e78ea6d09a608d3400dc3703d0d2d0@o4509547724603392.ingest.de.sentry.io/4509549213974608',
@@ -46,12 +47,14 @@ function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <PlaybackQueueProvider>
-          <CreditProvider>
+          <SubscriptionProvider>
+            <CreditProvider>
             <ToastProvider>
               <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
               <AppNavigator />
             </ToastProvider>
-          </CreditProvider>
+            </CreditProvider>
+          </SubscriptionProvider>
         </PlaybackQueueProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
