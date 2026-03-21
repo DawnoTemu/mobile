@@ -116,6 +116,6 @@ Environment is resolved in `services/config.js`.
 - Cached audio lives in Expo's temporary directory
 - Queue state versioned (`QUEUE_STATE_VERSION = 1`); mismatches discard old state
 - Auth events broadcast via `authService.subscribeAuthEvents()` for cross-component coordination
-- Subscription lapse detection compares AsyncStorage-persisted state with live RevenueCat data; clearing app storage suppresses the lapse modal
-- RevenueCat SDK configured eagerly on mount; operations before configuration completes will fail
+- Subscription lapse detection compares the AsyncStorage-persisted `subscription_last_known_state` with live RevenueCat data; if this key is absent (e.g., after logout, first install, or manual storage clear), the lapse modal is suppressed
+- RevenueCat SDK is configured on SubscriptionProvider mount; the refresh function guards against use before configuration via `isConfiguredRef`, but the real-time listener only registers after `sdkConfigured` state flips to true
 - `canGenerate` is derived in two reducer branches (`SET_CUSTOMER_INFO` and `SET_TRIAL_STATUS`) because either data source may update independently

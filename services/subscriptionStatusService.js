@@ -1,33 +1,17 @@
-import { API_BASE_URL, REQUEST_TIMEOUT } from './config';
+import { API_BASE_URL, REQUEST_TIMEOUT, DEFAULT_INITIAL_CREDITS } from './config';
 import { getAccessToken } from './authService';
 import * as Sentry from '@sentry/react-native';
 
-const DEFAULT_STATUS = {
-  trial: {
-    active: false,
-    expiresAt: null,
-    daysRemaining: 0
-  },
-  subscription: {
-    active: false,
-    plan: null,
-    expiresAt: null,
-    willRenew: false
-  },
-  canGenerate: false,
-  // Must match server INITIAL_CREDITS config (default: 10)
-  initialCredits: 10
-};
-
 const fetchSubscriptionStatus = async () => {
+  let timeoutId;
   try {
     const token = await getAccessToken();
     if (!token) {
-      return { success: false, data: null, code: 'AUTH_REQUIRED' };
+      return { success: false, data: null, error: 'Authentication required', code: 'AUTH_REQUIRED' };
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+    timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
     const response = await fetch(`${API_BASE_URL}/api/user/subscription-status`, {
       method: 'GET',
@@ -38,18 +22,45 @@ const fetchSubscriptionStatus = async () => {
       signal: controller.signal
     });
 
-    clearTimeout(timeoutId);
-
     if (response.status === 404) {
       Sentry.captureMessage('Subscription status endpoint returned 404', 'warning');
       return { success: false, data: null, error: 'Endpoint not found', code: 'NOT_FOUND' };
     }
 
     if (!response.ok) {
+      const responseText = await response.text().catch(() => '');
+      if (response.status >= 500) {
+        Sentry.captureMessage('Subscription status endpoint server error', {
+          level: 'error',
+          extra: { status: response.status, body: responseText.slice(0, 500) }
+        });
+      } else {
+        Sentry.captureMessage('Subscription status endpoint client error', {
+          level: 'warning',
+          extra: { status: response.status }
+        });
+      }
       return { success: false, data: null, error: `HTTP ${response.status}` };
     }
 
-    const body = await response.json();
+    let body;
+    try {
+      body = await response.json();
+    } catch (parseError) {
+      Sentry.captureMessage('fetchSubscriptionStatus: 200 response with invalid JSON', {
+        level: 'error',
+        extra: { parseError: parseError.message }
+      });
+      return { success: false, data: null, error: 'Serwer zwrócił nieprawidłowe dane. Spróbuj ponownie.' };
+    }
+
+    if (!body.trial || typeof body.can_generate !== 'boolean') {
+      Sentry.captureMessage('Unexpected subscription-status response shape', {
+        level: 'error',
+        extra: { keys: Object.keys(body) }
+      });
+      return { success: false, data: null, error: 'Serwer zwrócił niekompletne dane subskrypcji.', code: 'INVALID_RESPONSE_SHAPE' };
+    }
 
     return {
       success: true,
@@ -68,27 +79,31 @@ const fetchSubscriptionStatus = async () => {
           willRenew: body.subscription?.will_renew ?? false
         },
         canGenerate: body.can_generate ?? false,
-        initialCredits: body.initial_credits ?? 10
+        initialCredits: body.initial_credits ?? DEFAULT_INITIAL_CREDITS
       }
     };
   } catch (error) {
-    Sentry.captureException(error);
     if (error.name === 'AbortError') {
-      return { success: false, data: null, error: 'Request timeout' };
+      Sentry.captureMessage('Subscription status request timed out', { level: 'warning' });
+      return { success: false, data: null, error: 'Request timeout', code: 'TIMEOUT' };
     }
+    Sentry.captureException(error);
     return { success: false, data: null, error: error.message };
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
 
 const grantAddonCredits = async ({ receiptToken, productId, platform }) => {
+  let timeoutId;
   try {
     const token = await getAccessToken();
     if (!token) {
-      return { success: false, error: 'AUTH_REQUIRED' };
+      return { success: false, error: 'Authentication required', code: 'AUTH_REQUIRED' };
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+    timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
     const response = await fetch(`${API_BASE_URL}/api/credits/grant-addon`, {
       method: 'POST',
@@ -104,15 +119,16 @@ const grantAddonCredits = async ({ receiptToken, productId, platform }) => {
       signal: controller.signal
     });
 
-    clearTimeout(timeoutId);
-
     if (!response.ok) {
       const responseText = await response.text().catch(() => '');
       let body = {};
       try {
         body = JSON.parse(responseText);
-      } catch {
-        Sentry.captureMessage(`grantAddonCredits non-JSON error response: ${responseText.slice(0, 200)}`, 'warning');
+      } catch (parseError) {
+        Sentry.captureMessage('grantAddonCredits non-JSON error response', {
+          level: 'warning',
+          extra: { body: responseText.slice(0, 200), parseError: parseError.message }
+        });
       }
       return {
         success: false,
@@ -121,7 +137,16 @@ const grantAddonCredits = async ({ receiptToken, productId, platform }) => {
       };
     }
 
-    const body = await response.json();
+    let body;
+    try {
+      body = await response.json();
+    } catch (parseError) {
+      Sentry.captureMessage('grantAddonCredits: 200 response with invalid JSON', {
+        level: 'error',
+        extra: { parseError: parseError.message }
+      });
+      return { success: false, error: 'Serwer zwrócił nieprawidłowe dane. Skontaktuj się z obsługą.' };
+    }
     return {
       success: true,
       data: {
@@ -130,19 +155,18 @@ const grantAddonCredits = async ({ receiptToken, productId, platform }) => {
       }
     };
   } catch (error) {
+    if (error.name === 'AbortError') {
+      Sentry.captureMessage('Grant addon credits request timed out', { level: 'warning' });
+      return { success: false, error: 'Request timeout', code: 'TIMEOUT' };
+    }
     Sentry.captureException(error);
     return { success: false, error: error.message };
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
 
 export {
   fetchSubscriptionStatus,
-  grantAddonCredits,
-  DEFAULT_STATUS
-};
-
-export default {
-  fetchSubscriptionStatus,
-  grantAddonCredits,
-  DEFAULT_STATUS
+  grantAddonCredits
 };

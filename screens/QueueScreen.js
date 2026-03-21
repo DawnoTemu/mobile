@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import * as Sentry from '@sentry/react-native';
 import { usePlaybackQueue, usePlaybackQueueDispatch, LOOP_MODES } from '../context/PlaybackQueueProvider';
 import { COLORS } from '../styles/colors';
 import { useToast } from '../components/StatusToast';
@@ -159,21 +160,37 @@ export default function QueueScreen() {
 
       const hydratedStories = await Promise.all(
         storiesResult.stories.map(async (story) => {
-          const exists = await voiceService.checkAudioExists(
-            voiceResult.voiceId,
-            story.id,
-            {
-              verifyRemote: true,
-              cleanupOrphaned: true
-            }
-          );
-          const hasAudio = exists.success && (exists.localExists || exists.remoteExists);
-          return {
-            ...story,
-            hasAudio,
-            localUri: exists.localUri ?? story.localUri ?? null,
-            hasLocalAudio: Boolean(story.hasLocalAudio || story.localAudioUri)
-          };
+          try {
+            const exists = await voiceService.checkAudioExists(
+              voiceResult.voiceId,
+              story.id,
+              {
+                verifyRemote: true,
+                cleanupOrphaned: true
+              }
+            );
+            const hasAudio = exists.success && (exists.localExists || exists.remoteExists);
+            return {
+              ...story,
+              hasAudio,
+              localUri: exists.localUri ?? story.localUri ?? null,
+              hasLocalAudio: Boolean(story.hasLocalAudio || story.localAudioUri)
+            };
+          } catch (error) {
+            Sentry.captureException(error, {
+              extra: {
+                context: 'queue_auto_fill_check',
+                storyId: story.id,
+                voiceId: voiceResult.voiceId
+              }
+            });
+            return {
+              ...story,
+              hasAudio: false,
+              localUri: story.localUri ?? null,
+              hasLocalAudio: Boolean(story.hasLocalAudio || story.localAudioUri)
+            };
+          }
         })
       );
 
@@ -200,7 +217,7 @@ export default function QueueScreen() {
       showToast(`Dodano ${newItems.length} bajek do kolejki.`, 'SUCCESS');
       recordEvent('queue_auto_fill', { added: newItems.length, location: 'QueueScreen' });
     } catch (error) {
-      console.error('Queue auto-fill failed', error);
+      Sentry.captureException(error, { extra: { context: 'queue_auto_fill' } });
       showToast('Nie udało się uzupełnić kolejki.', 'ERROR');
     } finally {
       setAutoFillLoading(false);
@@ -244,6 +261,7 @@ export default function QueueScreen() {
       </TouchableOpacity>
       <View style={styles.itemActions}>
         <TouchableOpacity
+          testID={`move-up-${item.index}`}
           style={[styles.iconButton, item.index === 0 && styles.iconButtonDisabled]}
           onPress={() => handleMoveUp(item.index)}
           disabled={item.index === 0}
@@ -255,6 +273,7 @@ export default function QueueScreen() {
           />
         </TouchableOpacity>
         <TouchableOpacity
+          testID={`move-down-${item.index}`}
           style={[styles.iconButton, item.index === queueItems.length - 1 && styles.iconButtonDisabled]}
           onPress={() => handleMoveDown(item.index)}
           disabled={item.index === queueItems.length - 1}
@@ -265,7 +284,7 @@ export default function QueueScreen() {
             color={item.index === queueItems.length - 1 ? COLORS.text.tertiary : COLORS.text.secondary}
           />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.iconButton} onPress={() => handleRemove(item.index)}>
+        <TouchableOpacity testID={`remove-item-${item.index}`} style={styles.iconButton} onPress={() => handleRemove(item.index)}>
           <Feather name="trash-2" size={18} color={COLORS.error} />
         </TouchableOpacity>
       </View>
@@ -277,7 +296,7 @@ export default function QueueScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.headerButton}>
+        <TouchableOpacity testID="back-button" onPress={() => navigation.goBack()} style={styles.headerButton}>
           <Feather name="chevron-left" size={24} color={COLORS.text.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Twoja kolejka</Text>
@@ -286,6 +305,7 @@ export default function QueueScreen() {
 
       <View style={styles.actionsRow}>
         <TouchableOpacity
+          testID="clear-queue-chip"
           style={[styles.actionChip, styles.actionChipSpacer, queueEmpty && styles.actionChipDisabled]}
           onPress={handleClearQueue}
           disabled={queueEmpty}
@@ -293,6 +313,7 @@ export default function QueueScreen() {
           <Feather name="trash" size={16} color={queueEmpty ? COLORS.text.tertiary : COLORS.error} />
         </TouchableOpacity>
         <TouchableOpacity
+          testID="auto-fill-chip"
           style={[styles.actionChip, styles.actionChipSpacer, autoFillLoading && styles.actionChipDisabled]}
           onPress={handleAutoFill}
           disabled={autoFillLoading}

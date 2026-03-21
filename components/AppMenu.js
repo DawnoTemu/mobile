@@ -19,7 +19,10 @@ import { COLORS } from '../styles/colors';
 import ConfirmModal from '../components/Modals/ConfirmModal';
 import { useCredits, useCreditActions } from '../hooks/useCredits';
 import { useSubscription } from '../hooks/useSubscription';
+import { pluralizeDays } from '../utils/pluralize';
+import * as Sentry from '@sentry/react-native';
 import * as Linking from 'expo-linking';
+import Constants from 'expo-constants';
 
 const { width } = Dimensions.get('window');
 
@@ -39,7 +42,8 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
   const showCreditsLoading = creditsLoading || creditsInitializing;
   const displayUnitLabel = 'Punkty Magii';
   const handleOpenCredits = () => {
-    Linking.openURL('https://www.dawnotemu.app/cennik').catch(() => {
+    Linking.openURL('https://www.dawnotemu.app/cennik').catch((err) => {
+      Sentry.captureException(err, { extra: { context: 'open_credits_link' } });
       showToast('Nie udało się otworzyć strony. Spróbuj ponownie.', 'ERROR');
     });
   };
@@ -63,14 +67,14 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
           setUser(userData);
         }
       } catch (error) {
-        console.error('Failed to load user info for menu', error);
+        Sentry.captureException(error, { extra: { context: 'load_user_info_menu' } });
       }
 
       if (typeof refreshCreditsAction === 'function') {
         try {
           await refreshCreditsAction({ force: true });
         } catch (error) {
-          console.warn('Failed to refresh credits from menu', error);
+          Sentry.captureException(error, { extra: { context: 'refresh_credits_menu' } });
         }
       }
     };
@@ -89,23 +93,19 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
     };
   }, [isVisible, refreshCreditsAction]);
   
-  // Handle animations when visibility changes
   useEffect(() => {
-    // Ensure animation value is reset before animating
     if (!isVisible) {
-      // Reset to starting position when menu is not visible
       slideAnim.setValue(-width);
       fadeAnim.setValue(0);
     } else {
-      // Make sure we start from the left
       slideAnim.setValue(-width);
       fadeAnim.setValue(0);
-      
-      // Slide in from left (with a slight delay to ensure reset happens)
+
+      // setTimeout defers animation to the next tick so the component renders at reset position first
       setTimeout(() => {
         Animated.parallel([
           Animated.timing(slideAnim, {
-            toValue: 0, // Slide to visible position (0)
+            toValue: 0,
             duration: 300,
             useNativeDriver: true,
           }),
@@ -119,16 +119,12 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
     }
   }, [isVisible, slideAnim, fadeAnim]);
   
-  // Handle logout
   const handleLogout = async () => {
     try {
       setIsLoggingOut(true);
-      
+
       const success = await authService.logout();
-      
-      setIsLoggingOut(false);
-      setIsConfirmLogoutVisible(false);
-      
+
       if (success) {
         showToast('Wylogowano pomyślnie', 'SUCCESS');
         onClose();
@@ -136,16 +132,15 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
         showToast('Wystąpił błąd podczas wylogowywania. Spróbuj ponownie.', 'ERROR');
       }
     } catch (error) {
+      showToast('Wystąpił problem podczas wylogowywania. Spróbuj ponownie.', 'ERROR');
+      Sentry.captureException(error, { extra: { context: 'logout' } });
+    } finally {
       setIsLoggingOut(false);
       setIsConfirmLogoutVisible(false);
-      showToast('Wystąpił problem podczas wylogowywania. Spróbuj ponownie.', 'ERROR');
-      console.error('Logout error:', error);
     }
   };
 
-  // Handle close animation with callback
   const handleClose = () => {
-    // Run the close animation before actually closing
     Animated.parallel([
       Animated.timing(slideAnim, {
         toValue: -width,
@@ -158,15 +153,12 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
         useNativeDriver: true,
       }),
     ]).start(() => {
-      // Call the parent's onClose after animation completes
       onClose();
     });
   };
 
-  // If not visible and not animating out, don't render
   if (!isVisible) return null;
-  
-  // Rendered component
+
   return (
     <Modal
       transparent
@@ -175,7 +167,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
       onRequestClose={handleClose}
     >
       <View style={styles.container}>
-        {/* Background overlay with blur */}
+
         <Animated.View 
           style={[
             styles.overlay,
@@ -191,7 +183,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
           </TouchableOpacity>
         </Animated.View>
         
-        {/* Menu panel sliding from left */}
+
         <Animated.View 
           style={[
             styles.menuPanel,
@@ -201,7 +193,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
           ]}
         >
           <SafeAreaView style={styles.safeArea}>
-            {/* Close button */}
+
             <TouchableOpacity 
               style={styles.closeButton}
               onPress={handleClose}
@@ -210,7 +202,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
             </TouchableOpacity>
             
             <View style={styles.topContent}>
-              {/* User info */}
+
               <View style={styles.userInfoContainer}>
                 <View style={styles.avatarContainer}>
                   <Text style={styles.avatarText}>
@@ -222,7 +214,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
               
               <View style={styles.separator} />
 
-              {/* Menu items */}
+
               <View style={styles.menuItems}>
                 <TouchableOpacity 
                   style={styles.menuItem}
@@ -300,7 +292,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
                   <View style={styles.trialBadge}>
                     <Feather name="clock" size={14} color={COLORS.lavender} />
                     <Text style={styles.trialBadgeText}>
-                      Okres próbny: {trial.daysRemaining > 0 ? `${trial.daysRemaining} dni` : 'ostatni dzień'}
+                      Okres próbny: {trial.daysRemaining > 0 ? `${trial.daysRemaining} ${pluralizeDays(trial.daysRemaining)}` : 'ostatni dzień'}
                     </Text>
                   </View>
                 )}
@@ -321,7 +313,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
 
               <View style={styles.separator} />
               
-              {/* Logout button */}
+
               <TouchableOpacity 
                 style={styles.logoutButton}
                 onPress={() => setIsConfirmLogoutVisible(true)}
@@ -330,10 +322,10 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
                 <Text style={styles.logoutText}>Wyloguj się</Text>
               </TouchableOpacity>
               
-              {/* App version */}
-              <Text style={styles.versionText}>Wersja 1.0.0</Text>
+
+              <Text style={styles.versionText}>Wersja {Constants.expoConfig?.version ?? '—'}</Text>
               
-              {/* Logo */}
+
               <View style={styles.logoContainer}>
                 <Image
                   source={require('../assets/images/logo.png')}
@@ -345,7 +337,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
           </SafeAreaView>
         </Animated.View>
         
-        {/* Confirm Logout Modal */}
+
         <ConfirmModal
           visible={isConfirmLogoutVisible}
           title="Potwierdzenie wylogowania"

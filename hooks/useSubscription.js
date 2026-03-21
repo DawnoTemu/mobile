@@ -6,7 +6,7 @@ import React, {
   useMemo,
   useReducer,
   useRef,
-  useState
+  useState,
 } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -87,8 +87,10 @@ const persistSubscriptionState = async (isSubscribed) => {
       STORAGE_KEYS.LAST_SUBSCRIPTION_STATE,
       JSON.stringify({ isSubscribed, timestamp: Date.now() })
     );
+    return true;
   } catch (error) {
-    Sentry.captureException(error);
+    Sentry.captureException(error, { extra: { context: 'persist_subscription_state' } });
+    return false;
   }
 };
 
@@ -97,13 +99,17 @@ const getLastSubscriptionState = async () => {
     const raw = await AsyncStorage.getItem(STORAGE_KEYS.LAST_SUBSCRIPTION_STATE);
     return raw ? JSON.parse(raw) : null;
   } catch (error) {
-    Sentry.captureException(error);
+    Sentry.captureException(error, { extra: { context: 'get_last_subscription_state' } });
+    await AsyncStorage.removeItem(STORAGE_KEYS.LAST_SUBSCRIPTION_STATE).catch((cleanupErr) => {
+      Sentry.captureException(cleanupErr, { extra: { context: 'cleanup_corrupted_subscription_state' } });
+    });
     return null;
   }
 };
 
 export const SubscriptionProvider = ({ children }) => {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [sdkConfigured, setSdkConfigured] = useState(false);
   const mountedRef = useRef(true);
   const hasInitializedRef = useRef(false);
   const isConfiguredRef = useRef(false);
@@ -124,8 +130,12 @@ export const SubscriptionProvider = ({ children }) => {
     const result = await configure();
     if (result.success) {
       isConfiguredRef.current = true;
+      setSdkConfigured(true);
     } else {
-      Sentry.captureMessage(`RevenueCat SDK configuration failed: ${result.error}`, 'error');
+      Sentry.captureMessage('RevenueCat SDK configuration failed', {
+        level: 'error',
+        extra: { error: result.error }
+      });
     }
     return result;
   }, []);
@@ -137,8 +147,11 @@ export const SubscriptionProvider = ({ children }) => {
     if (result.success) {
       dispatch({ type: 'SET_TRIAL_STATUS', payload: result.data.trial });
     } else {
-      Sentry.captureMessage(`Failed to fetch trial status: ${result.error}`, 'warning');
-      // On failure, keep previous trial state rather than overwriting with defaults
+      Sentry.captureMessage('Failed to fetch trial status', {
+        level: 'warning',
+        extra: { error: result.error, code: result.code }
+      });
+      dispatch({ type: 'SET_ERROR', payload: 'Nie udało się sprawdzić statusu próbnego. Spróbuj ponownie.' });
     }
   }, []);
 
@@ -159,7 +172,10 @@ export const SubscriptionProvider = ({ children }) => {
         dispatch({ type: 'SHOW_ONBOARDING' });
       }
     } catch (error) {
-      Sentry.captureException(error);
+      Sentry.captureException(error, { extra: { context: 'check_onboarding' } });
+      if (mountedRef.current) {
+        dispatch({ type: 'SHOW_ONBOARDING' });
+      }
     }
   }, []);
 
@@ -168,7 +184,7 @@ export const SubscriptionProvider = ({ children }) => {
     try {
       await AsyncStorage.setItem(STORAGE_KEYS.ONBOARDING_SEEN, 'true');
     } catch (error) {
-      Sentry.captureException(error);
+      Sentry.captureException(error, { extra: { context: 'dismiss_onboarding' } });
     }
   }, []);
 
@@ -177,13 +193,18 @@ export const SubscriptionProvider = ({ children }) => {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (refreshingRef.current) return;
+    if (refreshingRef.current) return { skipped: true };
     refreshingRef.current = true;
 
     try {
       if (!isConfiguredRef.current) {
         const initResult = await initSDK();
-        if (!initResult.success) return;
+        if (!initResult.success) {
+          if (mountedRef.current) {
+            dispatch({ type: 'SET_ERROR', payload: initResult.error || 'SDK configuration failed' });
+          }
+          return;
+        }
       }
 
       const result = await getCustomerInfo();
@@ -194,14 +215,14 @@ export const SubscriptionProvider = ({ children }) => {
         dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
         await checkLapse(parsed.isSubscribed);
       } else {
-        dispatch({ type: 'SET_ERROR', payload: result.error });
+        dispatch({ type: 'SET_ERROR', payload: 'Nie udało się pobrać danych subskrypcji.' });
       }
 
       await fetchTrialStatus();
     } catch (error) {
-      Sentry.captureException(error);
+      Sentry.captureException(error, { extra: { context: 'refresh_subscription' } });
       if (mountedRef.current) {
-        dispatch({ type: 'SET_ERROR', payload: error.message });
+        dispatch({ type: 'SET_ERROR', payload: 'Nie udało się odświeżyć danych subskrypcji.' });
       }
     } finally {
       refreshingRef.current = false;
@@ -225,16 +246,23 @@ export const SubscriptionProvider = ({ children }) => {
         if (userId) {
           const loginResult = await loginUser(String(userId));
           if (!loginResult.success) {
-            Sentry.captureMessage(`RevenueCat login failed: ${loginResult.error}`, 'warning');
+            Sentry.captureMessage('RevenueCat login failed during init', {
+              level: 'error',
+              extra: { error: loginResult.error, userId }
+            });
+            if (mountedRef.current) {
+              dispatch({ type: 'SET_ERROR', payload: 'Nie udało się połączyć konta z serwisem subskrypcji.' });
+            }
+            return;
           }
         }
 
         await refresh();
         await checkOnboarding();
       } catch (error) {
-        Sentry.captureException(error);
+        Sentry.captureException(error, { extra: { context: 'subscription_init' } });
         if (mountedRef.current) {
-          dispatch({ type: 'SET_ERROR', payload: error.message });
+          dispatch({ type: 'SET_ERROR', payload: 'Nie udało się zainicjalizować subskrypcji.' });
         }
       }
     };
@@ -242,32 +270,42 @@ export const SubscriptionProvider = ({ children }) => {
     init();
   }, [initSDK, refresh, checkOnboarding]);
 
-  // Real-time subscription update listener
+  // Real-time subscription update listener — re-registers when SDK becomes configured
   useEffect(() => {
-    if (!isConfiguredRef.current) return;
+    if (!sdkConfigured) return;
 
     const result = onCustomerInfoUpdate((customerInfo) => {
-      if (!mountedRef.current) return;
-      const parsed = parseCustomerInfo(customerInfo);
-      dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
-      persistSubscriptionState(parsed.isSubscribed);
+      try {
+        if (!mountedRef.current) return;
+        const parsed = parseCustomerInfo(customerInfo);
+        dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
+        persistSubscriptionState(parsed.isSubscribed).catch((err) =>
+          Sentry.captureException(err, { extra: { context: 'persist_on_customer_update' } })
+        );
+      } catch (error) {
+        Sentry.captureException(error, { extra: { context: 'customer_info_update_listener' } });
+      }
     });
 
     if (!result.success) {
-      Sentry.captureMessage(`Failed to register customer info listener: ${result.error}`, 'error');
+      Sentry.captureMessage('Failed to register customer info listener', {
+        level: 'error',
+        extra: { error: result.error }
+      });
     }
 
     return () => {
       if (!result.success) return;
       const listener = result.data;
-      // RevenueCat SDK returns either a removal function or an object with .remove()
+      // Defensive cleanup: handles both function-style and object-with-remove() listener teardown,
+      // since the RevenueCat SDK return type varies across versions and platforms
       if (typeof listener === 'function') {
         listener();
       } else if (listener && typeof listener.remove === 'function') {
         listener.remove();
       }
     };
-  }, []);
+  }, [sdkConfigured]);
 
   useEffect(() => {
     const unsubscribe = subscribeAuthEvents(async (event) => {
@@ -279,7 +317,14 @@ export const SubscriptionProvider = ({ children }) => {
           if (userId) {
             const loginResult = await loginUser(String(userId));
             if (!loginResult.success) {
-              Sentry.captureMessage(`RevenueCat login failed on auth event: ${loginResult.error}`, 'warning');
+              Sentry.captureMessage('RevenueCat login failed on auth event', {
+                level: 'warning',
+                extra: { error: loginResult.error, userId }
+              });
+              if (mountedRef.current) {
+                dispatch({ type: 'SET_ERROR', payload: 'Nie udało się połączyć konta z serwisem subskrypcji.' });
+              }
+              return;
             }
           }
           await refresh();
@@ -287,16 +332,30 @@ export const SubscriptionProvider = ({ children }) => {
         } else if (event === 'LOGOUT') {
           const logoutResult = await logoutUser();
           if (!logoutResult.success) {
-            Sentry.captureMessage(`RevenueCat logout failed: ${logoutResult.error}`, 'warning');
+            Sentry.captureMessage('RevenueCat logout failed', {
+              level: 'warning',
+              extra: { error: logoutResult.error }
+            });
           }
           if (mountedRef.current) {
             dispatch({ type: 'RESET' });
           }
-          await AsyncStorage.removeItem(STORAGE_KEYS.LAST_SUBSCRIPTION_STATE);
-          await AsyncStorage.removeItem(STORAGE_KEYS.ONBOARDING_SEEN);
+          try {
+            await AsyncStorage.removeItem(STORAGE_KEYS.LAST_SUBSCRIPTION_STATE);
+          } catch (err) {
+            Sentry.captureException(err, { extra: { context: 'logout_cleanup_subscription_state' } });
+          }
+          try {
+            await AsyncStorage.removeItem(STORAGE_KEYS.ONBOARDING_SEEN);
+          } catch (err) {
+            Sentry.captureException(err, { extra: { context: 'logout_cleanup_onboarding' } });
+          }
         }
       } catch (error) {
-        Sentry.captureException(error);
+        Sentry.captureException(error, { extra: { context: 'auth_event_handler', event } });
+        if (mountedRef.current) {
+          dispatch({ type: 'SET_ERROR', payload: 'Wystąpił problem z synchronizacją subskrypcji.' });
+        }
       }
     });
 
@@ -306,14 +365,16 @@ export const SubscriptionProvider = ({ children }) => {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active' && isConfiguredRef.current) {
-        refresh().catch((error) => Sentry.captureException(error));
+        refresh().catch((error) => Sentry.captureException(error, { extra: { context: 'foreground_refresh' } }));
       }
     });
     return () => subscription.remove();
   }, [refresh]);
 
-  const handlePurchasePackage = useCallback(async (pkg) => {
-    dispatch({ type: 'SET_LOADING' });
+  const handlePurchasePackage = useCallback(async (pkg, { isAddon = false } = {}) => {
+    if (!isAddon) {
+      dispatch({ type: 'SET_LOADING' });
+    }
     try {
       const result = await purchasePkg(pkg);
       if (!mountedRef.current) return result;
@@ -322,18 +383,24 @@ export const SubscriptionProvider = ({ children }) => {
         const parsed = parseCustomerInfo(result.data.customerInfo);
         dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
         await persistSubscriptionState(parsed.isSubscribed);
+      } else if (result.code === 'USER_CANCELLED') {
+        if (!isAddon) {
+          dispatch({ type: 'SET_CUSTOMER_INFO', payload: { isSubscribed: state.isSubscribed, expirationDate: state.expirationDate, willRenew: state.willRenew } });
+        }
       } else {
-        dispatch({ type: 'SET_ERROR', payload: result.error });
+        if (!isAddon) {
+          dispatch({ type: 'SET_ERROR', payload: result.error });
+        }
       }
       return result;
     } catch (error) {
-      Sentry.captureException(error);
-      if (mountedRef.current) {
-        dispatch({ type: 'SET_ERROR', payload: error.message });
+      Sentry.captureException(error, { extra: { context: 'purchase_package' } });
+      if (mountedRef.current && !isAddon) {
+        dispatch({ type: 'SET_ERROR', payload: 'Nie udało się dokonać zakupu. Spróbuj ponownie.' });
       }
       return { success: false, error: error.message };
     }
-  }, []);
+  }, [state.isSubscribed, state.expirationDate, state.willRenew]);
 
   const handleRestorePurchases = useCallback(async () => {
     dispatch({ type: 'SET_LOADING' });
@@ -350,16 +417,21 @@ export const SubscriptionProvider = ({ children }) => {
       }
       return result;
     } catch (error) {
-      Sentry.captureException(error);
+      Sentry.captureException(error, { extra: { context: 'restore_purchases' } });
       if (mountedRef.current) {
-        dispatch({ type: 'SET_ERROR', payload: error.message });
+        dispatch({ type: 'SET_ERROR', payload: 'Nie udało się przywrócić zakupów. Spróbuj ponownie.' });
       }
       return { success: false, error: error.message };
     }
   }, []);
 
   const handleGetOfferings = useCallback(async () => {
-    return fetchOfferings();
+    try {
+      return await fetchOfferings();
+    } catch (error) {
+      Sentry.captureException(error, { extra: { context: 'get_offerings' } });
+      return { success: false, error: error.message };
+    }
   }, []);
 
   const contextValue = useMemo(

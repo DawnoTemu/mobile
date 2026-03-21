@@ -17,6 +17,8 @@ import { useCreditActions } from '../hooks/useCredits';
 import { grantAddonCredits } from '../services/subscriptionStatusService';
 import { COLORS } from '../styles/colors';
 import * as Linking from 'expo-linking';
+import { formatDate } from '../utils/formatDate';
+import { pluralizeDays } from '../utils/pluralize';
 import { styles } from './styles/subscriptionScreenStyles';
 
 const FEATURES = [
@@ -31,17 +33,6 @@ const ADDON_PACKS_CONFIG = [
   { id: 'credits_20', credits: 20 },
   { id: 'credits_30', credits: 30 }
 ];
-
-const formatDate = (date) => {
-  if (!date) return '\u2014';
-  const d = date instanceof Date ? date : new Date(date);
-  if (Number.isNaN(d.getTime())) return '\u2014';
-  return d.toLocaleDateString('pl-PL', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-};
 
 const getAddonPrice = (packId, offerings) => {
   const pkg = offerings?.all?.credit_packs?.availablePackages?.find(
@@ -62,7 +53,7 @@ export default function SubscriptionScreen() {
     trial,
     canGenerate
   } = useSubscription();
-  const { purchasePackage, restorePurchases, getOfferings } = useSubscriptionActions();
+  const { purchasePackage, restorePurchases, getOfferings, refresh } = useSubscriptionActions();
   const creditActions = useCreditActions();
 
   const [offerings, setOfferings] = useState(null);
@@ -75,13 +66,19 @@ export default function SubscriptionScreen() {
   const loadOfferings = useCallback(async () => {
     setLoadingOfferings(true);
     setOfferingsError(null);
-    const result = await getOfferings();
-    if (result.success && result.data) {
-      setOfferings(result.data);
-    } else {
-      setOfferingsError(result.error || 'Nie udało się załadować planów.');
+    try {
+      const result = await getOfferings();
+      if (result.success && result.data) {
+        setOfferings(result.data);
+      } else {
+        setOfferingsError(result.error || 'Nie udało się załadować planów.');
+      }
+    } catch (err) {
+      Sentry.captureException(err);
+      setOfferingsError('Nie udało się załadować planów.');
+    } finally {
+      setLoadingOfferings(false);
     }
-    setLoadingOfferings(false);
   }, [getOfferings]);
 
   useEffect(() => {
@@ -100,7 +97,7 @@ export default function SubscriptionScreen() {
       const result = await purchasePackage(monthlyPackage);
       if (result.success) {
         showToast('Subskrypcja aktywowana!', 'SUCCESS');
-      } else if (result.code !== 'USER_CANCELLED') {
+      } else if (result.code !== 'USER_CANCELLED' && result.error !== 'USER_CANCELLED') {
         showToast('Nie udało się dokonać zakupu. Spróbuj ponownie.', 'ERROR');
       }
     } catch (err) {
@@ -148,10 +145,26 @@ export default function SubscriptionScreen() {
 
     setPurchasingAddon(pack.id);
     try {
-      const result = await purchasePackage(addonPackage);
+      const result = await purchasePackage(addonPackage, { isAddon: true });
       if (result.success) {
+        const latestTransaction = result.data?.customerInfo
+          ?.nonSubscriptionTransactions?.slice(-1)[0];
+
+        if (!latestTransaction?.transactionIdentifier) {
+          Sentry.captureMessage('Missing transaction identifier after addon purchase', {
+            level: 'error',
+            extra: {
+              productId: pack.id,
+              hasCustomerInfo: !!result.data?.customerInfo,
+              transactionCount: result.data?.customerInfo?.nonSubscriptionTransactions?.length
+            }
+          });
+          showToast('Zakup udany, ale brak potwierdzenia transakcji. Skontaktuj się z nami.', 'ERROR');
+          return;
+        }
+
         const grantResult = await grantAddonCredits({
-          receiptToken: result.data?.customerInfo?.originalAppUserId,
+          receiptToken: latestTransaction.transactionIdentifier,
           productId: pack.id,
           platform: Platform.OS
         });
@@ -159,16 +172,21 @@ export default function SubscriptionScreen() {
         if (grantResult.success) {
           showToast(`Dodano ${pack.credits} Punktów Magii!`, 'SUCCESS');
         } else {
-          Sentry.captureMessage(`grantAddonCredits failed after purchase: ${grantResult.error}`, 'error');
-          showToast('Zakup udany — punkty pojawią się wkrótce.', 'INFO');
+          Sentry.captureMessage('grantAddonCredits failed after purchase', {
+            level: 'error',
+            extra: { error: grantResult.error, productId: pack.id }
+          });
+          showToast('Zakup udany, ale nie udało się dodać punktów. Skontaktuj się z nami.', 'ERROR');
         }
 
         if (creditActions?.refreshCredits) {
           creditActions.refreshCredits({ force: true }).catch((err) => {
-            Sentry.captureException(err);
+            Sentry.captureException(err, { extra: { context: 'refresh_credits_after_addon' } });
           });
+        } else {
+          Sentry.captureMessage('creditActions unavailable after addon purchase', { level: 'warning' });
         }
-      } else if (result.code !== 'USER_CANCELLED') {
+      } else if (result.code !== 'USER_CANCELLED' && result.error !== 'USER_CANCELLED') {
         showToast('Nie udało się dokonać zakupu. Spróbuj ponownie.', 'ERROR');
       }
     } catch (err) {
@@ -184,7 +202,8 @@ export default function SubscriptionScreen() {
       ? 'https://apps.apple.com/account/subscriptions'
       : 'https://play.google.com/store/account/subscriptions';
 
-    Linking.openURL(url).catch(() => {
+    Linking.openURL(url).catch((err) => {
+      Sentry.captureException(err, { extra: { context: 'manage_subscription_link' } });
       showToast('Nie udało się otworzyć ustawień subskrypcji.', 'ERROR');
     });
   };
@@ -230,7 +249,7 @@ export default function SubscriptionScreen() {
             <Text style={styles.errorBannerText}>
               {error}
             </Text>
-            <TouchableOpacity onPress={() => loadOfferings()} style={styles.retryButton}>
+            <TouchableOpacity onPress={() => { refresh(); loadOfferings(); }} style={styles.retryButton}>
               <Text style={styles.retryButtonText}>Ponów</Text>
             </TouchableOpacity>
           </View>
@@ -255,7 +274,7 @@ export default function SubscriptionScreen() {
               <Text style={styles.trialBannerTitle}>Okres próbny</Text>
               <Text style={styles.trialBannerText}>
                 {trial.daysRemaining > 0
-                  ? `Pozostało ${trial.daysRemaining} ${trial.daysRemaining === 1 ? 'dzień' : 'dni'}`
+                  ? `Pozostało ${trial.daysRemaining} ${pluralizeDays(trial.daysRemaining)}`
                   : 'Ostatni dzień'}
               </Text>
             </View>
@@ -395,7 +414,6 @@ export default function SubscriptionScreen() {
               )}
             </TouchableOpacity>
 
-            {/* Grayed-out Add-on Packs for non-subscribers */}
             <View style={[styles.addonSection, styles.addonSectionDisabled]}>
               <Text style={styles.addonSectionTitle}>Dokup Punkty Magii</Text>
               <View style={styles.addonGrid}>
@@ -404,6 +422,7 @@ export default function SubscriptionScreen() {
                     key={pack.id}
                     style={[styles.addonCard, styles.addonCardDisabled]}
                     onPress={() => handleAddonPurchase(pack)}
+                    disabled
                     activeOpacity={0.85}
                   >
                     <Text style={[styles.addonCredits, styles.addonTextDisabled]}>{pack.credits}</Text>

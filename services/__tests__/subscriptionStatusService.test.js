@@ -6,7 +6,8 @@ jest.mock('../authService', () => ({
 
 jest.mock('../config', () => ({
   API_BASE_URL: 'https://api.test.com',
-  REQUEST_TIMEOUT: 5000
+  REQUEST_TIMEOUT: 5000,
+  DEFAULT_INITIAL_CREDITS: 10
 }));
 
 describe('subscriptionStatusService', () => {
@@ -88,7 +89,8 @@ describe('subscriptionStatusService', () => {
       mockGetAccessToken.mockResolvedValue('test-token');
       global.fetch.mockResolvedValue({
         ok: false,
-        status: 500
+        status: 500,
+        text: jest.fn().mockResolvedValue('Internal Server Error')
       });
 
       const result = await service.fetchSubscriptionStatus();
@@ -149,7 +151,22 @@ describe('subscriptionStatusService', () => {
       expect(result.data.initialCredits).toBe(26);
     });
 
-    test('uses defaults for missing fields', async () => {
+    test('returns error when 200 response has invalid JSON', async () => {
+      mockGetAccessToken.mockResolvedValue('test-token');
+      global.fetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: jest.fn().mockRejectedValue(new SyntaxError('Unexpected token'))
+      });
+
+      const result = await service.fetchSubscriptionStatus();
+
+      expect(result.success).toBe(false);
+      expect(result.data).toBeNull();
+      expect(result.error).toContain('nieprawidłowe dane');
+    });
+
+    test('returns failure for missing required fields', async () => {
       mockGetAccessToken.mockResolvedValue('test-token');
       global.fetch.mockResolvedValue({
         ok: true,
@@ -159,12 +176,8 @@ describe('subscriptionStatusService', () => {
 
       const result = await service.fetchSubscriptionStatus();
 
-      expect(result.success).toBe(true);
-      expect(result.data.trial.active).toBe(false);
-      expect(result.data.trial.daysRemaining).toBe(0);
-      expect(result.data.subscription.active).toBe(false);
-      expect(result.data.canGenerate).toBe(false);
-      expect(result.data.initialCredits).toBe(10);
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('INVALID_RESPONSE_SHAPE');
     });
   });
 
@@ -206,7 +219,8 @@ describe('subscriptionStatusService', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('AUTH_REQUIRED');
+      expect(result.error).toBe('Authentication required');
+      expect(result.code).toBe('AUTH_REQUIRED');
     });
 
     test('returns error on non-ok response', async () => {
@@ -244,6 +258,54 @@ describe('subscriptionStatusService', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('HTTP 500');
+    });
+
+    test('returns error when 200 response has invalid JSON', async () => {
+      mockGetAccessToken.mockResolvedValue('test-token');
+      global.fetch.mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockRejectedValue(new SyntaxError('Unexpected token'))
+      });
+
+      const result = await service.grantAddonCredits({
+        receiptToken: 'x',
+        productId: 'y',
+        platform: 'ios'
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('nieprawidłowe dane');
+    });
+
+    test('returns timeout error on AbortError', async () => {
+      mockGetAccessToken.mockResolvedValue('test-token');
+      const abortError = new Error('Aborted');
+      abortError.name = 'AbortError';
+      global.fetch.mockRejectedValue(abortError);
+
+      const result = await service.grantAddonCredits({
+        receiptToken: 'x',
+        productId: 'y',
+        platform: 'ios'
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Request timeout');
+      expect(result.code).toBe('TIMEOUT');
+    });
+
+    test('returns error on network failure', async () => {
+      mockGetAccessToken.mockResolvedValue('test-token');
+      global.fetch.mockRejectedValue(new Error('Network error'));
+
+      const result = await service.grantAddonCredits({
+        receiptToken: 'x',
+        productId: 'y',
+        platform: 'ios'
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Network error');
     });
   });
 });

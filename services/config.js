@@ -65,14 +65,7 @@ export const CREDIT_ESTIMATE_TTL = 10 * 60 * 1000; // 10 minutes
 // Voice generation persistence TTL (in milliseconds)
 export const GENERATION_STATE_TTL = 2 * 60 * 60 * 1000; // 2 hours
 
-export default {
-  ENV,
-  CURRENT_ENV,
-  API_BASE_URL,
-  REQUEST_TIMEOUT,
-  STORAGE_KEYS,
-  CACHE_EXPIRATION,
-  CREDIT_CACHE_TTL,
-  CREDIT_ESTIMATE_TTL,
-  GENERATION_STATE_TTL
-}; 
+// Subscription defaults — fallback values used when the server response is missing these fields.
+// Ideally keep aligned with server/config.py, but the server is the source of truth.
+export const DEFAULT_INITIAL_CREDITS = 10;
+export const DEFAULT_TRIAL_DAYS = 14;

@@ -65,7 +65,7 @@ const getOfferings = async () => {
 const purchasePackage = async (pkg) => {
   try {
     const { customerInfo } = await Purchases.purchasePackage(pkg);
-    const isActive = customerInfo.entitlements.active[ENTITLEMENT_ID] !== undefined;
+    const isActive = customerInfo?.entitlements?.active?.[ENTITLEMENT_ID] !== undefined;
     return { success: true, data: { customerInfo, isActive } };
   } catch (error) {
     if (error.userCancelled) {
@@ -79,7 +79,7 @@ const purchasePackage = async (pkg) => {
 const restorePurchases = async () => {
   try {
     const customerInfo = await Purchases.restorePurchases();
-    const isActive = customerInfo.entitlements.active[ENTITLEMENT_ID] !== undefined;
+    const isActive = customerInfo?.entitlements?.active?.[ENTITLEMENT_ID] !== undefined;
     return { success: true, data: { customerInfo, isActive } };
   } catch (error) {
     Sentry.captureException(error);
@@ -108,41 +108,43 @@ const onCustomerInfoUpdate = (callback) => {
 };
 
 const parseCustomerInfo = (customerInfo) => {
-  try {
-    if (!customerInfo) {
-      return { ...UNSUBSCRIBED_DEFAULT };
-    }
-
-    const entitlement = customerInfo.entitlements?.active?.[ENTITLEMENT_ID];
-    const isSubscribed = entitlement !== undefined;
-
-    return {
-      isSubscribed,
-      expirationDate: entitlement?.expirationDate
-        ? new Date(entitlement.expirationDate)
-        : null,
-      willRenew: entitlement?.willRenew ?? false
-    };
-  } catch (error) {
-    Sentry.captureException(error);
+  if (!customerInfo) {
+    Sentry.captureMessage('parseCustomerInfo received null customerInfo', 'warning');
     return { ...UNSUBSCRIBED_DEFAULT };
   }
+
+  if (typeof customerInfo.entitlements !== 'object' || customerInfo.entitlements === null) {
+    Sentry.captureMessage('parseCustomerInfo received malformed customerInfo', {
+      level: 'warning',
+      extra: { type: typeof customerInfo.entitlements, keys: Object.keys(customerInfo) }
+    });
+    return { ...UNSUBSCRIBED_DEFAULT };
+  }
+
+  const entitlement = customerInfo.entitlements?.active?.[ENTITLEMENT_ID];
+  const isSubscribed = entitlement !== undefined;
+
+  let expirationDate = null;
+  if (entitlement?.expirationDate) {
+    const parsed = new Date(entitlement.expirationDate);
+    if (Number.isFinite(parsed.getTime())) {
+      expirationDate = parsed;
+    } else {
+      Sentry.captureMessage('parseCustomerInfo received invalid expirationDate', {
+        level: 'warning',
+        extra: { raw: entitlement.expirationDate }
+      });
+    }
+  }
+
+  return {
+    isSubscribed,
+    expirationDate,
+    willRenew: entitlement?.willRenew ?? false
+  };
 };
 
 export {
-  configure,
-  loginUser,
-  logoutUser,
-  getOfferings,
-  purchasePackage,
-  restorePurchases,
-  getCustomerInfo,
-  onCustomerInfoUpdate,
-  parseCustomerInfo,
-  ENTITLEMENT_ID
-};
-
-export default {
   configure,
   loginUser,
   logoutUser,

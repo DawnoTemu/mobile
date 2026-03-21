@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,10 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
+import * as Sentry from '@sentry/react-native';
 import { COLORS } from '../../styles/colors';
+import { DEFAULT_TRIAL_DAYS } from '../../services/config';
+import { pluralizeDays } from '../../utils/pluralize';
 
 const WELCOME_FEATURES = [
   { icon: 'star', label: '10 Punktów Magii na start' },
@@ -19,10 +22,21 @@ const WELCOME_FEATURES = [
 ];
 
 export default function OnboardingModal({ visible, trialDays, priceLabel, onDismiss }) {
-  if (!visible) return null;
+  const hasValidTrialDays = typeof trialDays === 'number' && trialDays > 0;
+  const displayDays = hasValidTrialDays ? trialDays : DEFAULT_TRIAL_DAYS;
+  const hasSentFallbackWarningRef = useRef(false);
 
-  // Fallback of 14 must match the server-configured trial period
-  const displayDays = typeof trialDays === 'number' && trialDays > 0 ? trialDays : 14;
+  useEffect(() => {
+    if (visible && !hasValidTrialDays && !hasSentFallbackWarningRef.current) {
+      hasSentFallbackWarningRef.current = true;
+      Sentry.captureMessage('OnboardingModal falling back to DEFAULT_TRIAL_DAYS', {
+        level: 'warning',
+        extra: { receivedTrialDays: trialDays }
+      });
+    }
+  }, [visible, hasValidTrialDays, trialDays]);
+
+  if (!visible) return null;
   const displayPrice = priceLabel || null;
 
   return (
@@ -39,7 +53,7 @@ export default function OnboardingModal({ visible, trialDays, priceLabel, onDism
               <View style={styles.content}>
                 <Text style={styles.title}>Witaj w DawnoTemu!</Text>
                 <Text style={styles.subtitle}>
-                  Masz {displayDays} dni za darmo, żeby wypróbować wszystko.
+                  Masz {displayDays} {pluralizeDays(displayDays)} za darmo, żeby wypróbować wszystko.
                 </Text>
 
                 <View style={styles.featuresList}>

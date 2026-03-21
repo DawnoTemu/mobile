@@ -17,19 +17,10 @@ import ConfirmModal from '../components/Modals/ConfirmModal';
 import useUserSettings from '../hooks/useUserSettings';
 import { useSubscription } from '../hooks/useSubscription';
 import { COLORS } from '../styles/colors';
+import { formatDate as formatDateUtil } from '../utils/formatDate';
+import { pluralizeDays } from '../utils/pluralize';
 
-const formatDate = (value) => {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '—';
-  }
-  return date.toLocaleDateString('pl-PL', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  });
-};
+const formatDate = (value) => formatDateUtil(value, { monthFormat: 'short' });
 
 export default function UserSettingsScreen() {
   const navigation = useNavigation();
@@ -181,7 +172,7 @@ export default function UserSettingsScreen() {
                     </Text>
                     {trial?.active && !isSubscribed && (
                       <Text style={[styles.label, { marginTop: 2 }]}>
-                        {trial.daysRemaining > 0 ? `${trial.daysRemaining} dni pozostało` : 'Ostatni dzień'}
+                        {trial.daysRemaining > 0 ? `${trial.daysRemaining} ${pluralizeDays(trial.daysRemaining)} pozostało` : 'Ostatni dzień'}
                       </Text>
                     )}
                   </>
