@@ -15,23 +15,16 @@ import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import ConfirmModal from '../components/Modals/ConfirmModal';
 import useUserSettings from '../hooks/useUserSettings';
+import { useSubscription } from '../hooks/useSubscription';
 import { COLORS } from '../styles/colors';
+import { formatDate as formatDateUtil } from '../utils/formatDate';
+import { pluralizeDays } from '../utils/pluralize';
 
-const formatDate = (value) => {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '—';
-  }
-  return date.toLocaleDateString('pl-PL', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  });
-};
+const formatDate = (value) => formatDateUtil(value, { monthFormat: 'short' });
 
 export default function UserSettingsScreen() {
   const navigation = useNavigation();
+  const { isSubscribed, loading: subscriptionLoading, trial } = useSubscription();
   const {
     profile,
     loadingProfile,
@@ -161,6 +154,33 @@ export default function UserSettingsScreen() {
               </Text>
             </View>
           </View>
+
+          <TouchableOpacity
+            style={styles.card}
+            onPress={() => navigation.navigate('Subscription')}
+            activeOpacity={0.8}
+          >
+            <View style={styles.rowBetween}>
+              <View>
+                <Text style={styles.label}>Subskrypcja</Text>
+                {subscriptionLoading ? (
+                  <ActivityIndicator size="small" color={COLORS.text.secondary} style={{ marginTop: 4 }} />
+                ) : (
+                  <>
+                    <Text style={[styles.value, { color: isSubscribed ? COLORS.mint : COLORS.text.secondary }]}>
+                      {isSubscribed ? 'Aktywna' : trial?.active ? 'Okres próbny' : 'Nieaktywna'}
+                    </Text>
+                    {trial?.active && !isSubscribed && (
+                      <Text style={[styles.label, { marginTop: 2 }]}>
+                        {trial.daysRemaining > 0 ? `${trial.daysRemaining} ${pluralizeDays(trial.daysRemaining)} pozostało` : 'Ostatni dzień'}
+                      </Text>
+                    )}
+                  </>
+                )}
+              </View>
+              <Feather name="chevron-right" size={20} color={COLORS.text.tertiary} />
+            </View>
+          </TouchableOpacity>
 
           <View style={styles.card}>
             <View style={styles.cardHeader}>

@@ -23,11 +23,15 @@ import useAudioPlayer from '../hooks/useAudioPlayer';
 import { useCredits, useCreditActions } from '../hooks/useCredits';
 import voiceService from '../services/voiceService';
 import { COLORS } from '../styles/colors';
+import { useSubscription, useSubscriptionActions } from '../hooks/useSubscription';
+import OnboardingModal from '../components/Modals/OnboardingModal';
+import SubscriptionLapseModal from '../components/Modals/SubscriptionLapseModal';
 import AppMenu from '../components/AppMenu';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import { usePlaybackQueue, usePlaybackQueueDispatch, LOOP_MODES } from '../context/PlaybackQueueProvider';
 import useQueueDerivedState, { resolveQueueStoryId as resolveQueueStoryIdHelper } from '../hooks/useQueueDerivedState';
+import * as Sentry from '@sentry/react-native';
 import { createLogger } from '../utils/logger';
 import useActiveQueuePlayback from '../hooks/useActiveQueuePlayback';
 import useQueueActions from '../hooks/useQueueActions';
@@ -86,6 +90,39 @@ export default function SynthesisScreen({ navigation }) {
   const {
     refreshCredits
   } = creditActions || {};
+  const {
+    isSubscribed,
+    canGenerate,
+    trial,
+    showOnboarding,
+    showLapseModal
+  } = useSubscription();
+  const {
+    dismissOnboarding,
+    dismissLapseModal,
+    getOfferings
+  } = useSubscriptionActions();
+
+  const [onboardingPriceLabel, setOnboardingPriceLabel] = useState(null);
+
+  useEffect(() => {
+    if (!showOnboarding) return;
+    let cancelled = false;
+    const loadPrice = async () => {
+      const result = await getOfferings();
+      if (cancelled) return;
+      if (result.success && result.data) {
+        const monthly = result.data.current?.availablePackages?.find(
+          (p) => p.packageType === 'MONTHLY'
+        ) || result.data.current?.availablePackages?.[0];
+        if (monthly?.product?.priceString) {
+          setOnboardingPriceLabel(monthly.product.priceString);
+        }
+      }
+    };
+    loadPrice();
+    return () => { cancelled = true; };
+  }, [showOnboarding, getOfferings]);
 
   // Audio player hook
   const {
@@ -159,6 +196,7 @@ export default function SynthesisScreen({ navigation }) {
   const currentAudioUriRef = useRef(null);
   const activeAudioStoryIdRef = useRef(null);
   const lastProgressSaveRef = useRef(0);
+  const lastProgressSaveFailureToastRef = useRef(0);
   const completedPlaybackRef = useRef(false);
   const pendingResumeRef = useRef(null);
   const suppressQueueAutoRef = useRef(false);
@@ -194,6 +232,15 @@ export default function SynthesisScreen({ navigation }) {
     stories,
     storyHasPlayableAudio
   });
+
+  const notifyPlaybackProgressSaveFailure = useCallback(() => {
+    const now = Date.now();
+    if (now - lastProgressSaveFailureToastRef.current < 30000) {
+      return;
+    }
+    lastProgressSaveFailureToastRef.current = now;
+    showToast('Nie udało się zapisać postępu odtwarzania.', 'INFO');
+  }, [showToast]);
 
   const findStoryById = useCallback(
     (storyId) => {
@@ -257,7 +304,8 @@ export default function SynthesisScreen({ navigation }) {
         setStoryProgress(next);
       } catch (error) {
         if (!cancelled) {
-          console.warn('Failed to load playback progress', error);
+          log.warn('Failed to load playback progress', error);
+          Sentry.captureException(error, { extra: { context: 'load_playback_progress' } });
           setStoryProgress({});
         }
       }
@@ -575,6 +623,7 @@ export default function SynthesisScreen({ navigation }) {
         }
       } catch (error) {
         log.error('Failed to hydrate generation state', error);
+        Sentry.captureException(error, { extra: { context: 'hydrate_generation_state' } });
       }
     },
     [activeGenerationStoryId, progressData.progress, selectedStory, statusToProgress]
@@ -875,9 +924,14 @@ export default function SynthesisScreen({ navigation }) {
   // Set up network status listener
   const setupNetworkListener = () => {
     // Check initial status
-    NetInfo.fetch().then(state => {
-      setIsOnline(state.isConnected === true);
-    });
+    NetInfo.fetch()
+      .then(state => {
+        setIsOnline(state.isConnected === true);
+      })
+      .catch((error) => {
+        log.warn('Failed to fetch initial network status', error);
+        Sentry.captureException(error, { extra: { context: 'initial_network_status' } });
+      });
 
     // Subscribe to network changes
     const unsubscribe = NetInfo.addEventListener(state => {
@@ -905,6 +959,7 @@ export default function SynthesisScreen({ navigation }) {
       fetchStoriesAndVoiceId(true);
     } catch (error) {
       log.error('Error processing offline queue', error);
+      Sentry.captureException(error, { extra: { context: 'process_offline_queue' } });
       fetchStoriesAndVoiceId(true);
     }
   };
@@ -980,6 +1035,7 @@ export default function SynthesisScreen({ navigation }) {
         return normalizedPosition;
       } catch (error) {
         log.warn('Failed to resolve playback progress', error);
+        Sentry.captureException(error, { extra: { context: 'resolve_resume_position' } });
         return 0;
       }
     },
@@ -1038,7 +1094,11 @@ export default function SynthesisScreen({ navigation }) {
             sourceUri: currentAudioUriRef.current,
             updatedAt: Date.now()
           })
-          .catch(() => { });
+          .catch((err) => {
+            log.warn('Failed to save playback progress on story switch', err);
+            Sentry.captureException(err, { extra: { context: 'save_progress_story_switch' } });
+            notifyPlaybackProgressSaveFailure();
+          });
       }
       try {
         await audioPlayer?.stop?.();
@@ -1058,6 +1118,19 @@ export default function SynthesisScreen({ navigation }) {
     const creditStateReady = !creditsLoading && !creditsInitializing && !creditsError;
 
     const requiredCredits = getStoryRequiredCredits(story);
+
+    if (requiresGeneration && !canGenerate) {
+      if (trial?.active) {
+        showToast('Twój limit w okresie próbnym został wyczerpany. Subskrybuj, aby generować więcej bajek.', 'INFO');
+        navigation.navigate('Subscription');
+      } else if (!isSubscribed) {
+        showToast('Okres próbny się zakończył. Subskrybuj, aby generować nowe bajki.', 'INFO');
+        navigation.navigate('Subscription');
+      } else {
+        showToast('Brakuje Punktów Magii, aby wygenerować tę bajkę.', 'INFO');
+      }
+      return;
+    }
 
     if (requiresGeneration && creditStateReady && typeof requiredCredits === 'number') {
       if (balance < requiredCredits) {
@@ -1248,18 +1321,39 @@ export default function SynthesisScreen({ navigation }) {
         );
 
         if (refreshCredits) {
-          refreshCredits({ force: true }).catch(() => { });
+          const refreshResult = await refreshCredits({ force: true }).catch((err) => {
+            log.warn('Failed to refresh credits after generation', err);
+            Sentry.captureException(err, { extra: { context: 'refresh_credits_after_generation' } });
+            return null;
+          });
+          const updatedBalance = refreshResult?.data?.balance;
+          if (typeof updatedBalance === 'number' && updatedBalance < 3 && isSubscribed) {
+            showToast(`Zostało Ci ${updatedBalance} Punktów Magii. Dokup więcej w zakładce Subskrypcja.`, 'INFO');
+          }
         }
+      } else if (result.code === 'SUBSCRIPTION_REQUIRED') {
+        showToast('Subskrypcja jest wymagana do generowania bajek.', 'ERROR');
+        navigation.navigate('Subscription');
       } else if (result.code === 'PAYMENT_REQUIRED') {
         showToast('Brakuje Punktów Magii, aby wygenerować tę bajkę.', 'ERROR');
         if (refreshCredits) {
-          refreshCredits({ force: true }).catch(() => { });
+          refreshCredits({ force: true }).catch((err) => {
+            log.warn('Failed to refresh credits after payment required', err);
+            Sentry.captureException(err, { extra: { context: 'refresh_credits_payment_required' } });
+          });
         }
       } else {
         handleApiError(result, 'Nie udało się wygenerować bajki:');
       }
     } catch (error) {
       log.error('Error getting story audio', error);
+      Sentry.captureException(error, {
+        extra: {
+          context: 'get_story_audio',
+          storyId: story.id,
+          voiceId
+        }
+      });
       handleGenerationEvent(story.id, {
         status: 'error',
         progress: null,
@@ -1312,7 +1406,10 @@ export default function SynthesisScreen({ navigation }) {
           return next;
         });
         voiceService.clearGenerationStateSnapshot(voiceId, activeGenerationStoryId).catch(
-          () => { }
+          (err) => {
+            log.warn('Failed to clear generation state snapshot', err);
+            Sentry.captureException(err, { extra: { context: 'clear_generation_state_snapshot' } });
+          }
         );
       }
       if (activeGenerationStoryId) {
@@ -1341,12 +1438,21 @@ export default function SynthesisScreen({ navigation }) {
     audioUri,
     { autoPlay = true, startPosition = null } = {}
   ) => {
+    let storyId = null;
     try {
       if (!audioUri) {
+        Sentry.captureMessage('Missing audio URI for story playback', {
+          level: 'warning',
+          extra: {
+            context: 'load_story_audio_missing_uri',
+            storyId: storyContext?.id ?? selectedStory?.id ?? null
+          }
+        });
+        showToast('Brak pliku audio dla tej bajki.', 'ERROR');
         return;
       }
 
-      const storyId = storyContext?.id ?? selectedStory?.id ?? null;
+      storyId = storyContext?.id ?? selectedStory?.id ?? null;
       const previousStoryId = activeAudioStoryIdRef.current;
       const previousUri = currentAudioUriRef.current;
       activeAudioStoryIdRef.current = storyId;
@@ -1398,6 +1504,13 @@ export default function SynthesisScreen({ navigation }) {
       }
     } catch (error) {
       log.error('Error loading audio', error);
+      Sentry.captureException(error, {
+        extra: {
+          context: 'load_story_audio',
+          storyId,
+          audioUri
+        }
+      });
       showToast('Wystąpił problem podczas ładowania audio.', 'ERROR');
       setAudioControlsVisible(false);
       if (currentAudioUriRef.current === audioUri) {
@@ -1421,7 +1534,10 @@ export default function SynthesisScreen({ navigation }) {
 
     if (remaining <= PROGRESS_FINISH_THRESHOLD_SECONDS) {
       if (!completedPlaybackRef.current) {
-        voiceService.clearPlaybackProgress(voiceId, storyId).catch(() => { });
+        voiceService.clearPlaybackProgress(voiceId, storyId).catch((err) => {
+          log.warn('Failed to clear playback progress', err);
+          Sentry.captureException(err, { extra: { context: 'clear_playback_progress' } });
+        });
         completedPlaybackRef.current = true;
         setStoryProgress((prev) => {
           if (prev[storyId] === 0) {
@@ -1445,7 +1561,10 @@ export default function SynthesisScreen({ navigation }) {
         handleAutoAdvanceOnComplete({
           normalizedStoryId,
           repeatOneBehavior: () => {
-            seekTo(0).catch(() => { });
+            seekTo(0).catch((err) => {
+              log.warn('Failed to seek to start for repeat-one', err);
+              Sentry.captureException(err, { extra: { context: 'seek_repeat_one' } });
+            });
             if (!isPlaying) {
               handleTogglePlayPause();
             }
@@ -1485,8 +1604,13 @@ export default function SynthesisScreen({ navigation }) {
       duration,
       sourceUri: currentAudioUriRef.current,
       updatedAt: now
-    }).catch(() => { });
+    }).catch((err) => {
+      log.warn('Failed to save playback progress', err);
+      Sentry.captureException(err, { extra: { context: 'save_playback_progress' } });
+      notifyPlaybackProgressSaveFailure();
+    });
   }, [
+    notifyPlaybackProgressSaveFailure,
     position,
     duration,
     isPlaying,
@@ -1523,6 +1647,7 @@ export default function SynthesisScreen({ navigation }) {
       })
       .catch((error) => {
         log.warn('Failed to apply resume position', error);
+        Sentry.captureException(error, { extra: { context: 'resume_seek' } });
       });
     pendingResumeRef.current = null;
   }, [duration, seekTo, handleTogglePlayPause, isPlaying]);
@@ -1549,18 +1674,34 @@ export default function SynthesisScreen({ navigation }) {
 
     try {
       // Remove the audio reference from storage
-      const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
-      const audioInfo = infoString ? JSON.parse(infoString) : {};
+      let audioInfo = {};
+      try {
+        const infoString = await AsyncStorage.getItem(STORAGE_KEYS.DOWNLOADED_AUDIO);
+        audioInfo = infoString ? JSON.parse(infoString) : {};
+      } catch (storageError) {
+        log.warn('Failed to read downloaded audio metadata during recovery', storageError);
+        Sentry.captureException(storageError, {
+          extra: {
+            context: 'handle_corrupted_audio_metadata',
+            voiceId,
+            corruptedUri
+          }
+        });
+      }
 
       // Clean up the reference
       if (audioInfo[voiceId]) {
-        for (const storyId in audioInfo[voiceId]) {
-          if (audioInfo[voiceId][storyId]?.localUri === corruptedUri) {
-            delete audioInfo[voiceId][storyId];
-          }
-        }
+        const cleanedVoiceAudio = Object.fromEntries(
+          Object.entries(audioInfo[voiceId]).filter(
+            ([, storyAudio]) => storyAudio?.localUri !== corruptedUri
+          )
+        );
+        const nextAudioInfo = {
+          ...audioInfo,
+          [voiceId]: cleanedVoiceAudio
+        };
 
-        await AsyncStorage.setItem(STORAGE_KEYS.DOWNLOADED_AUDIO, JSON.stringify(audioInfo));
+        await AsyncStorage.setItem(STORAGE_KEYS.DOWNLOADED_AUDIO, JSON.stringify(nextAudioInfo));
       }
 
       // Try to delete the corrupted file
@@ -1568,6 +1709,13 @@ export default function SynthesisScreen({ navigation }) {
         await FileSystem.deleteAsync(corruptedUri, { idempotent: true });
       } catch (deleteError) {
         log.error('Error deleting corrupted file', deleteError);
+        Sentry.captureException(deleteError, {
+          extra: {
+            context: 'delete_corrupted_audio_file',
+            voiceId,
+            corruptedUri
+          }
+        });
         // Continue even if deletion fails
       }
 
@@ -1633,6 +1781,14 @@ export default function SynthesisScreen({ navigation }) {
       }
     } catch (error) {
       log.error('Error recovering from corrupted audio', error);
+      Sentry.captureException(error, {
+        extra: {
+          context: 'handle_corrupted_audio',
+          storyId: matchingStory.id,
+          voiceId,
+          corruptedUri
+        }
+      });
       showToast('Nie udało się ponownie pobrać audio. Spróbuj ponownie.', 'ERROR');
       setIsProgressModalVisible(false);
       setGenerationStatusByStory((prev) => {
@@ -1672,7 +1828,11 @@ export default function SynthesisScreen({ navigation }) {
             sourceUri: currentAudioUriRef.current,
             updatedAt: Date.now()
           })
-          .catch(() => { });
+          .catch((err) => {
+            log.warn('Failed to save playback progress on audio reset', err);
+            Sentry.captureException(err, { extra: { context: 'save_progress_audio_reset' } });
+            notifyPlaybackProgressSaveFailure();
+          });
       }
       await unloadAudio();
       setAudioControlsVisible(false);
@@ -1684,6 +1844,15 @@ export default function SynthesisScreen({ navigation }) {
       pendingResumeRef.current = null;
     } catch (error) {
       log.error('Error resetting audio', error);
+      Sentry.captureException(error, { extra: { context: 'reset_audio' } });
+      setAudioControlsVisible(false);
+      setSelectedStory(null);
+      currentAudioUriRef.current = null;
+      activeAudioStoryIdRef.current = null;
+      completedPlaybackRef.current = false;
+      lastProgressSaveRef.current = 0;
+      pendingResumeRef.current = null;
+      showToast('Wystąpił problem podczas resetowania audio.', 'ERROR');
     }
   };
 
@@ -1710,6 +1879,12 @@ export default function SynthesisScreen({ navigation }) {
       navigation.replace('Clone');
     } catch (error) {
       log.error('Error deleting voice', error);
+      Sentry.captureException(error, {
+        extra: {
+          context: 'perform_voice_reset',
+          voiceId
+        }
+      });
       showToast('Wystąpił problem podczas usuwania głosu. Spróbuj ponownie.', 'ERROR');
       setIsLoading(false);
     }
@@ -1731,7 +1906,10 @@ export default function SynthesisScreen({ navigation }) {
     try {
       await fetchStoriesAndVoiceId(true, true);
       if (refreshCredits) {
-        await refreshCredits({ force: true }).catch(() => { });
+        await refreshCredits({ force: true }).catch((err) => {
+          log.warn('Failed to refresh credits on pull-to-refresh', err);
+          Sentry.captureException(err, { extra: { context: 'refresh_credits_pull_to_refresh' } });
+        });
       }
     } catch (error) {
       log.error('Error refreshing stories', error);
@@ -1907,6 +2085,20 @@ export default function SynthesisScreen({ navigation }) {
         navigation={navigation}
         isVisible={isMenuVisible}
         onClose={() => setIsMenuVisible(false)}
+      />
+      <OnboardingModal
+        visible={showOnboarding}
+        trialDays={trial?.daysRemaining}
+        priceLabel={onboardingPriceLabel}
+        onDismiss={dismissOnboarding}
+      />
+      <SubscriptionLapseModal
+        visible={showLapseModal}
+        onSubscribe={() => {
+          dismissLapseModal();
+          navigation.navigate('Subscription');
+        }}
+        onDismiss={dismissLapseModal}
       />
     </View>
   );

@@ -39,6 +39,9 @@ app-example
 
 .env.local
 
+# Credentials
+credentials/
+
 # Sentry
 .sentryclirc
 sentry.properties

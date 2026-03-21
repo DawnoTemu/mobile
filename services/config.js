@@ -48,7 +48,12 @@ export const STORAGE_KEYS = {
 
   // Credits
   CREDITS_CACHE: 'credit_service_cache',
-  CREDIT_ESTIMATES: 'credit_service_story_estimates'
+  CREDIT_ESTIMATES: 'credit_service_story_estimates',
+
+  // Subscription
+  ONBOARDING_SEEN: 'subscription_onboarding_seen',
+  LAST_SUBSCRIPTION_STATE: 'subscription_last_known_state',
+  PENDING_ADDON_GRANT: 'subscription_pending_addon_grant'
 };
 
 // Cache expiration time (24 hours in milliseconds)
@@ -61,6 +66,11 @@ export const CREDIT_ESTIMATE_TTL = 10 * 60 * 1000; // 10 minutes
 // Voice generation persistence TTL (in milliseconds)
 export const GENERATION_STATE_TTL = 2 * 60 * 60 * 1000; // 2 hours
 
+// Subscription defaults — fallback values used when the server response is missing these fields.
+// Ideally keep aligned with server/config.py, but the server is the source of truth.
+export const DEFAULT_INITIAL_CREDITS = 10;
+export const DEFAULT_TRIAL_DAYS = 14;
+
 export default {
   ENV,
   CURRENT_ENV,
@@ -70,5 +80,7 @@ export default {
   CACHE_EXPIRATION,
   CREDIT_CACHE_TTL,
   CREDIT_ESTIMATE_TTL,
-  GENERATION_STATE_TTL
-}; 
+  GENERATION_STATE_TTL,
+  DEFAULT_INITIAL_CREDITS,
+  DEFAULT_TRIAL_DAYS
+};
