@@ -31,6 +31,7 @@ const SubscriptionContext = createContext(null);
 const initialState = {
   isSubscribed: false,
   loading: true,
+  refreshing: false,
   expirationDate: null,
   willRenew: false,
   error: null,
@@ -48,6 +49,8 @@ const reducer = (state, action) => {
   switch (action.type) {
     case 'SET_LOADING':
       return { ...state, loading: true, error: null };
+    case 'SET_REFRESHING':
+      return { ...state, refreshing: true, error: null };
     case 'SET_CUSTOMER_INFO':
       return {
         ...state,
@@ -55,6 +58,18 @@ const reducer = (state, action) => {
         expirationDate: action.payload.expirationDate,
         willRenew: action.payload.willRenew,
         loading: false,
+        error: null
+      };
+    case 'SET_REFRESH_COMPLETE':
+      return {
+        ...state,
+        isSubscribed: action.payload.customer.isSubscribed,
+        expirationDate: action.payload.customer.expirationDate,
+        willRenew: action.payload.customer.willRenew,
+        trial: action.payload.trial ?? state.trial,
+        backendCanGenerate: action.payload.backendCanGenerate ?? state.backendCanGenerate,
+        loading: false,
+        refreshing: false,
         error: null
       };
     case 'SET_TRIAL_STATUS':
@@ -66,7 +81,7 @@ const reducer = (state, action) => {
     case 'CANCEL_LOADING':
       return { ...state, loading: false };
     case 'SET_ERROR':
-      return { ...state, loading: false, error: action.payload };
+      return { ...state, loading: false, refreshing: false, error: action.payload };
     case 'SHOW_ONBOARDING':
       return { ...state, showOnboarding: true };
     case 'DISMISS_ONBOARDING':
@@ -141,23 +156,6 @@ export const SubscriptionProvider = ({ children }) => {
     return result;
   }, []);
 
-  const fetchTrialStatus = useCallback(async () => {
-    const result = await fetchSubscriptionStatus();
-    if (!mountedRef.current) return;
-
-    if (result.success) {
-      dispatch({
-        type: 'SET_TRIAL_STATUS',
-        payload: { trial: result.data.trial, backendCanGenerate: result.data.canGenerate }
-      });
-    } else {
-      Sentry.captureMessage('Failed to fetch trial status', {
-        level: 'warning',
-        extra: { error: result.error, code: result.code }
-      });
-    }
-  }, []);
-
   const checkLapse = useCallback(async (currentIsSubscribed) => {
     const lastState = await getLastSubscriptionState();
     if (lastState?.isSubscribed === true && currentIsSubscribed === false) {
@@ -199,6 +197,8 @@ export const SubscriptionProvider = ({ children }) => {
     if (refreshingRef.current) return { skipped: true };
     refreshingRef.current = true;
 
+    dispatch({ type: 'SET_REFRESHING' });
+
     try {
       if (!isConfiguredRef.current) {
         const initResult = await initSDK();
@@ -210,18 +210,34 @@ export const SubscriptionProvider = ({ children }) => {
         }
       }
 
-      const result = await getCustomerInfo();
+      const [customerResult, trialResult] = await Promise.all([
+        getCustomerInfo(),
+        fetchSubscriptionStatus()
+      ]);
+
       if (!mountedRef.current) return;
 
-      if (result.success) {
-        const parsed = parseCustomerInfo(result.data);
-        dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
+      if (!trialResult.success) {
+        Sentry.captureMessage('Failed to fetch trial status', {
+          level: 'warning',
+          extra: { error: trialResult.error, code: trialResult.code }
+        });
+      }
+
+      if (customerResult.success) {
+        const parsed = parseCustomerInfo(customerResult.data);
+        dispatch({
+          type: 'SET_REFRESH_COMPLETE',
+          payload: {
+            customer: parsed,
+            trial: trialResult.success ? trialResult.data.trial : undefined,
+            backendCanGenerate: trialResult.success ? trialResult.data.canGenerate : undefined
+          }
+        });
         await checkLapse(parsed.isSubscribed);
       } else {
         dispatch({ type: 'SET_ERROR', payload: 'Nie udało się pobrać danych subskrypcji.' });
       }
-
-      await fetchTrialStatus();
     } catch (error) {
       Sentry.captureException(error, { extra: { context: 'refresh_subscription' } });
       if (mountedRef.current) {
@@ -230,7 +246,7 @@ export const SubscriptionProvider = ({ children }) => {
     } finally {
       refreshingRef.current = false;
     }
-  }, [initSDK, checkLapse, fetchTrialStatus]);
+  }, [initSDK, checkLapse]);
 
   // Initialization effect — guarded by ref to prevent double-fire
   useEffect(() => {

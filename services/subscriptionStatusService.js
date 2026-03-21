@@ -94,7 +94,9 @@ const fetchSubscriptionStatus = async () => {
   }
 };
 
-const grantAddonCredits = async ({ receiptToken, productId, platform }) => {
+// transactionId is a RevenueCat transactionIdentifier, not an App Store/Play Store receipt.
+// The backend field is named receipt_token for historical reasons; it serves as an idempotency key.
+const grantAddonCredits = async ({ transactionId, productId, platform }) => {
   let timeoutId;
   try {
     const token = await getAccessToken();
@@ -112,7 +114,7 @@ const grantAddonCredits = async ({ receiptToken, productId, platform }) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        receipt_token: receiptToken,
+        receipt_token: transactionId,
         product_id: productId,
         platform
       }),

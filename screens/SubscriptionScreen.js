@@ -56,8 +56,8 @@ const findTransactionForProduct = (customerInfo, productId) => {
 };
 
 // The pending-grant retry flow persists grantData to AsyncStorage and retries
-// on next mount. This requires that the backend grantAddonCredits endpoint is
-// idempotent (keyed on receiptToken) so duplicate calls after a retry are safe.
+// on next mount. The backend grantAddonCredits endpoint must be idempotent
+// (keyed on the transactionId sent as receipt_token) so duplicate retry calls are safe.
 const persistPendingAddonGrant = async (grantData) => {
   try {
     await AsyncStorage.setItem(
@@ -184,7 +184,7 @@ export default function SubscriptionScreen() {
 
   const attemptGrantAddonCredits = useCallback(async (grantData) => {
     const grantResult = await grantAddonCredits({
-      receiptToken: grantData.receiptToken,
+      transactionId: grantData.transactionId,
       productId: grantData.productId,
       platform: grantData.platform
     });
@@ -215,7 +215,7 @@ export default function SubscriptionScreen() {
   const hasRetriedPendingGrantRef = useRef(false);
 
   useEffect(() => {
-    if (!isSubscribed || hasRetriedPendingGrantRef.current) return;
+    if (loading || hasRetriedPendingGrantRef.current) return;
     hasRetriedPendingGrantRef.current = true;
 
     const retry = async () => {
@@ -225,7 +225,7 @@ export default function SubscriptionScreen() {
       }
     };
     retry();
-  }, [isSubscribed, attemptGrantAddonCredits]);
+  }, [loading, attemptGrantAddonCredits]);
 
   const handleAddonPurchase = async (pack) => {
     if (!isSubscribed) {
@@ -267,8 +267,10 @@ export default function SubscriptionScreen() {
           return;
         }
 
+        // transactionIdentifier is a RevenueCat-assigned ID, not an App Store/Play Store receipt.
+        // The backend receives it as receipt_token and uses it as an idempotency key.
         const grantData = {
-          receiptToken: matchedTransaction.transactionIdentifier,
+          transactionId: matchedTransaction.transactionIdentifier,
           productId: pack.id,
           platform: Platform.OS,
           credits: pack.credits

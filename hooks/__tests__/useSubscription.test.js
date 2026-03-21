@@ -7,8 +7,11 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 );
 
 jest.mock('react-native', () => ({
-  AppState: { addEventListener: jest.fn().mockReturnValue({ remove: jest.fn() }) }
+  AppState: { addEventListener: jest.fn().mockReturnValue({ remove: jest.fn() }) },
+  Platform: { OS: 'ios' }
 }));
+
+jest.mock('react-native-purchases', () => ({}));
 
 const mockConfigure = jest.fn();
 const mockLoginUser = jest.fn();
@@ -19,39 +22,22 @@ const mockRestorePurchasesService = jest.fn();
 const mockGetCustomerInfo = jest.fn();
 const mockOnCustomerInfoUpdate = jest.fn();
 
-const mockParseCustomerInfo = (customerInfo) => {
-  if (!customerInfo?.entitlements || typeof customerInfo.entitlements !== 'object') {
-    return { isSubscribed: false, expirationDate: null, willRenew: false };
-  }
-  const entitlement = customerInfo.entitlements?.active?.premium;
-  const isSubscribed = entitlement !== undefined;
-  let expirationDate = null;
-  if (entitlement?.expirationDate) {
-    const parsed = new Date(entitlement.expirationDate);
-    if (Number.isFinite(parsed.getTime())) {
-      expirationDate = parsed;
-    }
-  }
-  return {
-    isSubscribed,
-    expirationDate,
-    willRenew: entitlement?.willRenew ?? false
-  };
-};
-
 let mockCustomerInfoUpdateCallback = null;
 
-jest.mock('../../services/subscriptionService', () => ({
-  configure: (...args) => mockConfigure(...args),
-  loginUser: (...args) => mockLoginUser(...args),
-  logoutUser: (...args) => mockLogoutUser(...args),
-  getOfferings: (...args) => mockFetchOfferings(...args),
-  purchasePackage: (...args) => mockPurchasePkg(...args),
-  restorePurchases: (...args) => mockRestorePurchasesService(...args),
-  getCustomerInfo: (...args) => mockGetCustomerInfo(...args),
-  onCustomerInfoUpdate: (...args) => mockOnCustomerInfoUpdate(...args),
-  parseCustomerInfo: mockParseCustomerInfo
-}));
+jest.mock('../../services/subscriptionService', () => {
+  const actual = jest.requireActual('../../services/subscriptionService');
+  return {
+    configure: (...args) => mockConfigure(...args),
+    loginUser: (...args) => mockLoginUser(...args),
+    logoutUser: (...args) => mockLogoutUser(...args),
+    getOfferings: (...args) => mockFetchOfferings(...args),
+    purchasePackage: (...args) => mockPurchasePkg(...args),
+    restorePurchases: (...args) => mockRestorePurchasesService(...args),
+    getCustomerInfo: (...args) => mockGetCustomerInfo(...args),
+    onCustomerInfoUpdate: (...args) => mockOnCustomerInfoUpdate(...args),
+    parseCustomerInfo: actual.parseCustomerInfo
+  };
+});
 
 const mockFetchSubscriptionStatus = jest.fn().mockResolvedValue({
   success: true,
@@ -98,6 +84,7 @@ describe('useSubscription reducer', () => {
     expect(initialState).toEqual({
       isSubscribed: false,
       loading: true,
+      refreshing: false,
       expirationDate: null,
       willRenew: false,
       error: null,
@@ -117,6 +104,14 @@ describe('useSubscription reducer', () => {
     const next = reducer(state, { type: 'SET_LOADING' });
 
     expect(next.loading).toBe(true);
+    expect(next.error).toBeNull();
+  });
+
+  test('SET_REFRESHING sets refreshing true and clears error', () => {
+    const state = { ...initialState, refreshing: false, error: 'some error' };
+    const next = reducer(state, { type: 'SET_REFRESHING' });
+
+    expect(next.refreshing).toBe(true);
     expect(next.error).toBeNull();
   });
 
@@ -148,6 +143,45 @@ describe('useSubscription reducer', () => {
     expect(next.backendCanGenerate).toBe(true);
   });
 
+  test('SET_REFRESH_COMPLETE atomically updates customer and trial state', () => {
+    const state = { ...initialState, refreshing: true };
+    const customer = {
+      isSubscribed: true,
+      expirationDate: new Date('2026-12-01'),
+      willRenew: true
+    };
+    const trial = { active: false, expiresAt: null, daysRemaining: 0 };
+
+    const next = reducer(state, {
+      type: 'SET_REFRESH_COMPLETE',
+      payload: { customer, trial, backendCanGenerate: true }
+    });
+
+    expect(next.isSubscribed).toBe(true);
+    expect(next.expirationDate).toEqual(new Date('2026-12-01'));
+    expect(next.willRenew).toBe(true);
+    expect(next.trial).toBe(trial);
+    expect(next.backendCanGenerate).toBe(true);
+    expect(next.loading).toBe(false);
+    expect(next.refreshing).toBe(false);
+    expect(next.error).toBeNull();
+  });
+
+  test('SET_REFRESH_COMPLETE preserves previous trial when payload trial is undefined', () => {
+    const existingTrial = { active: true, expiresAt: new Date('2026-04-01'), daysRemaining: 10 };
+    const state = { ...initialState, trial: existingTrial, backendCanGenerate: true, refreshing: true };
+    const customer = { isSubscribed: false, expirationDate: null, willRenew: false };
+
+    const next = reducer(state, {
+      type: 'SET_REFRESH_COMPLETE',
+      payload: { customer, trial: undefined, backendCanGenerate: undefined }
+    });
+
+    expect(next.trial).toBe(existingTrial);
+    expect(next.backendCanGenerate).toBe(true);
+    expect(next.refreshing).toBe(false);
+  });
+
   test('SET_TRIAL_STATUS stores null when backendCanGenerate is undefined', () => {
     const trial = { active: true, expiresAt: new Date('2026-04-01'), daysRemaining: 5 };
 
@@ -169,11 +203,13 @@ describe('useSubscription reducer', () => {
     expect(next.error).toBeNull();
   });
 
-  test('SET_ERROR sets error and stops loading', () => {
-    const next = reducer(initialState, { type: 'SET_ERROR', payload: 'Config failed' });
+  test('SET_ERROR sets error and stops loading and refreshing', () => {
+    const state = { ...initialState, refreshing: true };
+    const next = reducer(state, { type: 'SET_ERROR', payload: 'Config failed' });
 
     expect(next.error).toBe('Config failed');
     expect(next.loading).toBe(false);
+    expect(next.refreshing).toBe(false);
   });
 
   test('SHOW_ONBOARDING sets showOnboarding true', () => {
