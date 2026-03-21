@@ -58,6 +58,10 @@ jest.mock('../../services/subscriptionStatusService', () => ({
   grantAddonCredits: (...args) => mockGrantAddonCredits(...args)
 }));
 
+jest.mock('../../services/authService', () => ({
+  getCurrentUserId: jest.fn().mockResolvedValue('user-1')
+}));
+
 jest.mock('../../styles/colors', () => ({
   COLORS: {
     lavender: '#7C6FE0',
@@ -379,6 +383,7 @@ describe('SubscriptionScreen', () => {
         productId: 'credits_20',
         platform: 'ios',
         credits: 20,
+        userId: 'user-1',
         createdAt: Date.now()
       };
       await AsyncStorage.setItem(
@@ -414,6 +419,83 @@ describe('SubscriptionScreen', () => {
           'SUCCESS'
         );
       });
+    });
+
+    test('retries pending addon grant on mount and shows error toast on failure', async () => {
+      const pendingGrant = {
+        transactionId: 'txn-retry-fail',
+        productId: 'credits_10',
+        platform: 'ios',
+        credits: 10,
+        userId: 'user-1',
+        createdAt: Date.now()
+      };
+      await AsyncStorage.setItem(
+        'subscription_pending_addon_grant',
+        JSON.stringify(pendingGrant)
+      );
+
+      mockCurrentSubscriptionState = {
+        ...mockSubscriptionState,
+        isSubscribed: true
+      };
+
+      mockGrantAddonCredits.mockResolvedValueOnce({
+        success: false,
+        error: 'Server error'
+      });
+
+      render(<SubscriptionScreen />);
+
+      await waitFor(() => {
+        expect(mockGrantAddonCredits).toHaveBeenCalledWith(
+          expect.objectContaining({
+            transactionId: 'txn-retry-fail',
+            productId: 'credits_10',
+            platform: 'ios'
+          })
+        );
+      });
+
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.stringContaining('Ponowimy automatycznie'),
+          'ERROR'
+        );
+      });
+
+      // Pending grant should be preserved for future retry
+      const stored = await AsyncStorage.getItem('subscription_pending_addon_grant');
+      expect(stored).toBeTruthy();
+    });
+
+    test('discards pending addon grant belonging to a different user', async () => {
+      const pendingGrant = {
+        transactionId: 'txn-other-user',
+        productId: 'credits_10',
+        platform: 'ios',
+        credits: 10,
+        userId: 'user-other',
+        createdAt: Date.now()
+      };
+      await AsyncStorage.setItem(
+        'subscription_pending_addon_grant',
+        JSON.stringify(pendingGrant)
+      );
+
+      mockCurrentSubscriptionState = {
+        ...mockSubscriptionState,
+        isSubscribed: true
+      };
+
+      render(<SubscriptionScreen />);
+
+      await waitFor(async () => {
+        const stored = await AsyncStorage.getItem('subscription_pending_addon_grant');
+        expect(stored).toBeNull();
+      });
+
+      expect(mockGrantAddonCredits).not.toHaveBeenCalled();
     });
 
     test('discards expired pending addon grant (TTL > 24h)', async () => {

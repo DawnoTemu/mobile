@@ -41,6 +41,7 @@ const initialState = {
     daysRemaining: 0
   },
   backendCanGenerate: null,
+  backendResyncPending: false,
   showOnboarding: false,
   showLapseModal: false
 };
@@ -51,15 +52,26 @@ const reducer = (state, action) => {
       return { ...state, loading: true, error: null };
     case 'SET_REFRESHING':
       return { ...state, refreshing: true, error: null };
-    case 'SET_CUSTOMER_INFO':
+    case 'SET_CUSTOMER_INFO': {
+      // When subscription status changes via real-time listener and backendCanGenerate
+      // is stale (disagrees with the new entitlement direction), reset it to null so the
+      // fallback (isSubscribed || trial.active) takes over until the backend resync completes.
+      // This is symmetric: gaining entitlement clears stale false, losing it clears stale true.
+      const resetBackend =
+        (action.payload.isSubscribed && state.backendCanGenerate === false) ||
+        (!action.payload.isSubscribed && state.backendCanGenerate === true);
       return {
         ...state,
         isSubscribed: action.payload.isSubscribed,
         expirationDate: action.payload.expirationDate,
         willRenew: action.payload.willRenew,
+        backendCanGenerate: resetBackend ? null : state.backendCanGenerate,
+        backendResyncPending: resetBackend ? true : state.backendResyncPending,
         loading: false,
+        refreshing: false,
         error: null
       };
+    }
     case 'SET_REFRESH_COMPLETE':
       return {
         ...state,
@@ -68,6 +80,7 @@ const reducer = (state, action) => {
         willRenew: action.payload.customer.willRenew,
         trial: action.payload.trial ?? state.trial,
         backendCanGenerate: action.payload.backendCanGenerate ?? state.backendCanGenerate,
+        backendResyncPending: false,
         loading: false,
         refreshing: false,
         error: null
@@ -76,8 +89,11 @@ const reducer = (state, action) => {
       return {
         ...state,
         trial: action.payload.trial,
-        backendCanGenerate: action.payload.backendCanGenerate ?? null
+        backendCanGenerate: action.payload.backendCanGenerate ?? null,
+        backendResyncPending: false
       };
+    case 'CLEAR_BACKEND_RESYNC_PENDING':
+      return { ...state, backendResyncPending: false };
     case 'CANCEL_LOADING':
       return { ...state, loading: false };
     case 'SET_ERROR':
@@ -146,7 +162,10 @@ export const SubscriptionProvider = ({ children }) => {
     const result = await configure();
     if (result.success) {
       isConfiguredRef.current = true;
-      setSdkConfigured(true);
+      // Note: setSdkConfigured(true) is intentionally NOT called here.
+      // It is deferred until after login completes (in the init effect and
+      // LOGIN auth handler) to avoid registering the real-time listener
+      // on an anonymous RevenueCat user, which would flash unsubscribed state.
     } else {
       Sentry.captureMessage('RevenueCat SDK configuration failed', {
         level: 'error',
@@ -281,6 +300,7 @@ export const SubscriptionProvider = ({ children }) => {
         }
 
         await refresh();
+        if (mountedRef.current) setSdkConfigured(true);
         await checkOnboarding();
       } catch (error) {
         Sentry.captureException(error, { extra: { context: 'subscription_init' } });
@@ -297,6 +317,8 @@ export const SubscriptionProvider = ({ children }) => {
   useEffect(() => {
     if (!sdkConfigured) return;
 
+    let removeListener = null;
+
     const result = onCustomerInfoUpdate((customerInfo) => {
       try {
         if (!mountedRef.current) return;
@@ -307,23 +329,41 @@ export const SubscriptionProvider = ({ children }) => {
         );
         // Resync backend status to reduce stale backendCanGenerate window
         fetchSubscriptionStatus().then((trialResult) => {
-          if (!mountedRef.current || !trialResult.success) return;
-          dispatch({
-            type: 'SET_TRIAL_STATUS',
-            payload: {
-              trial: trialResult.data.trial,
-              backendCanGenerate: trialResult.data.canGenerate
-            }
-          });
+          if (!mountedRef.current) return;
+          if (trialResult.success) {
+            dispatch({
+              type: 'SET_TRIAL_STATUS',
+              payload: {
+                trial: trialResult.data.trial,
+                backendCanGenerate: trialResult.data.canGenerate
+              }
+            });
+          } else {
+            Sentry.captureMessage('Backend resync failed after listener update', {
+              level: 'warning',
+              extra: { error: trialResult.error, code: trialResult.code }
+            });
+            dispatch({ type: 'CLEAR_BACKEND_RESYNC_PENDING' });
+          }
         }).catch((err) => {
           Sentry.captureException(err, { extra: { context: 'backend_resync_after_listener' } });
+          if (mountedRef.current) {
+            dispatch({ type: 'CLEAR_BACKEND_RESYNC_PENDING' });
+          }
         });
       } catch (error) {
         Sentry.captureException(error, { extra: { context: 'customer_info_update_listener' } });
       }
     });
 
-    if (!result.success) {
+    if (result.success) {
+      const listener = result.data;
+      if (typeof listener === 'function') {
+        removeListener = listener;
+      } else if (listener && typeof listener.remove === 'function') {
+        removeListener = () => listener.remove();
+      }
+    } else {
       Sentry.captureMessage('Failed to register customer info listener', {
         level: 'error',
         extra: { error: result.error }
@@ -331,15 +371,7 @@ export const SubscriptionProvider = ({ children }) => {
     }
 
     return () => {
-      if (!result.success) return;
-      const listener = result.data;
-      // Defensive cleanup: handles both function-style and object-with-remove() listener teardown,
-      // since the RevenueCat SDK return type varies across versions and platforms
-      if (typeof listener === 'function') {
-        listener();
-      } else if (listener && typeof listener.remove === 'function') {
-        listener.remove();
-      }
+      if (removeListener) removeListener();
     };
   }, [sdkConfigured]);
 
@@ -364,6 +396,7 @@ export const SubscriptionProvider = ({ children }) => {
             }
           }
           await refresh();
+          if (mountedRef.current) setSdkConfigured(true);
           await checkOnboarding();
         } else if (event === 'LOGOUT') {
           const logoutResult = await logoutUser();
@@ -374,6 +407,7 @@ export const SubscriptionProvider = ({ children }) => {
             });
           }
           if (mountedRef.current) {
+            setSdkConfigured(false);
             dispatch({ type: 'RESET' });
           }
           try {
@@ -413,7 +447,7 @@ export const SubscriptionProvider = ({ children }) => {
     }
     try {
       const result = await purchasePkg(pkg);
-      if (!mountedRef.current) return result;
+      if (!mountedRef.current) return { success: false, error: 'unmounted' };
 
       if (result.success) {
         const parsed = parseCustomerInfo(result.data.customerInfo);
@@ -438,6 +472,10 @@ export const SubscriptionProvider = ({ children }) => {
     }
   }, []);
 
+  // Returns { success: true, isSubscribed: boolean } on success,
+  // or { success: false, error: string } on failure.
+  // Note: `isSubscribed` is lifted to the top level (not nested under `data`)
+  // so callers can branch on it directly without parsing customerInfo.
   const handleRestorePurchases = useCallback(async () => {
     dispatch({ type: 'SET_LOADING' });
     try {
@@ -472,8 +510,17 @@ export const SubscriptionProvider = ({ children }) => {
   }, []);
 
   const canGenerate = useMemo(
-    () => state.backendCanGenerate ?? (state.isSubscribed || state.trial.active),
-    [state.backendCanGenerate, state.isSubscribed, state.trial.active]
+    () => {
+      if (state.backendCanGenerate !== null) return state.backendCanGenerate;
+      // During initial loading, avoid granting access based on potentially stale
+      // RevenueCat data alone.
+      if (state.loading) return false;
+      // During a backend resync (triggered by a listener-driven entitlement change),
+      // preserve the current RevenueCat entitlement so subscribed/trial-active users
+      // are not briefly gated with canGenerate=false.
+      return state.isSubscribed || state.trial.active;
+    },
+    [state.backendCanGenerate, state.loading, state.isSubscribed, state.trial.active]
   );
 
   const enrichedState = useMemo(

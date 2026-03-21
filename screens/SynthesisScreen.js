@@ -1120,11 +1120,15 @@ export default function SynthesisScreen({ navigation }) {
     const requiredCredits = getStoryRequiredCredits(story);
 
     if (requiresGeneration && !canGenerate) {
-      const message = trial?.active === false && !isSubscribed
-        ? 'Okres próbny się zakończył. Subskrybuj, aby generować nowe bajki.'
-        : 'Subskrypcja jest wymagana do generowania bajek.';
-      showToast(message, 'INFO');
-      navigation.navigate('Subscription');
+      if (trial?.active) {
+        showToast('Twój limit w okresie próbnym został wyczerpany. Subskrybuj, aby generować więcej bajek.', 'INFO');
+        navigation.navigate('Subscription');
+      } else if (!isSubscribed) {
+        showToast('Okres próbny się zakończył. Subskrybuj, aby generować nowe bajki.', 'INFO');
+        navigation.navigate('Subscription');
+      } else {
+        showToast('Brakuje Punktów Magii, aby wygenerować tę bajkę.', 'INFO');
+      }
       return;
     }
 

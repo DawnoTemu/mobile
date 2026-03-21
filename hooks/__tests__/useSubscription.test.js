@@ -101,6 +101,7 @@ describe('useSubscription reducer', () => {
         daysRemaining: 0
       },
       backendCanGenerate: null,
+      backendResyncPending: false,
       showOnboarding: false,
       showLapseModal: false
     });
@@ -138,7 +139,7 @@ describe('useSubscription reducer', () => {
     expect(next.error).toBeNull();
   });
 
-  test('SET_CUSTOMER_INFO preserves backendCanGenerate to avoid flicker', () => {
+  test('SET_CUSTOMER_INFO resets stale true backendCanGenerate when subscription is lost', () => {
     const state = { ...initialState, backendCanGenerate: true, isSubscribed: true };
     const payload = {
       isSubscribed: false,
@@ -149,6 +150,72 @@ describe('useSubscription reducer', () => {
     const next = reducer(state, { type: 'SET_CUSTOMER_INFO', payload });
 
     expect(next.isSubscribed).toBe(false);
+    expect(next.backendCanGenerate).toBeNull();
+  });
+
+  test('SET_CUSTOMER_INFO resets stale false backendCanGenerate when subscription is gained', () => {
+    const state = { ...initialState, backendCanGenerate: false, isSubscribed: false };
+    const payload = {
+      isSubscribed: true,
+      expirationDate: new Date('2026-12-01'),
+      willRenew: true
+    };
+
+    const next = reducer(state, { type: 'SET_CUSTOMER_INFO', payload });
+
+    expect(next.isSubscribed).toBe(true);
+    expect(next.backendCanGenerate).toBeNull();
+  });
+
+  test('SET_CUSTOMER_INFO sets backendResyncPending when it resets stale backendCanGenerate', () => {
+    const state = { ...initialState, backendCanGenerate: false, isSubscribed: false };
+    const payload = {
+      isSubscribed: true,
+      expirationDate: new Date('2026-12-01'),
+      willRenew: true
+    };
+
+    const next = reducer(state, { type: 'SET_CUSTOMER_INFO', payload });
+
+    expect(next.backendCanGenerate).toBeNull();
+    expect(next.backendResyncPending).toBe(true);
+  });
+
+  test('SET_TRIAL_STATUS clears backendResyncPending', () => {
+    const state = { ...initialState, backendResyncPending: true };
+    const trial = { active: true, expiresAt: new Date('2026-04-01'), daysRemaining: 12 };
+
+    const next = reducer(state, {
+      type: 'SET_TRIAL_STATUS',
+      payload: { trial, backendCanGenerate: true }
+    });
+
+    expect(next.backendResyncPending).toBe(false);
+  });
+
+  test('SET_REFRESH_COMPLETE clears backendResyncPending', () => {
+    const state = { ...initialState, backendResyncPending: true, refreshing: true };
+    const customer = { isSubscribed: true, expirationDate: new Date('2026-12-01'), willRenew: true };
+
+    const next = reducer(state, {
+      type: 'SET_REFRESH_COMPLETE',
+      payload: { customer, trial: undefined, backendCanGenerate: true }
+    });
+
+    expect(next.backendResyncPending).toBe(false);
+  });
+
+  test('SET_CUSTOMER_INFO preserves backendCanGenerate when it agrees with direction', () => {
+    const state = { ...initialState, backendCanGenerate: true, isSubscribed: true };
+    const payload = {
+      isSubscribed: true,
+      expirationDate: new Date('2026-12-01'),
+      willRenew: true
+    };
+
+    const next = reducer(state, { type: 'SET_CUSTOMER_INFO', payload });
+
+    expect(next.isSubscribed).toBe(true);
     expect(next.backendCanGenerate).toBe(true);
   });
 
@@ -816,6 +883,27 @@ describe('SubscriptionProvider', () => {
       );
 
       await waitFor(() => expect(result.current.canGenerate).toBe(true));
+    });
+  });
+
+  describe('canGenerate loading guard', () => {
+    test('canGenerate is false during loading even when backendCanGenerate is null', async () => {
+      // Delay SDK init so loading stays true during assertion
+      let resolveInit;
+      mockConfigure.mockImplementationOnce(() => new Promise((r) => { resolveInit = r; }));
+
+      const { result } = renderHook(() => useSubscription(), { wrapper });
+
+      // Still loading — canGenerate must be false regardless of fallback
+      expect(result.current.loading).toBe(true);
+      expect(result.current.canGenerate).toBe(false);
+
+      // Unblock init so the hook can settle
+      await act(async () => {
+        resolveInit({ success: true });
+      });
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
     });
   });
 

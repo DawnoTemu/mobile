@@ -16,6 +16,7 @@ import { useSubscription, useSubscriptionActions } from '../hooks/useSubscriptio
 import { useToast } from '../components/StatusToast';
 import { useCreditActions } from '../hooks/useCredits';
 import { grantAddonCredits } from '../services/subscriptionStatusService';
+import { getCurrentUserId } from '../services/authService';
 import { COLORS } from '../styles/colors';
 import { STORAGE_KEYS } from '../services/config';
 import * as Linking from 'expo-linking';
@@ -198,6 +199,16 @@ export default function SubscriptionScreen() {
 
     if (grantResult.success) {
       await clearPendingAddonGrant();
+      Sentry.addBreadcrumb({
+        category: 'addon_grant',
+        message: 'Addon credits granted',
+        level: 'info',
+        data: {
+          transactionId: grantData.transactionId,
+          productId: grantData.productId,
+          credits: grantData.credits
+        }
+      });
       showToast(`Dodano ${grantData.credits} Punktów Magii!`, 'SUCCESS');
     } else {
       Sentry.captureMessage('grantAddonCredits failed after purchase', {
@@ -207,7 +218,7 @@ export default function SubscriptionScreen() {
           productId: grantData.productId
         }
       });
-      showToast('Zakup udany, ale nie udało się dodać punktów. Spróbuj ponownie lub skontaktuj się z nami.', 'ERROR');
+      showToast('Zakup udany, ale nie udało się dodać punktów. Ponowimy automatycznie przy następnym uruchomieniu.', 'ERROR');
     }
 
     if (creditActions?.refreshCredits) {
@@ -226,21 +237,32 @@ export default function SubscriptionScreen() {
     hasRetriedPendingGrantRef.current = true;
 
     const retry = async () => {
+      const userId = await getCurrentUserId();
+      if (!userId) return;
       const pending = await loadPendingAddonGrant();
-      if (pending) {
-        await attemptGrantAddonCredits(pending);
+      if (!pending || !pending.transactionId || !pending.productId) return;
+      if (!pending.userId || pending.userId !== String(userId)) {
+        await clearPendingAddonGrant();
+        return;
       }
+      await attemptGrantAddonCredits(pending);
     };
     retry().catch((err) => {
       Sentry.captureException(err, { extra: { context: 'pending_addon_grant_retry' } });
     });
   }, [loading, attemptGrantAddonCredits]);
 
+  const addonPurchaseInFlightRef = useRef(false);
+
   const handleAddonPurchase = async (pack) => {
+    if (loading) return;
+
     if (!isSubscribed) {
       showToast('Dokup punkty po aktywowaniu subskrypcji.', 'INFO');
       return;
     }
+
+    if (addonPurchaseInFlightRef.current) return;
 
     const creditPackOffering = offerings?.all?.credit_packs;
     const addonPackage = creditPackOffering?.availablePackages?.find(
@@ -252,6 +274,7 @@ export default function SubscriptionScreen() {
       return;
     }
 
+    addonPurchaseInFlightRef.current = true;
     setPurchasingAddon(pack.id);
     try {
       const result = await purchasePackage(addonPackage, { isAddon: true });
@@ -278,11 +301,13 @@ export default function SubscriptionScreen() {
 
         // transactionIdentifier is a RevenueCat-assigned ID, not an App Store/Play Store receipt.
         // The backend receives it as receipt_token and uses it as an idempotency key.
+        const currentUserId = await getCurrentUserId();
         const grantData = {
           transactionId: matchedTransaction.transactionIdentifier,
           productId: pack.id,
           platform: Platform.OS,
-          credits: pack.credits
+          credits: pack.credits,
+          userId: currentUserId ? String(currentUserId) : null
         };
 
         await persistPendingAddonGrant(grantData);
@@ -295,6 +320,7 @@ export default function SubscriptionScreen() {
       showToast('Zakup mógł się udać, ale wystąpił błąd przy naliczaniu punktów. Skontaktuj się z nami.', 'ERROR');
     } finally {
       setPurchasingAddon(null);
+      addonPurchaseInFlightRef.current = false;
     }
   };
 

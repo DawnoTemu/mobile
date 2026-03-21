@@ -70,3 +70,17 @@ export const GENERATION_STATE_TTL = 2 * 60 * 60 * 1000; // 2 hours
 // Ideally keep aligned with server/config.py, but the server is the source of truth.
 export const DEFAULT_INITIAL_CREDITS = 10;
 export const DEFAULT_TRIAL_DAYS = 14;
+
+export default {
+  ENV,
+  CURRENT_ENV,
+  API_BASE_URL,
+  REQUEST_TIMEOUT,
+  STORAGE_KEYS,
+  CACHE_EXPIRATION,
+  CREDIT_CACHE_TTL,
+  CREDIT_ESTIMATE_TTL,
+  GENERATION_STATE_TTL,
+  DEFAULT_INITIAL_CREDITS,
+  DEFAULT_TRIAL_DAYS
+};

@@ -22,7 +22,7 @@ import { useSubscription } from '../hooks/useSubscription';
 import { pluralizeDays } from '../utils/pluralize';
 import * as Sentry from '@sentry/react-native';
 import * as Linking from 'expo-linking';
-import Constants from 'expo-constants';
+import * as Application from 'expo-application';
 
 const { width } = Dimensions.get('window');
 
@@ -323,7 +323,7 @@ export default function AppMenu({ navigation, isVisible, onClose }) {
               </TouchableOpacity>
               
 
-              <Text style={styles.versionText}>Wersja {Constants.expoConfig?.version ?? '—'}</Text>
+              <Text style={styles.versionText}>Wersja {Application.nativeApplicationVersion ?? '—'}</Text>
               
 
               <View style={styles.logoContainer}>
