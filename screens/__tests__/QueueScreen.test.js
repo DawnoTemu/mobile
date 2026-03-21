@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, fireEvent, waitFor, within } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, within, act } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 import QueueScreen from '../QueueScreen';
 import { PlaybackQueueProvider, LOOP_MODES } from '../../context/PlaybackQueueProvider';
@@ -53,6 +53,9 @@ describe('QueueScreen', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    voiceService.getCurrentVoice.mockResolvedValue({ success: true, voiceId: 'voice-1' });
+    voiceService.getStories.mockResolvedValue({ success: true, stories: [] });
+    voiceService.checkAudioExists.mockResolvedValue({ success: true, localExists: false, remoteExists: false });
   });
 
   const renderWithProvider = (overrides = {}) =>
@@ -157,12 +160,13 @@ describe('QueueScreen', () => {
     expect(mockShowToast).toHaveBeenCalledWith('Przetasowano kolejkę.', 'SUCCESS');
   });
 
-  it('shuffle on empty queue shows info toast', () => {
+  it('shuffle on empty queue is disabled', () => {
     const { getByTestId } = renderWithProvider({ queue: [] });
 
-    fireEvent.press(getByTestId('shuffle-chip'));
+    const shuffleChip = getByTestId('shuffle-chip');
 
-    expect(mockShowToast).toHaveBeenCalledWith('Kolejka jest pusta.', 'INFO');
+    expect(shuffleChip.props.accessibilityState?.disabled).toBe(true);
+    expect(mockShowToast).not.toHaveBeenCalled();
   });
 
   it('auto-fill adds new playable stories and records the event', async () => {
@@ -256,7 +260,9 @@ describe('QueueScreen', () => {
     // Simulate pressing the destructive "Wyczyść" button
     const alertButtons = Alert.alert.mock.calls[0][2];
     const confirmButton = alertButtons.find((b) => b.style === 'destructive');
-    confirmButton.onPress();
+    act(() => {
+      confirmButton.onPress();
+    });
 
     expect(queryByText('Story One')).toBeNull();
     expect(queryByText('Story Two')).toBeNull();

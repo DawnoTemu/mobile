@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,12 +10,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sentry from '@sentry/react-native';
 import { useSubscription, useSubscriptionActions } from '../hooks/useSubscription';
 import { useToast } from '../components/StatusToast';
 import { useCreditActions } from '../hooks/useCredits';
 import { grantAddonCredits } from '../services/subscriptionStatusService';
 import { COLORS } from '../styles/colors';
+import { STORAGE_KEYS } from '../services/config';
 import * as Linking from 'expo-linking';
 import { formatDate } from '../utils/formatDate';
 import { pluralizeDays } from '../utils/pluralize';
@@ -39,6 +41,57 @@ const getAddonPrice = (packId, offerings) => {
     (p) => p.product?.identifier === packId
   );
   return pkg?.product?.priceString || null;
+};
+
+const findTransactionForProduct = (customerInfo, productId) => {
+  const transactions = customerInfo?.nonSubscriptionTransactions;
+  if (!Array.isArray(transactions) || transactions.length === 0) return null;
+
+  for (let i = transactions.length - 1; i >= 0; i--) {
+    if (transactions[i].productIdentifier === productId && transactions[i].transactionIdentifier) {
+      return transactions[i];
+    }
+  }
+  return null;
+};
+
+// The pending-grant retry flow persists grantData to AsyncStorage and retries
+// on next mount. This requires that the backend grantAddonCredits endpoint is
+// idempotent (keyed on receiptToken) so duplicate calls after a retry are safe.
+const persistPendingAddonGrant = async (grantData) => {
+  try {
+    await AsyncStorage.setItem(
+      STORAGE_KEYS.PENDING_ADDON_GRANT,
+      JSON.stringify({ ...grantData, createdAt: Date.now() })
+    );
+  } catch (err) {
+    Sentry.captureException(err, { extra: { context: 'persist_pending_addon_grant' } });
+  }
+};
+
+const clearPendingAddonGrant = async () => {
+  try {
+    await AsyncStorage.removeItem(STORAGE_KEYS.PENDING_ADDON_GRANT);
+  } catch (err) {
+    Sentry.captureException(err, { extra: { context: 'clear_pending_addon_grant' } });
+  }
+};
+
+const loadPendingAddonGrant = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_ADDON_GRANT);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    if (Date.now() - parsed.createdAt > ONE_DAY_MS) {
+      await clearPendingAddonGrant();
+      return null;
+    }
+    return parsed;
+  } catch (err) {
+    Sentry.captureException(err, { extra: { context: 'load_pending_addon_grant' } });
+    return null;
+  }
 };
 
 export default function SubscriptionScreen() {
@@ -86,7 +139,9 @@ export default function SubscriptionScreen() {
   }, [loadOfferings]);
 
   const handlePurchase = async () => {
-    const monthlyPackage = offerings?.current?.availablePackages?.[0];
+    const monthlyPackage = offerings?.current?.availablePackages?.find(
+      (p) => p.packageType === 'MONTHLY'
+    ) || offerings?.current?.availablePackages?.[0];
     if (!monthlyPackage) {
       showToast('Brak dostępnych planów. Spróbuj ponownie później.', 'ERROR');
       return;
@@ -127,6 +182,51 @@ export default function SubscriptionScreen() {
     }
   };
 
+  const attemptGrantAddonCredits = useCallback(async (grantData) => {
+    const grantResult = await grantAddonCredits({
+      receiptToken: grantData.receiptToken,
+      productId: grantData.productId,
+      platform: grantData.platform
+    });
+
+    if (grantResult.success) {
+      await clearPendingAddonGrant();
+      showToast(`Dodano ${grantData.credits} Punktów Magii!`, 'SUCCESS');
+    } else {
+      Sentry.captureMessage('grantAddonCredits failed after purchase', {
+        level: 'error',
+        extra: {
+          error: grantResult.error,
+          productId: grantData.productId
+        }
+      });
+      showToast('Zakup udany, ale nie udało się dodać punktów. Spróbuj ponownie lub skontaktuj się z nami.', 'ERROR');
+    }
+
+    if (creditActions?.refreshCredits) {
+      creditActions.refreshCredits({ force: true }).catch((err) => {
+        Sentry.captureException(err, { extra: { context: 'refresh_credits_after_addon' } });
+      });
+    }
+
+    return grantResult;
+  }, [creditActions, showToast]);
+
+  const hasRetriedPendingGrantRef = useRef(false);
+
+  useEffect(() => {
+    if (!isSubscribed || hasRetriedPendingGrantRef.current) return;
+    hasRetriedPendingGrantRef.current = true;
+
+    const retry = async () => {
+      const pending = await loadPendingAddonGrant();
+      if (pending) {
+        await attemptGrantAddonCredits(pending);
+      }
+    };
+    retry();
+  }, [isSubscribed, attemptGrantAddonCredits]);
+
   const handleAddonPurchase = async (pack) => {
     if (!isSubscribed) {
       showToast('Dokup punkty po aktywowaniu subskrypcji.', 'INFO');
@@ -147,45 +247,35 @@ export default function SubscriptionScreen() {
     try {
       const result = await purchasePackage(addonPackage, { isAddon: true });
       if (result.success) {
-        const latestTransaction = result.data?.customerInfo
-          ?.nonSubscriptionTransactions?.slice(-1)[0];
+        const matchedTransaction = findTransactionForProduct(
+          result.data?.customerInfo,
+          pack.id
+        );
 
-        if (!latestTransaction?.transactionIdentifier) {
-          Sentry.captureMessage('Missing transaction identifier after addon purchase', {
+        if (!matchedTransaction) {
+          Sentry.captureMessage('Missing transaction for product after addon purchase', {
             level: 'error',
             extra: {
               productId: pack.id,
               hasCustomerInfo: !!result.data?.customerInfo,
-              transactionCount: result.data?.customerInfo?.nonSubscriptionTransactions?.length
+              transactionCount: result.data?.customerInfo?.nonSubscriptionTransactions?.length,
+              productIds: result.data?.customerInfo?.nonSubscriptionTransactions
+                ?.map((t) => t.productIdentifier)
             }
           });
           showToast('Zakup udany, ale brak potwierdzenia transakcji. Skontaktuj się z nami.', 'ERROR');
           return;
         }
 
-        const grantResult = await grantAddonCredits({
-          receiptToken: latestTransaction.transactionIdentifier,
+        const grantData = {
+          receiptToken: matchedTransaction.transactionIdentifier,
           productId: pack.id,
-          platform: Platform.OS
-        });
+          platform: Platform.OS,
+          credits: pack.credits
+        };
 
-        if (grantResult.success) {
-          showToast(`Dodano ${pack.credits} Punktów Magii!`, 'SUCCESS');
-        } else {
-          Sentry.captureMessage('grantAddonCredits failed after purchase', {
-            level: 'error',
-            extra: { error: grantResult.error, productId: pack.id }
-          });
-          showToast('Zakup udany, ale nie udało się dodać punktów. Skontaktuj się z nami.', 'ERROR');
-        }
-
-        if (creditActions?.refreshCredits) {
-          creditActions.refreshCredits({ force: true }).catch((err) => {
-            Sentry.captureException(err, { extra: { context: 'refresh_credits_after_addon' } });
-          });
-        } else {
-          Sentry.captureMessage('creditActions unavailable after addon purchase', { level: 'warning' });
-        }
+        await persistPendingAddonGrant(grantData);
+        await attemptGrantAddonCredits(grantData);
       } else if (result.code !== 'USER_CANCELLED' && result.error !== 'USER_CANCELLED') {
         showToast('Nie udało się dokonać zakupu. Spróbuj ponownie.', 'ERROR');
       }
@@ -208,7 +298,9 @@ export default function SubscriptionScreen() {
     });
   };
 
-  const monthlyPackage = offerings?.current?.availablePackages?.[0];
+  const monthlyPackage = offerings?.current?.availablePackages?.find(
+    (p) => p.packageType === 'MONTHLY'
+  ) || offerings?.current?.availablePackages?.[0];
   const priceLabel = monthlyPackage?.product?.priceString || null;
   const priceLoading = loadingOfferings || (!priceLabel && !offeringsError);
 

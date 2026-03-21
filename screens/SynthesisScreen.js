@@ -99,8 +99,30 @@ export default function SynthesisScreen({ navigation }) {
   } = useSubscription();
   const {
     dismissOnboarding,
-    dismissLapseModal
+    dismissLapseModal,
+    getOfferings
   } = useSubscriptionActions();
+
+  const [onboardingPriceLabel, setOnboardingPriceLabel] = useState(null);
+
+  useEffect(() => {
+    if (!showOnboarding) return;
+    let cancelled = false;
+    const loadPrice = async () => {
+      const result = await getOfferings();
+      if (cancelled) return;
+      if (result.success && result.data) {
+        const monthly = result.data.current?.availablePackages?.find(
+          (p) => p.packageType === 'MONTHLY'
+        ) || result.data.current?.availablePackages?.[0];
+        if (monthly?.product?.priceString) {
+          setOnboardingPriceLabel(monthly.product.priceString);
+        }
+      }
+    };
+    loadPrice();
+    return () => { cancelled = true; };
+  }, [showOnboarding, getOfferings]);
 
   // Audio player hook
   const {
@@ -2063,6 +2085,7 @@ export default function SynthesisScreen({ navigation }) {
       <OnboardingModal
         visible={showOnboarding}
         trialDays={trial?.daysRemaining}
+        priceLabel={onboardingPriceLabel}
         onDismiss={dismissOnboarding}
       />
       <SubscriptionLapseModal

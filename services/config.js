@@ -52,7 +52,8 @@ export const STORAGE_KEYS = {
 
   // Subscription
   ONBOARDING_SEEN: 'subscription_onboarding_seen',
-  LAST_SUBSCRIPTION_STATE: 'subscription_last_known_state'
+  LAST_SUBSCRIPTION_STATE: 'subscription_last_known_state',
+  PENDING_ADDON_GRANT: 'subscription_pending_addon_grant'
 };
 
 // Cache expiration time (24 hours in milliseconds)

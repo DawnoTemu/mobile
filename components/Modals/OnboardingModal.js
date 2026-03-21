@@ -11,7 +11,6 @@ import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import * as Sentry from '@sentry/react-native';
 import { COLORS } from '../../styles/colors';
-import { DEFAULT_TRIAL_DAYS } from '../../services/config';
 import { pluralizeDays } from '../../utils/pluralize';
 
 const WELCOME_FEATURES = [
@@ -23,13 +22,12 @@ const WELCOME_FEATURES = [
 
 export default function OnboardingModal({ visible, trialDays, priceLabel, onDismiss }) {
   const hasValidTrialDays = typeof trialDays === 'number' && trialDays > 0;
-  const displayDays = hasValidTrialDays ? trialDays : DEFAULT_TRIAL_DAYS;
   const hasSentFallbackWarningRef = useRef(false);
 
   useEffect(() => {
     if (visible && !hasValidTrialDays && !hasSentFallbackWarningRef.current) {
       hasSentFallbackWarningRef.current = true;
-      Sentry.captureMessage('OnboardingModal falling back to DEFAULT_TRIAL_DAYS', {
+      Sentry.captureMessage('OnboardingModal: trial days unavailable', {
         level: 'warning',
         extra: { receivedTrialDays: trialDays }
       });
@@ -38,6 +36,10 @@ export default function OnboardingModal({ visible, trialDays, priceLabel, onDism
 
   if (!visible) return null;
   const displayPrice = priceLabel || null;
+
+  const trialSubtitle = hasValidTrialDays
+    ? `Masz ${trialDays} ${pluralizeDays(trialDays)} za darmo, żeby wypróbować wszystko.`
+    : 'Masz darmowy okres próbny, żeby wypróbować wszystko.';
 
   return (
     <Modal
@@ -53,7 +55,7 @@ export default function OnboardingModal({ visible, trialDays, priceLabel, onDism
               <View style={styles.content}>
                 <Text style={styles.title}>Witaj w DawnoTemu!</Text>
                 <Text style={styles.subtitle}>
-                  Masz {displayDays} {pluralizeDays(displayDays)} za darmo, żeby wypróbować wszystko.
+                  {trialSubtitle}
                 </Text>
 
                 <View style={styles.featuresList}>

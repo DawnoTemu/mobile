@@ -39,7 +39,7 @@ const initialState = {
     expiresAt: null,
     daysRemaining: 0
   },
-  canGenerate: false,
+  backendCanGenerate: null,
   showOnboarding: false,
   showLapseModal: false
 };
@@ -54,16 +54,17 @@ const reducer = (state, action) => {
         isSubscribed: action.payload.isSubscribed,
         expirationDate: action.payload.expirationDate,
         willRenew: action.payload.willRenew,
-        canGenerate: action.payload.isSubscribed || state.trial.active,
         loading: false,
         error: null
       };
     case 'SET_TRIAL_STATUS':
       return {
         ...state,
-        trial: action.payload,
-        canGenerate: state.isSubscribed || action.payload.active
+        trial: action.payload.trial,
+        backendCanGenerate: action.payload.backendCanGenerate ?? null
       };
+    case 'CANCEL_LOADING':
+      return { ...state, loading: false };
     case 'SET_ERROR':
       return { ...state, loading: false, error: action.payload };
     case 'SHOW_ONBOARDING':
@@ -145,13 +146,15 @@ export const SubscriptionProvider = ({ children }) => {
     if (!mountedRef.current) return;
 
     if (result.success) {
-      dispatch({ type: 'SET_TRIAL_STATUS', payload: result.data.trial });
+      dispatch({
+        type: 'SET_TRIAL_STATUS',
+        payload: { trial: result.data.trial, backendCanGenerate: result.data.canGenerate }
+      });
     } else {
       Sentry.captureMessage('Failed to fetch trial status', {
         level: 'warning',
         extra: { error: result.error, code: result.code }
       });
-      dispatch({ type: 'SET_ERROR', payload: 'Nie udało się sprawdzić statusu próbnego. Spróbuj ponownie.' });
     }
   }, []);
 
@@ -385,7 +388,7 @@ export const SubscriptionProvider = ({ children }) => {
         await persistSubscriptionState(parsed.isSubscribed);
       } else if (result.code === 'USER_CANCELLED') {
         if (!isAddon) {
-          dispatch({ type: 'SET_CUSTOMER_INFO', payload: { isSubscribed: state.isSubscribed, expirationDate: state.expirationDate, willRenew: state.willRenew } });
+          dispatch({ type: 'CANCEL_LOADING' });
         }
       } else {
         if (!isAddon) {
@@ -400,7 +403,7 @@ export const SubscriptionProvider = ({ children }) => {
       }
       return { success: false, error: error.message };
     }
-  }, [state.isSubscribed, state.expirationDate, state.willRenew]);
+  }, []);
 
   const handleRestorePurchases = useCallback(async () => {
     dispatch({ type: 'SET_LOADING' });
@@ -434,9 +437,19 @@ export const SubscriptionProvider = ({ children }) => {
     }
   }, []);
 
+  const canGenerate = useMemo(
+    () => state.backendCanGenerate ?? (state.isSubscribed || state.trial.active),
+    [state.backendCanGenerate, state.isSubscribed, state.trial.active]
+  );
+
+  const enrichedState = useMemo(
+    () => ({ ...state, canGenerate }),
+    [state, canGenerate]
+  );
+
   const contextValue = useMemo(
     () => ({
-      state,
+      state: enrichedState,
       actions: {
         refresh,
         purchasePackage: handlePurchasePackage,
@@ -447,7 +460,7 @@ export const SubscriptionProvider = ({ children }) => {
       }
     }),
     [
-      state,
+      enrichedState,
       refresh,
       handlePurchasePackage,
       handleRestorePurchases,

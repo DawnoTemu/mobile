@@ -10,24 +10,48 @@ jest.mock('react-native', () => ({
   AppState: { addEventListener: jest.fn().mockReturnValue({ remove: jest.fn() }) }
 }));
 
-const mockPurchases = {
-  configure: jest.fn().mockResolvedValue(undefined),
-  logIn: jest.fn().mockResolvedValue({ customerInfo: { entitlements: { active: {} } } }),
-  logOut: jest.fn().mockResolvedValue({ entitlements: { active: {} } }),
-  getOfferings: jest.fn().mockResolvedValue({ current: null }),
-  purchasePackage: jest.fn().mockResolvedValue({ customerInfo: { entitlements: { active: {} } } }),
-  restorePurchases: jest.fn().mockResolvedValue({ entitlements: { active: {} } }),
-  getCustomerInfo: jest.fn().mockResolvedValue({ entitlements: { active: {} } }),
-  addCustomerInfoUpdateListener: jest.fn()
+const mockConfigure = jest.fn();
+const mockLoginUser = jest.fn();
+const mockLogoutUser = jest.fn();
+const mockFetchOfferings = jest.fn();
+const mockPurchasePkg = jest.fn();
+const mockRestorePurchasesService = jest.fn();
+const mockGetCustomerInfo = jest.fn();
+const mockOnCustomerInfoUpdate = jest.fn();
+
+const mockParseCustomerInfo = (customerInfo) => {
+  if (!customerInfo?.entitlements || typeof customerInfo.entitlements !== 'object') {
+    return { isSubscribed: false, expirationDate: null, willRenew: false };
+  }
+  const entitlement = customerInfo.entitlements?.active?.premium;
+  const isSubscribed = entitlement !== undefined;
+  let expirationDate = null;
+  if (entitlement?.expirationDate) {
+    const parsed = new Date(entitlement.expirationDate);
+    if (Number.isFinite(parsed.getTime())) {
+      expirationDate = parsed;
+    }
+  }
+  return {
+    isSubscribed,
+    expirationDate,
+    willRenew: entitlement?.willRenew ?? false
+  };
 };
 
-let customerInfoUpdateCallback = null;
-mockPurchases.addCustomerInfoUpdateListener.mockImplementation((cb) => {
-  customerInfoUpdateCallback = cb;
-  return () => { customerInfoUpdateCallback = null; };
-});
+let mockCustomerInfoUpdateCallback = null;
 
-jest.mock('react-native-purchases', () => mockPurchases);
+jest.mock('../../services/subscriptionService', () => ({
+  configure: (...args) => mockConfigure(...args),
+  loginUser: (...args) => mockLoginUser(...args),
+  logoutUser: (...args) => mockLogoutUser(...args),
+  getOfferings: (...args) => mockFetchOfferings(...args),
+  purchasePackage: (...args) => mockPurchasePkg(...args),
+  restorePurchases: (...args) => mockRestorePurchasesService(...args),
+  getCustomerInfo: (...args) => mockGetCustomerInfo(...args),
+  onCustomerInfoUpdate: (...args) => mockOnCustomerInfoUpdate(...args),
+  parseCustomerInfo: mockParseCustomerInfo
+}));
 
 const mockFetchSubscriptionStatus = jest.fn().mockResolvedValue({
   success: true,
@@ -43,10 +67,10 @@ jest.mock('../../services/subscriptionStatusService', () => ({
   fetchSubscriptionStatus: (...args) => mockFetchSubscriptionStatus(...args)
 }));
 
-let authEventCallback = null;
+let mockAuthEventCallback = null;
 const mockSubscribeAuthEvents = jest.fn((cb) => {
-  authEventCallback = cb;
-  return () => { authEventCallback = null; };
+  mockAuthEventCallback = cb;
+  return () => { mockAuthEventCallback = null; };
 });
 const mockGetCurrentUserId = jest.fn().mockResolvedValue(null);
 
@@ -82,7 +106,7 @@ describe('useSubscription reducer', () => {
         expiresAt: null,
         daysRemaining: 0
       },
-      canGenerate: false,
+      backendCanGenerate: null,
       showOnboarding: false,
       showLapseModal: false
     });
@@ -96,7 +120,7 @@ describe('useSubscription reducer', () => {
     expect(next.error).toBeNull();
   });
 
-  test('SET_CUSTOMER_INFO updates subscription state and computes canGenerate', () => {
+  test('SET_CUSTOMER_INFO updates subscription state', () => {
     const payload = {
       isSubscribed: true,
       expirationDate: new Date('2026-12-01'),
@@ -108,51 +132,41 @@ describe('useSubscription reducer', () => {
     expect(next.isSubscribed).toBe(true);
     expect(next.expirationDate).toEqual(new Date('2026-12-01'));
     expect(next.willRenew).toBe(true);
-    expect(next.canGenerate).toBe(true);
     expect(next.loading).toBe(false);
     expect(next.error).toBeNull();
   });
 
-  test('SET_CUSTOMER_INFO canGenerate is true when trial active but not subscribed', () => {
-    const stateWithTrial = {
-      ...initialState,
-      trial: { active: true, expiresAt: null, daysRemaining: 5 }
-    };
+  test('SET_TRIAL_STATUS updates trial and stores backendCanGenerate', () => {
+    const trial = { active: true, expiresAt: new Date('2026-04-01'), daysRemaining: 12 };
 
-    const next = reducer(stateWithTrial, {
-      type: 'SET_CUSTOMER_INFO',
-      payload: { isSubscribed: false, expirationDate: null, willRenew: false }
-    });
-
-    expect(next.isSubscribed).toBe(false);
-    expect(next.canGenerate).toBe(true);
-  });
-
-  test('SET_CUSTOMER_INFO canGenerate is false when neither subscribed nor trial active', () => {
     const next = reducer(initialState, {
-      type: 'SET_CUSTOMER_INFO',
-      payload: { isSubscribed: false, expirationDate: null, willRenew: false }
+      type: 'SET_TRIAL_STATUS',
+      payload: { trial, backendCanGenerate: true }
     });
 
-    expect(next.canGenerate).toBe(false);
+    expect(next.trial).toBe(trial);
+    expect(next.backendCanGenerate).toBe(true);
   });
 
-  test('SET_TRIAL_STATUS updates trial and recomputes canGenerate', () => {
-    const payload = { active: true, expiresAt: new Date('2026-04-01'), daysRemaining: 12 };
+  test('SET_TRIAL_STATUS stores null when backendCanGenerate is undefined', () => {
+    const trial = { active: true, expiresAt: new Date('2026-04-01'), daysRemaining: 5 };
 
-    const next = reducer(initialState, { type: 'SET_TRIAL_STATUS', payload });
+    const next = reducer(initialState, {
+      type: 'SET_TRIAL_STATUS',
+      payload: { trial }
+    });
 
-    expect(next.trial).toBe(payload);
-    expect(next.canGenerate).toBe(true);
+    expect(next.trial).toBe(trial);
+    expect(next.backendCanGenerate).toBeNull();
   });
 
-  test('SET_TRIAL_STATUS canGenerate true when subscribed even if trial inactive', () => {
-    const subscribedState = { ...initialState, isSubscribed: true };
-    const payload = { active: false, expiresAt: null, daysRemaining: 0 };
+  test('CANCEL_LOADING stops loading without changing other state', () => {
+    const state = { ...initialState, loading: true, isSubscribed: true, error: null };
+    const next = reducer(state, { type: 'CANCEL_LOADING' });
 
-    const next = reducer(subscribedState, { type: 'SET_TRIAL_STATUS', payload });
-
-    expect(next.canGenerate).toBe(true);
+    expect(next.loading).toBe(false);
+    expect(next.isSubscribed).toBe(true);
+    expect(next.error).toBeNull();
   });
 
   test('SET_ERROR sets error and stops loading', () => {
@@ -215,19 +229,36 @@ describe('SubscriptionProvider', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    authEventCallback = null;
-    customerInfoUpdateCallback = null;
+    mockAuthEventCallback = null;
+    mockCustomerInfoUpdateCallback = null;
     AsyncStorage.clear();
 
-    mockPurchases.configure.mockResolvedValue(undefined);
-    mockPurchases.getCustomerInfo.mockResolvedValue({ entitlements: { active: {} } });
-    mockPurchases.addCustomerInfoUpdateListener.mockImplementation((cb) => {
-      customerInfoUpdateCallback = cb;
-      return () => { customerInfoUpdateCallback = null; };
+    mockConfigure.mockResolvedValue({ success: true, data: null });
+    mockGetCustomerInfo.mockResolvedValue({
+      success: true,
+      data: { entitlements: { active: {} } }
     });
-    mockPurchases.logIn.mockResolvedValue({ customerInfo: { entitlements: { active: {} } } });
-    mockPurchases.logOut.mockResolvedValue({ entitlements: { active: {} } });
-    mockPurchases.purchasePackage.mockResolvedValue({ customerInfo: { entitlements: { active: {} } } });
+    mockOnCustomerInfoUpdate.mockImplementation((cb) => {
+      mockCustomerInfoUpdateCallback = cb;
+      return { success: true, data: () => { mockCustomerInfoUpdateCallback = null; } };
+    });
+    mockLoginUser.mockResolvedValue({
+      success: true,
+      data: { entitlements: { active: {} } }
+    });
+    mockLogoutUser.mockResolvedValue({
+      success: true,
+      data: { entitlements: { active: {} } }
+    });
+    mockPurchasePkg.mockResolvedValue({
+      success: true,
+      data: { customerInfo: { entitlements: { active: {} } }, isActive: false }
+    });
+    mockRestorePurchasesService.mockResolvedValue({
+      success: true,
+      data: { customerInfo: { entitlements: { active: {} } }, isActive: false }
+    });
+    mockFetchOfferings.mockResolvedValue({ success: true, data: { current: null } });
 
     mockFetchSubscriptionStatus.mockResolvedValue({
       success: true,
@@ -244,13 +275,17 @@ describe('SubscriptionProvider', () => {
 
   describe('purchase flow', () => {
     test('successful subscription purchase sets isSubscribed true', async () => {
-      mockPurchases.purchasePackage.mockResolvedValue({
-        customerInfo: {
-          entitlements: {
-            active: {
-              premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+      mockPurchasePkg.mockResolvedValueOnce({
+        success: true,
+        data: {
+          customerInfo: {
+            entitlements: {
+              active: {
+                premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+              }
             }
-          }
+          },
+          isActive: true
         }
       });
 
@@ -272,10 +307,10 @@ describe('SubscriptionProvider', () => {
     });
 
     test('user-cancelled purchase does not set error', async () => {
-      mockPurchases.purchasePackage.mockImplementation(() => {
-        const err = new Error('User cancelled');
-        err.userCancelled = true;
-        throw err;
+      mockPurchasePkg.mockResolvedValueOnce({
+        success: false,
+        error: 'USER_CANCELLED',
+        code: 'USER_CANCELLED'
       });
 
       const { result } = renderHook(
@@ -297,7 +332,7 @@ describe('SubscriptionProvider', () => {
     });
 
     test('purchase error sets error state', async () => {
-      mockPurchases.purchasePackage.mockRejectedValue(new Error('Network failure'));
+      mockPurchasePkg.mockRejectedValueOnce(new Error('Network failure'));
 
       const { result } = renderHook(
         () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
@@ -316,8 +351,9 @@ describe('SubscriptionProvider', () => {
     });
 
     test('addon purchase does not set global loading', async () => {
-      mockPurchases.purchasePackage.mockResolvedValue({
-        customerInfo: { entitlements: { active: {} } }
+      mockPurchasePkg.mockResolvedValueOnce({
+        success: true,
+        data: { customerInfo: { entitlements: { active: {} } }, isActive: false }
       });
 
       const { result } = renderHook(
@@ -350,8 +386,9 @@ describe('SubscriptionProvider', () => {
         JSON.stringify({ isSubscribed: true, timestamp: Date.now() })
       );
 
-      mockPurchases.getCustomerInfo.mockResolvedValue({
-        entitlements: { active: {} }
+      mockGetCustomerInfo.mockResolvedValue({
+        success: true,
+        data: { entitlements: { active: {} } }
       });
 
       const { result } = renderHook(() => useSubscription(), { wrapper });
@@ -361,8 +398,9 @@ describe('SubscriptionProvider', () => {
     });
 
     test('does not show lapse modal on first install (no prior state)', async () => {
-      mockPurchases.getCustomerInfo.mockResolvedValue({
-        entitlements: { active: {} }
+      mockGetCustomerInfo.mockResolvedValue({
+        success: true,
+        data: { entitlements: { active: {} } }
       });
 
       const { result } = renderHook(() => useSubscription(), { wrapper });
@@ -377,11 +415,23 @@ describe('SubscriptionProvider', () => {
       const { result } = renderHook(() => useSubscription(), { wrapper });
 
       await waitFor(() => expect(result.current.loading).toBe(false));
-      expect(authEventCallback).toBeTruthy();
+      expect(mockAuthEventCallback).toBeTruthy();
 
       mockGetCurrentUserId.mockResolvedValue(42);
-      mockPurchases.logIn.mockResolvedValue({
-        customerInfo: {
+      mockLoginUser.mockResolvedValueOnce({
+        success: true,
+        data: {
+          entitlements: {
+            active: {
+              premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+            }
+          }
+        }
+      });
+
+      mockGetCustomerInfo.mockResolvedValueOnce({
+        success: true,
+        data: {
           entitlements: {
             active: {
               premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
@@ -391,10 +441,10 @@ describe('SubscriptionProvider', () => {
       });
 
       await act(async () => {
-        await authEventCallback('LOGIN');
+        await mockAuthEventCallback('LOGIN');
       });
 
-      expect(mockPurchases.logIn).toHaveBeenCalledWith('42');
+      expect(mockLoginUser).toHaveBeenCalledWith('42');
       expect(result.current.isSubscribed).toBe(true);
     });
 
@@ -404,21 +454,27 @@ describe('SubscriptionProvider', () => {
       await waitFor(() => expect(result.current.loading).toBe(false));
 
       mockGetCurrentUserId.mockResolvedValue(42);
-      mockPurchases.logIn.mockRejectedValue(new Error('Account conflict'));
+      mockLoginUser.mockResolvedValueOnce({
+        success: false,
+        error: 'Account conflict'
+      });
 
       await act(async () => {
-        await authEventCallback('LOGIN');
+        await mockAuthEventCallback('LOGIN');
       });
 
       expect(result.current.error).toBeTruthy();
-      expect(mockPurchases.getCustomerInfo).toHaveBeenCalledTimes(1);
+      expect(mockGetCustomerInfo).toHaveBeenCalledTimes(1);
     });
 
     test('LOGOUT event resets state and logs out RevenueCat', async () => {
-      mockPurchases.getCustomerInfo.mockResolvedValue({
-        entitlements: {
-          active: {
-            premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+      mockGetCustomerInfo.mockResolvedValue({
+        success: true,
+        data: {
+          entitlements: {
+            active: {
+              premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+            }
           }
         }
       });
@@ -429,10 +485,10 @@ describe('SubscriptionProvider', () => {
       await waitFor(() => expect(result.current.isSubscribed).toBe(true));
 
       await act(async () => {
-        await authEventCallback('LOGOUT');
+        await mockAuthEventCallback('LOGOUT');
       });
 
-      expect(mockPurchases.logOut).toHaveBeenCalled();
+      expect(mockLogoutUser).toHaveBeenCalled();
       expect(result.current.isSubscribed).toBe(false);
       expect(result.current.loading).toBe(false);
     });
@@ -443,10 +499,10 @@ describe('SubscriptionProvider', () => {
       const { result } = renderHook(() => useSubscription(), { wrapper });
 
       await waitFor(() => expect(result.current.loading).toBe(false));
-      expect(customerInfoUpdateCallback).toBeTruthy();
+      expect(mockCustomerInfoUpdateCallback).toBeTruthy();
 
       await act(async () => {
-        customerInfoUpdateCallback({
+        mockCustomerInfoUpdateCallback({
           entitlements: {
             active: {
               premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
@@ -462,7 +518,7 @@ describe('SubscriptionProvider', () => {
 
   describe('refresh when SDK not configured', () => {
     test('refresh attempts SDK init and reports error on failure', async () => {
-      mockPurchases.configure.mockRejectedValue(new Error('SDK init failed'));
+      mockConfigure.mockResolvedValueOnce({ success: false, error: 'SDK init failed' });
 
       const { result } = renderHook(
         () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
@@ -476,11 +532,17 @@ describe('SubscriptionProvider', () => {
 
   describe('restorePurchases', () => {
     test('successful restore updates subscription state', async () => {
-      mockPurchases.restorePurchases.mockResolvedValue({
-        entitlements: {
-          active: {
-            premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
-          }
+      mockRestorePurchasesService.mockResolvedValueOnce({
+        success: true,
+        data: {
+          customerInfo: {
+            entitlements: {
+              active: {
+                premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+              }
+            }
+          },
+          isActive: true
         }
       });
 
@@ -502,7 +564,7 @@ describe('SubscriptionProvider', () => {
     });
 
     test('failed restore sets error state', async () => {
-      mockPurchases.restorePurchases.mockRejectedValue(new Error('Restore failed'));
+      mockRestorePurchasesService.mockRejectedValueOnce(new Error('Restore failed'));
 
       const { result } = renderHook(
         () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
@@ -521,8 +583,9 @@ describe('SubscriptionProvider', () => {
     });
 
     test('restore with no active entitlements keeps unsubscribed', async () => {
-      mockPurchases.restorePurchases.mockResolvedValue({
-        entitlements: { active: {} }
+      mockRestorePurchasesService.mockResolvedValueOnce({
+        success: true,
+        data: { customerInfo: { entitlements: { active: {} } }, isActive: false }
       });
 
       const { result } = renderHook(
@@ -546,7 +609,7 @@ describe('SubscriptionProvider', () => {
         identifier: 'default',
         availablePackages: [{ identifier: 'monthly', product: { priceString: '$9.99' } }]
       };
-      mockPurchases.getOfferings.mockResolvedValue({ current: mockOffering });
+      mockFetchOfferings.mockResolvedValueOnce({ success: true, data: { current: mockOffering } });
 
       const { result } = renderHook(
         () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
@@ -564,7 +627,7 @@ describe('SubscriptionProvider', () => {
     });
 
     test('failed getOfferings returns error', async () => {
-      mockPurchases.getOfferings.mockRejectedValue(new Error('Network error'));
+      mockFetchOfferings.mockRejectedValueOnce(new Error('Network error'));
 
       const { result } = renderHook(
         () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
