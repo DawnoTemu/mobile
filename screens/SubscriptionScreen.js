@@ -277,6 +277,16 @@ export default function SubscriptionScreen() {
     addonPurchaseInFlightRef.current = true;
     setPurchasingAddon(pack.id);
     try {
+      const currentUserId = await getCurrentUserId();
+      if (!currentUserId) {
+        Sentry.captureMessage('Addon purchase blocked because current user is unavailable', {
+          level: 'error',
+          extra: { productId: pack.id }
+        });
+        showToast('Nie udało się potwierdzić konta. Spróbuj ponownie za chwilę.', 'ERROR');
+        return;
+      }
+
       const result = await purchasePackage(addonPackage, { isAddon: true });
       if (result.success) {
         const matchedTransaction = findTransactionForProduct(
@@ -307,7 +317,7 @@ export default function SubscriptionScreen() {
           productId: pack.id,
           platform: Platform.OS,
           credits: pack.credits,
-          userId: currentUserId ? String(currentUserId) : null
+          userId: String(currentUserId)
         };
 
         await persistPendingAddonGrant(grantData);
@@ -339,7 +349,7 @@ export default function SubscriptionScreen() {
     (p) => p.packageType === 'MONTHLY'
   ) || offerings?.current?.availablePackages?.[0];
   const priceLabel = monthlyPackage?.product?.priceString || null;
-  const priceLoading = loadingOfferings || (!priceLabel && !offeringsError);
+  const priceLoading = loadingOfferings || (!offerings && !offeringsError);
 
   const addonPacks = ADDON_PACKS_CONFIG.map((pack) => ({
     ...pack,
