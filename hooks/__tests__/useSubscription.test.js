@@ -138,7 +138,7 @@ describe('useSubscription reducer', () => {
     expect(next.error).toBeNull();
   });
 
-  test('SET_CUSTOMER_INFO resets stale backendCanGenerate', () => {
+  test('SET_CUSTOMER_INFO preserves backendCanGenerate to avoid flicker', () => {
     const state = { ...initialState, backendCanGenerate: true, isSubscribed: true };
     const payload = {
       isSubscribed: false,
@@ -149,7 +149,7 @@ describe('useSubscription reducer', () => {
     const next = reducer(state, { type: 'SET_CUSTOMER_INFO', payload });
 
     expect(next.isSubscribed).toBe(false);
-    expect(next.backendCanGenerate).toBeNull();
+    expect(next.backendCanGenerate).toBe(true);
   });
 
   test('SET_TRIAL_STATUS updates trial and stores backendCanGenerate', () => {

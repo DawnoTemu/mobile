@@ -116,6 +116,11 @@ export default function SubscriptionScreen() {
   const [restoring, setRestoring] = useState(false);
   const [purchasingAddon, setPurchasingAddon] = useState(null);
 
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
+
   const loadOfferings = useCallback(async () => {
     setLoadingOfferings(true);
     setOfferingsError(null);
@@ -167,7 +172,7 @@ export default function SubscriptionScreen() {
     setRestoring(true);
     try {
       const result = await restorePurchases();
-      if (result.success && result.data?.isActive) {
+      if (result.success && result.isSubscribed) {
         showToast('Przywrócono subskrypcję!', 'SUCCESS');
       } else if (result.success) {
         showToast('Nie znaleziono aktywnej subskrypcji.', 'INFO');
@@ -188,6 +193,8 @@ export default function SubscriptionScreen() {
       productId: grantData.productId,
       platform: grantData.platform
     });
+
+    if (!mountedRef.current) return grantResult;
 
     if (grantResult.success) {
       await clearPendingAddonGrant();

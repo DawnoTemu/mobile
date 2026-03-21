@@ -57,7 +57,6 @@ const reducer = (state, action) => {
         isSubscribed: action.payload.isSubscribed,
         expirationDate: action.payload.expirationDate,
         willRenew: action.payload.willRenew,
-        backendCanGenerate: null,
         loading: false,
         error: null
       };
@@ -195,7 +194,7 @@ export const SubscriptionProvider = ({ children }) => {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (refreshingRef.current) return { skipped: true };
+    if (refreshingRef.current) return { success: true, skipped: true };
     refreshingRef.current = true;
 
     dispatch({ type: 'SET_REFRESHING' });
@@ -207,7 +206,7 @@ export const SubscriptionProvider = ({ children }) => {
           if (mountedRef.current) {
             dispatch({ type: 'SET_ERROR', payload: initResult.error || 'SDK configuration failed' });
           }
-          return;
+          return { success: false, error: initResult.error || 'SDK configuration failed' };
         }
       }
 
@@ -216,7 +215,7 @@ export const SubscriptionProvider = ({ children }) => {
         fetchSubscriptionStatus()
       ]);
 
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) return { success: false, error: 'unmounted' };
 
       if (!trialResult.success) {
         Sentry.captureMessage('Failed to fetch trial status', {
@@ -236,14 +235,17 @@ export const SubscriptionProvider = ({ children }) => {
           }
         });
         await checkLapse(parsed.isSubscribed);
+        return { success: true };
       } else {
         dispatch({ type: 'SET_ERROR', payload: 'Nie udało się pobrać danych subskrypcji.' });
+        return { success: false, error: 'Nie udało się pobrać danych subskrypcji.' };
       }
     } catch (error) {
       Sentry.captureException(error, { extra: { context: 'refresh_subscription' } });
       if (mountedRef.current) {
         dispatch({ type: 'SET_ERROR', payload: 'Nie udało się odświeżyć danych subskrypcji.' });
       }
+      return { success: false, error: error.message };
     } finally {
       refreshingRef.current = false;
     }
@@ -440,17 +442,17 @@ export const SubscriptionProvider = ({ children }) => {
     dispatch({ type: 'SET_LOADING' });
     try {
       const result = await restorePurchasesService();
-      if (!mountedRef.current) return result;
+      if (!mountedRef.current) return { success: false, error: 'unmounted' };
 
       if (result.success) {
         const parsed = parseCustomerInfo(result.data.customerInfo);
         dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
         await persistSubscriptionState(parsed.isSubscribed);
-        return { ...result, isSubscribed: parsed.isSubscribed };
+        return { success: true, isSubscribed: parsed.isSubscribed };
       } else {
         dispatch({ type: 'SET_ERROR', payload: result.error });
+        return { success: false, error: result.error };
       }
-      return result;
     } catch (error) {
       Sentry.captureException(error, { extra: { context: 'restore_purchases' } });
       if (mountedRef.current) {
