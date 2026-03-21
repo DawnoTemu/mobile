@@ -1,13 +1,20 @@
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { STORAGE_KEYS } from '../../services/config';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 );
 
+let mockAppStateCallback = null;
 jest.mock('react-native', () => ({
-  AppState: { addEventListener: jest.fn().mockReturnValue({ remove: jest.fn() }) },
+  AppState: {
+    addEventListener: jest.fn((event, cb) => {
+      mockAppStateCallback = cb;
+      return { remove: jest.fn() };
+    })
+  },
   Platform: { OS: 'ios' }
 }));
 
@@ -129,6 +136,20 @@ describe('useSubscription reducer', () => {
     expect(next.willRenew).toBe(true);
     expect(next.loading).toBe(false);
     expect(next.error).toBeNull();
+  });
+
+  test('SET_CUSTOMER_INFO resets stale backendCanGenerate', () => {
+    const state = { ...initialState, backendCanGenerate: true, isSubscribed: true };
+    const payload = {
+      isSubscribed: false,
+      expirationDate: null,
+      willRenew: false
+    };
+
+    const next = reducer(state, { type: 'SET_CUSTOMER_INFO', payload });
+
+    expect(next.isSubscribed).toBe(false);
+    expect(next.backendCanGenerate).toBeNull();
   });
 
   test('SET_TRIAL_STATUS updates trial and stores backendCanGenerate', () => {
@@ -267,6 +288,7 @@ describe('SubscriptionProvider', () => {
     jest.clearAllMocks();
     mockAuthEventCallback = null;
     mockCustomerInfoUpdateCallback = null;
+    mockAppStateCallback = null;
     AsyncStorage.clear();
 
     mockConfigure.mockResolvedValue({ success: true, data: null });
@@ -418,7 +440,7 @@ describe('SubscriptionProvider', () => {
   describe('lapse detection', () => {
     test('shows lapse modal when previously subscribed but now unsubscribed', async () => {
       await AsyncStorage.setItem(
-        'subscription_last_known_state',
+        STORAGE_KEYS.LAST_SUBSCRIPTION_STATE,
         JSON.stringify({ isSubscribed: true, timestamp: Date.now() })
       );
 
@@ -679,6 +701,179 @@ describe('SubscriptionProvider', () => {
 
       expect(offeringsResult.success).toBe(false);
       expect(offeringsResult.error).toBe('Network error');
+    });
+  });
+
+  describe('AppState foreground refresh', () => {
+    test('returning to foreground triggers refresh', async () => {
+      const { result } = renderHook(() => useSubscription(), { wrapper });
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(mockAppStateCallback).toBeTruthy();
+
+      const customerInfoCallsBefore = mockGetCustomerInfo.mock.calls.length;
+
+      await act(async () => {
+        mockAppStateCallback('active');
+      });
+
+      expect(mockGetCustomerInfo.mock.calls.length).toBeGreaterThan(customerInfoCallsBefore);
+    });
+
+    test('going to background does not trigger refresh', async () => {
+      const { result } = renderHook(() => useSubscription(), { wrapper });
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const customerInfoCallsBefore = mockGetCustomerInfo.mock.calls.length;
+
+      await act(async () => {
+        mockAppStateCallback('background');
+      });
+
+      expect(mockGetCustomerInfo.mock.calls.length).toBe(customerInfoCallsBefore);
+    });
+
+    test('foreground refresh updates subscription state', async () => {
+      const { result } = renderHook(() => useSubscription(), { wrapper });
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(result.current.isSubscribed).toBe(false);
+
+      mockGetCustomerInfo.mockResolvedValueOnce({
+        success: true,
+        data: {
+          entitlements: {
+            active: {
+              premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+            }
+          }
+        }
+      });
+
+      mockFetchSubscriptionStatus.mockResolvedValueOnce({
+        success: true,
+        data: {
+          trial: { active: false, expiresAt: null, daysRemaining: 0 },
+          subscription: { active: true },
+          canGenerate: true,
+          initialCredits: 10
+        }
+      });
+
+      await act(async () => {
+        mockAppStateCallback('active');
+      });
+
+      await waitFor(() => expect(result.current.isSubscribed).toBe(true));
+    });
+
+    test('foreground refresh skips when SDK not configured', async () => {
+      mockConfigure.mockResolvedValueOnce({ success: false, error: 'SDK init failed' });
+
+      const { result } = renderHook(() => useSubscription(), { wrapper });
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      const customerInfoCallsBefore = mockGetCustomerInfo.mock.calls.length;
+
+      await act(async () => {
+        mockAppStateCallback('active');
+      });
+
+      // refresh attempts SDK init which fails, so getCustomerInfo should not be called again
+      expect(mockGetCustomerInfo.mock.calls.length).toBe(customerInfoCallsBefore);
+    });
+  });
+
+  describe('real-time listener backend resync', () => {
+    test('listener triggers backend status resync to update backendCanGenerate', async () => {
+      const { result } = renderHook(() => useSubscription(), { wrapper });
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(mockCustomerInfoUpdateCallback).toBeTruthy();
+
+      mockFetchSubscriptionStatus.mockResolvedValueOnce({
+        success: true,
+        data: {
+          trial: { active: true, expiresAt: new Date('2026-04-01'), daysRemaining: 10 },
+          subscription: { active: false },
+          canGenerate: true,
+          initialCredits: 10
+        }
+      });
+
+      const statusCallsBefore = mockFetchSubscriptionStatus.mock.calls.length;
+
+      await act(async () => {
+        mockCustomerInfoUpdateCallback({
+          entitlements: { active: {} }
+        });
+      });
+
+      await waitFor(() =>
+        expect(mockFetchSubscriptionStatus.mock.calls.length).toBeGreaterThan(statusCallsBefore)
+      );
+
+      await waitFor(() => expect(result.current.canGenerate).toBe(true));
+    });
+  });
+
+  describe('restorePurchases return shape', () => {
+    test('successful restore returns isSubscribed field', async () => {
+      mockRestorePurchasesService.mockResolvedValueOnce({
+        success: true,
+        data: {
+          customerInfo: {
+            entitlements: {
+              active: {
+                premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+              }
+            }
+          },
+          isActive: true
+        }
+      });
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      let restoreResult;
+      await act(async () => {
+        restoreResult = await result.current.actions.restorePurchases();
+      });
+
+      expect(restoreResult.success).toBe(true);
+      expect(restoreResult.isSubscribed).toBe(true);
+    });
+
+    test('restore with no entitlements returns isSubscribed false', async () => {
+      mockRestorePurchasesService.mockResolvedValueOnce({
+        success: true,
+        data: {
+          customerInfo: { entitlements: { active: {} } },
+          isActive: false
+        }
+      });
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      let restoreResult;
+      await act(async () => {
+        restoreResult = await result.current.actions.restorePurchases();
+      });
+
+      expect(restoreResult.success).toBe(true);
+      expect(restoreResult.isSubscribed).toBe(false);
     });
   });
 });

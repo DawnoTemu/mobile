@@ -222,7 +222,7 @@ describe('subscriptionStatusService', () => {
       });
 
       const result = await service.grantAddonCredits({
-        receiptToken: 'receipt-abc',
+        transactionId: 'receipt-abc',
         productId: 'credits_10',
         platform: 'ios'
       });
@@ -242,7 +242,7 @@ describe('subscriptionStatusService', () => {
       mockGetAccessToken.mockResolvedValue(null);
 
       const result = await service.grantAddonCredits({
-        receiptToken: 'x',
+        transactionId: 'x',
         productId: 'y',
         platform: 'ios'
       });
@@ -261,7 +261,7 @@ describe('subscriptionStatusService', () => {
       });
 
       const result = await service.grantAddonCredits({
-        receiptToken: 'bad',
+        transactionId: 'bad',
         productId: 'y',
         platform: 'ios'
       });
@@ -280,7 +280,7 @@ describe('subscriptionStatusService', () => {
       });
 
       const result = await service.grantAddonCredits({
-        receiptToken: 'x',
+        transactionId: 'x',
         productId: 'y',
         platform: 'ios'
       });
@@ -297,7 +297,7 @@ describe('subscriptionStatusService', () => {
       });
 
       const result = await service.grantAddonCredits({
-        receiptToken: 'x',
+        transactionId: 'x',
         productId: 'y',
         platform: 'ios'
       });
@@ -313,7 +313,7 @@ describe('subscriptionStatusService', () => {
       global.fetch.mockRejectedValue(abortError);
 
       const result = await service.grantAddonCredits({
-        receiptToken: 'x',
+        transactionId: 'x',
         productId: 'y',
         platform: 'ios'
       });
@@ -328,7 +328,7 @@ describe('subscriptionStatusService', () => {
       global.fetch.mockRejectedValue(new Error('Network error'));
 
       const result = await service.grantAddonCredits({
-        receiptToken: 'x',
+        transactionId: 'x',
         productId: 'y',
         platform: 'ios'
       });

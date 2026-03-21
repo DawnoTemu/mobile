@@ -57,6 +57,7 @@ const reducer = (state, action) => {
         isSubscribed: action.payload.isSubscribed,
         expirationDate: action.payload.expirationDate,
         willRenew: action.payload.willRenew,
+        backendCanGenerate: null,
         loading: false,
         error: null
       };
@@ -256,7 +257,8 @@ export const SubscriptionProvider = ({ children }) => {
     const init = async () => {
       try {
         const initResult = await initSDK();
-        if (!initResult.success || !mountedRef.current) {
+        if (!mountedRef.current) return;
+        if (!initResult.success) {
           dispatch({ type: 'SET_ERROR', payload: initResult.error || 'SDK configuration failed' });
           return;
         }
@@ -301,6 +303,19 @@ export const SubscriptionProvider = ({ children }) => {
         persistSubscriptionState(parsed.isSubscribed).catch((err) =>
           Sentry.captureException(err, { extra: { context: 'persist_on_customer_update' } })
         );
+        // Resync backend status to reduce stale backendCanGenerate window
+        fetchSubscriptionStatus().then((trialResult) => {
+          if (!mountedRef.current || !trialResult.success) return;
+          dispatch({
+            type: 'SET_TRIAL_STATUS',
+            payload: {
+              trial: trialResult.data.trial,
+              backendCanGenerate: trialResult.data.canGenerate
+            }
+          });
+        }).catch((err) => {
+          Sentry.captureException(err, { extra: { context: 'backend_resync_after_listener' } });
+        });
       } catch (error) {
         Sentry.captureException(error, { extra: { context: 'customer_info_update_listener' } });
       }
@@ -431,6 +446,7 @@ export const SubscriptionProvider = ({ children }) => {
         const parsed = parseCustomerInfo(result.data.customerInfo);
         dispatch({ type: 'SET_CUSTOMER_INFO', payload: parsed });
         await persistSubscriptionState(parsed.isSubscribed);
+        return { ...result, isSubscribed: parsed.isSubscribed };
       } else {
         dispatch({ type: 'SET_ERROR', payload: result.error });
       }

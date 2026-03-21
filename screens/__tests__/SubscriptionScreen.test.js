@@ -30,7 +30,7 @@ const mockSubscriptionState = {
 };
 
 const mockPurchasePackage = jest.fn().mockResolvedValue({ success: true, data: { customerInfo: { entitlements: { active: {} } } } });
-const mockRestorePurchases = jest.fn().mockResolvedValue({ success: true, data: { isActive: false } });
+const mockRestorePurchases = jest.fn().mockResolvedValue({ success: true, isSubscribed: false });
 const mockGetOfferings = jest.fn().mockResolvedValue({ success: true, data: { current: { availablePackages: [{ packageType: 'MONTHLY', product: { priceString: '29,99 zł', identifier: 'monthly' } }] } } });
 const mockRefresh = jest.fn().mockResolvedValue(undefined);
 
@@ -184,7 +184,7 @@ describe('SubscriptionScreen', () => {
     test('successful restore with active subscription shows success toast', async () => {
       mockRestorePurchases.mockResolvedValueOnce({
         success: true,
-        data: { isActive: true, customerInfo: { entitlements: { active: { premium: {} } } } }
+        isSubscribed: true
       });
 
       const { getByText } = render(<SubscriptionScreen />);
@@ -200,7 +200,7 @@ describe('SubscriptionScreen', () => {
     test('restore with no active subscription shows info toast', async () => {
       mockRestorePurchases.mockResolvedValueOnce({
         success: true,
-        data: { isActive: false }
+        isSubscribed: false
       });
 
       const { getByText } = render(<SubscriptionScreen />);
@@ -290,7 +290,7 @@ describe('SubscriptionScreen', () => {
       await waitFor(() => {
         expect(mockGrantAddonCredits).toHaveBeenCalledWith(
           expect.objectContaining({
-            receiptToken: 'txn-abc',
+            transactionId: 'txn-abc',
             productId: 'credits_10'
           })
         );
@@ -359,7 +359,7 @@ describe('SubscriptionScreen', () => {
         const stored = await AsyncStorage.getItem('subscription_pending_addon_grant');
         expect(stored).toBeTruthy();
         const parsed = JSON.parse(stored);
-        expect(parsed.receiptToken).toBe('txn-xyz');
+        expect(parsed.transactionId).toBe('txn-xyz');
         expect(parsed.productId).toBe('credits_10');
       });
     });
@@ -375,7 +375,7 @@ describe('SubscriptionScreen', () => {
 
     test('retries pending addon grant on mount when subscribed', async () => {
       const pendingGrant = {
-        receiptToken: 'txn-retry',
+        transactionId: 'txn-retry',
         productId: 'credits_20',
         platform: 'ios',
         credits: 20,
@@ -401,7 +401,7 @@ describe('SubscriptionScreen', () => {
       await waitFor(() => {
         expect(mockGrantAddonCredits).toHaveBeenCalledWith(
           expect.objectContaining({
-            receiptToken: 'txn-retry',
+            transactionId: 'txn-retry',
             productId: 'credits_20',
             platform: 'ios'
           })
@@ -414,6 +414,34 @@ describe('SubscriptionScreen', () => {
           'SUCCESS'
         );
       });
+    });
+
+    test('discards expired pending addon grant (TTL > 24h)', async () => {
+      const expiredGrant = {
+        transactionId: 'txn-expired',
+        productId: 'credits_10',
+        platform: 'ios',
+        credits: 10,
+        createdAt: Date.now() - 25 * 60 * 60 * 1000
+      };
+      await AsyncStorage.setItem(
+        'subscription_pending_addon_grant',
+        JSON.stringify(expiredGrant)
+      );
+
+      mockCurrentSubscriptionState = {
+        ...mockSubscriptionState,
+        isSubscribed: true
+      };
+
+      render(<SubscriptionScreen />);
+
+      await waitFor(async () => {
+        const stored = await AsyncStorage.getItem('subscription_pending_addon_grant');
+        expect(stored).toBeNull();
+      });
+
+      expect(mockGrantAddonCredits).not.toHaveBeenCalled();
     });
   });
 
