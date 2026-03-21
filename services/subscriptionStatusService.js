@@ -62,20 +62,31 @@ const fetchSubscriptionStatus = async () => {
       return { success: false, data: null, error: 'Serwer zwrócił niekompletne dane subskrypcji.', code: 'INVALID_RESPONSE_SHAPE' };
     }
 
+    const parseDate = (raw) => {
+      if (!raw) return null;
+      const parsed = new Date(raw);
+      if (!Number.isFinite(parsed.getTime())) {
+        Sentry.captureMessage('fetchSubscriptionStatus: invalid date string', {
+          level: 'warning',
+          extra: { raw }
+        });
+        return null;
+      }
+      return parsed;
+    };
+
     return {
       success: true,
       data: {
         trial: {
           active: body.trial?.active ?? false,
-          expiresAt: body.trial?.expires_at ? new Date(body.trial.expires_at) : null,
+          expiresAt: parseDate(body.trial?.expires_at),
           daysRemaining: body.trial?.days_remaining ?? 0
         },
         subscription: {
           active: body.subscription?.active ?? false,
           plan: body.subscription?.plan ?? null,
-          expiresAt: body.subscription?.expires_at
-            ? new Date(body.subscription.expires_at)
-            : null,
+          expiresAt: parseDate(body.subscription?.expires_at),
           willRenew: body.subscription?.will_renew ?? false
         },
         canGenerate: body.can_generate ?? false,
@@ -126,6 +137,12 @@ const grantAddonCredits = async ({ transactionId, productId, platform }) => {
       let body = {};
       try {
         body = JSON.parse(responseText);
+        if (response.status >= 500) {
+          Sentry.captureMessage('grantAddonCredits server error', {
+            level: 'error',
+            extra: { status: response.status, error: body.error, productId }
+          });
+        }
       } catch (parseError) {
         Sentry.captureMessage('grantAddonCredits non-JSON error response', {
           level: 'warning',
@@ -149,6 +166,14 @@ const grantAddonCredits = async ({ transactionId, productId, platform }) => {
       });
       return { success: false, error: 'Serwer zwrócił nieprawidłowe dane. Skontaktuj się z obsługą.' };
     }
+    if (typeof body.credits_granted !== 'number' || typeof body.new_balance !== 'number') {
+      Sentry.captureMessage('grantAddonCredits: success response missing numeric fields', {
+        level: 'error',
+        extra: { keys: Object.keys(body), credits_granted: body.credits_granted, new_balance: body.new_balance }
+      });
+      return { success: false, error: 'Serwer zwrócił niekompletne dane. Skontaktuj się z obsługą.' };
+    }
+
     return {
       success: true,
       data: {

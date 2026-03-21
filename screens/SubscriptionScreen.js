@@ -224,7 +224,9 @@ export default function SubscriptionScreen() {
         await attemptGrantAddonCredits(pending);
       }
     };
-    retry();
+    retry().catch((err) => {
+      Sentry.captureException(err, { extra: { context: 'pending_addon_grant_retry' } });
+    });
   }, [loading, attemptGrantAddonCredits]);
 
   const handleAddonPurchase = async (pack) => {
@@ -282,8 +284,8 @@ export default function SubscriptionScreen() {
         showToast('Nie udało się dokonać zakupu. Spróbuj ponownie.', 'ERROR');
       }
     } catch (err) {
-      Sentry.captureException(err);
-      showToast('Wystąpił nieoczekiwany błąd. Spróbuj ponownie.', 'ERROR');
+      Sentry.captureException(err, { extra: { context: 'addon_purchase', productId: pack.id } });
+      showToast('Zakup mógł się udać, ale wystąpił błąd przy naliczaniu punktów. Skontaktuj się z nami.', 'ERROR');
     } finally {
       setPurchasingAddon(null);
     }

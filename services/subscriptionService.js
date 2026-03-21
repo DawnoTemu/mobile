@@ -27,7 +27,7 @@ const configure = async () => {
     await Purchases.configure({ apiKey });
     return { success: true, data: null };
   } catch (error) {
-    Sentry.captureException(error);
+    Sentry.captureException(error, { extra: { context: 'revenuecat_configure' } });
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -37,7 +37,7 @@ const loginUser = async (userId) => {
     const { customerInfo } = await Purchases.logIn(String(userId));
     return { success: true, data: customerInfo };
   } catch (error) {
-    Sentry.captureException(error);
+    Sentry.captureException(error, { extra: { context: 'revenuecat_login' } });
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -47,7 +47,7 @@ const logoutUser = async () => {
     const customerInfo = await Purchases.logOut();
     return { success: true, data: customerInfo };
   } catch (error) {
-    Sentry.captureException(error);
+    Sentry.captureException(error, { extra: { context: 'revenuecat_logout' } });
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -57,7 +57,7 @@ const getOfferings = async () => {
     const offerings = await Purchases.getOfferings();
     return { success: true, data: offerings };
   } catch (error) {
-    Sentry.captureException(error);
+    Sentry.captureException(error, { extra: { context: 'revenuecat_get_offerings' } });
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -71,7 +71,7 @@ const purchasePackage = async (pkg) => {
     if (error.userCancelled) {
       return { success: false, error: 'USER_CANCELLED', code: 'USER_CANCELLED' };
     }
-    Sentry.captureException(error);
+    Sentry.captureException(error, { extra: { context: 'revenuecat_purchase' } });
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -82,7 +82,7 @@ const restorePurchases = async () => {
     const isActive = customerInfo?.entitlements?.active?.[ENTITLEMENT_ID] !== undefined;
     return { success: true, data: { customerInfo, isActive } };
   } catch (error) {
-    Sentry.captureException(error);
+    Sentry.captureException(error, { extra: { context: 'revenuecat_restore' } });
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -92,7 +92,7 @@ const getCustomerInfo = async () => {
     const customerInfo = await Purchases.getCustomerInfo();
     return { success: true, data: customerInfo };
   } catch (error) {
-    Sentry.captureException(error);
+    Sentry.captureException(error, { extra: { context: 'revenuecat_get_customer_info' } });
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -102,7 +102,7 @@ const onCustomerInfoUpdate = (callback) => {
     const listener = Purchases.addCustomerInfoUpdateListener(callback);
     return { success: true, data: listener };
   } catch (error) {
-    Sentry.captureException(error);
+    Sentry.captureException(error, { extra: { context: 'revenuecat_listener_setup' } });
     return { success: false, error: error.message };
   }
 };

@@ -166,6 +166,35 @@ describe('subscriptionStatusService', () => {
       expect(result.error).toContain('nieprawidłowe dane');
     });
 
+    test('returns null for invalid date strings instead of Invalid Date', async () => {
+      mockGetAccessToken.mockResolvedValue('test-token');
+      global.fetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: jest.fn().mockResolvedValue({
+          trial: {
+            active: true,
+            expires_at: 'not-a-date',
+            days_remaining: 5
+          },
+          subscription: {
+            active: true,
+            plan: 'monthly',
+            expires_at: 'also-invalid',
+            will_renew: true
+          },
+          can_generate: true,
+          initial_credits: 10
+        })
+      });
+
+      const result = await service.fetchSubscriptionStatus();
+
+      expect(result.success).toBe(true);
+      expect(result.data.trial.expiresAt).toBeNull();
+      expect(result.data.subscription.expiresAt).toBeNull();
+    });
+
     test('returns failure for missing required fields', async () => {
       mockGetAccessToken.mockResolvedValue('test-token');
       global.fetch.mockResolvedValue({
@@ -306,6 +335,51 @@ describe('subscriptionStatusService', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Network error');
+    });
+
+    test('returns failure when success response is missing numeric fields', async () => {
+      mockGetAccessToken.mockResolvedValue('test-token');
+      global.fetch.mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({
+          credits_granted: null,
+          new_balance: undefined
+        })
+      });
+
+      const result = await service.grantAddonCredits({
+        transactionId: 'txn-1',
+        productId: 'credits_10',
+        platform: 'ios'
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('niekompletne dane');
+    });
+
+    test('reports server error responses with JSON bodies to Sentry', async () => {
+      const Sentry = require('@sentry/react-native');
+      mockGetAccessToken.mockResolvedValue('test-token');
+      global.fetch.mockResolvedValue({
+        ok: false,
+        status: 502,
+        text: jest.fn().mockResolvedValue(JSON.stringify({ error: 'Bad gateway' }))
+      });
+
+      const result = await service.grantAddonCredits({
+        transactionId: 'txn-1',
+        productId: 'credits_10',
+        platform: 'ios'
+      });
+
+      expect(result.success).toBe(false);
+      expect(Sentry.captureMessage).toHaveBeenCalledWith(
+        'grantAddonCredits server error',
+        expect.objectContaining({
+          level: 'error',
+          extra: expect.objectContaining({ status: 502 })
+        })
+      );
     });
   });
 });
