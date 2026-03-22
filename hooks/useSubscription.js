@@ -20,7 +20,11 @@ import {
   restorePurchases as restorePurchasesService,
   getCustomerInfo,
   onCustomerInfoUpdate,
-  parseCustomerInfo
+  parseCustomerInfo,
+  presentPaywall as presentPaywallService,
+  presentPaywallIfNeeded as presentPaywallIfNeededService,
+  presentCustomerCenter as presentCustomerCenterService,
+  PAYWALL_RESULT
 } from '../services/subscriptionService';
 import { fetchSubscriptionStatus } from '../services/subscriptionStatusService';
 import { subscribeAuthEvents, getCurrentUserId } from '../services/authService';
@@ -509,6 +513,45 @@ export const SubscriptionProvider = ({ children }) => {
     }
   }, []);
 
+  const handlePresentPaywall = useCallback(async (options) => {
+    try {
+      const result = await presentPaywallService(options);
+      if (result.success && (result.data === PAYWALL_RESULT.PURCHASED || result.data === PAYWALL_RESULT.RESTORED)) {
+        await refresh();
+      }
+      return result;
+    } catch (error) {
+      Sentry.captureException(error, { extra: { context: 'present_paywall' } });
+      return { success: false, error: error.message };
+    }
+  }, [refresh]);
+
+  const handlePresentPaywallIfNeeded = useCallback(async (options) => {
+    try {
+      const result = await presentPaywallIfNeededService(options);
+      if (result.success && (result.data === PAYWALL_RESULT.PURCHASED || result.data === PAYWALL_RESULT.RESTORED)) {
+        await refresh();
+      }
+      return result;
+    } catch (error) {
+      Sentry.captureException(error, { extra: { context: 'present_paywall_if_needed' } });
+      return { success: false, error: error.message };
+    }
+  }, [refresh]);
+
+  const handlePresentCustomerCenter = useCallback(async () => {
+    try {
+      const result = await presentCustomerCenterService();
+      if (result.success) {
+        await refresh();
+      }
+      return result;
+    } catch (error) {
+      Sentry.captureException(error, { extra: { context: 'present_customer_center' } });
+      return { success: false, error: error.message };
+    }
+  }, [refresh]);
+
   const canGenerate = useMemo(
     () => {
       if (state.backendCanGenerate !== null) return state.backendCanGenerate;
@@ -536,6 +579,9 @@ export const SubscriptionProvider = ({ children }) => {
         purchasePackage: handlePurchasePackage,
         restorePurchases: handleRestorePurchases,
         getOfferings: handleGetOfferings,
+        presentPaywall: handlePresentPaywall,
+        presentPaywallIfNeeded: handlePresentPaywallIfNeeded,
+        presentCustomerCenter: handlePresentCustomerCenter,
         dismissOnboarding,
         dismissLapseModal
       }
@@ -546,6 +592,9 @@ export const SubscriptionProvider = ({ children }) => {
       handlePurchasePackage,
       handleRestorePurchases,
       handleGetOfferings,
+      handlePresentPaywall,
+      handlePresentPaywallIfNeeded,
+      handlePresentCustomerCenter,
       dismissOnboarding,
       dismissLapseModal
     ]

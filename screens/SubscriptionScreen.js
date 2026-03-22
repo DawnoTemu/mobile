@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sentry from '@sentry/react-native';
 import { useSubscription, useSubscriptionActions } from '../hooks/useSubscription';
@@ -17,19 +18,20 @@ import { useToast } from '../components/StatusToast';
 import { useCreditActions } from '../hooks/useCredits';
 import { grantAddonCredits } from '../services/subscriptionStatusService';
 import { getCurrentUserId } from '../services/authService';
+import { PAYWALL_RESULT } from '../services/subscriptionService';
 import { COLORS } from '../styles/colors';
 import { STORAGE_KEYS } from '../services/config';
-import * as Linking from 'expo-linking';
 import { formatDate } from '../utils/formatDate';
 import { pluralizeDays } from '../utils/pluralize';
 import { styles } from './styles/subscriptionScreenStyles';
 
-const FEATURES = [
+const FEATURES_BASE = [
   { icon: 'mic', label: 'Klonowanie głosu rodzica' },
   { icon: 'book-open', label: 'Generowanie spersonalizowanych bajek' },
-  { icon: 'headphones', label: 'Odtwarzanie offline' },
-  { icon: 'star', label: '26 Punktów Magii miesięcznie' }
+  { icon: 'headphones', label: 'Odtwarzanie offline' }
 ];
+
+const CREDITS_PER_PLAN = { MONTHLY: 26, ANNUAL: 30 };
 
 const ADDON_PACKS_CONFIG = [
   { id: 'credits_10', credits: 10 },
@@ -65,8 +67,10 @@ const persistPendingAddonGrant = async (grantData) => {
       STORAGE_KEYS.PENDING_ADDON_GRANT,
       JSON.stringify({ ...grantData, createdAt: Date.now() })
     );
+    return true;
   } catch (err) {
     Sentry.captureException(err, { extra: { context: 'persist_pending_addon_grant' } });
+    return false;
   }
 };
 
@@ -91,6 +95,7 @@ const loadPendingAddonGrant = async () => {
     return parsed;
   } catch (err) {
     Sentry.captureException(err, { extra: { context: 'load_pending_addon_grant' } });
+    await clearPendingAddonGrant();
     return null;
   }
 };
@@ -107,7 +112,14 @@ export default function SubscriptionScreen() {
     trial,
     canGenerate
   } = useSubscription();
-  const { purchasePackage, restorePurchases, getOfferings, refresh } = useSubscriptionActions();
+  const {
+    purchasePackage,
+    restorePurchases,
+    getOfferings,
+    presentPaywall,
+    presentCustomerCenter,
+    refresh
+  } = useSubscriptionActions();
   const creditActions = useCreditActions();
 
   const [offerings, setOfferings] = useState(null);
@@ -116,6 +128,7 @@ export default function SubscriptionScreen() {
   const [purchasing, setPurchasing] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [purchasingAddon, setPurchasingAddon] = useState(null);
+  const [selectedPlan, setSelectedPlan] = useState('MONTHLY');
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -133,7 +146,7 @@ export default function SubscriptionScreen() {
         setOfferingsError(result.error || 'Nie udało się załadować planów.');
       }
     } catch (err) {
-      Sentry.captureException(err);
+      Sentry.captureException(err, { extra: { context: 'load_offerings' } });
       setOfferingsError('Nie udało się załadować planów.');
     } finally {
       setLoadingOfferings(false);
@@ -144,28 +157,64 @@ export default function SubscriptionScreen() {
     loadOfferings();
   }, [loadOfferings]);
 
+  const monthlyPackage = offerings?.current?.availablePackages?.find(
+    (p) => p.packageType === 'MONTHLY'
+  );
+  const yearlyPackage = offerings?.current?.availablePackages?.find(
+    (p) => p.packageType === 'ANNUAL'
+  );
+
+  const monthlyPrice = monthlyPackage?.product?.priceString || null;
+  const yearlyPrice = yearlyPackage?.product?.priceString || null;
+  const priceLoading = loadingOfferings || (!offerings && !offeringsError);
+
+  const selectedPackage = selectedPlan === 'ANNUAL' ? yearlyPackage : monthlyPackage;
+  const selectedPrice = selectedPlan === 'ANNUAL' ? yearlyPrice : monthlyPrice;
+
+  const purchaseInFlightRef = useRef(false);
+
+  const handleShowPaywall = async () => {
+    if (purchaseInFlightRef.current) return;
+    purchaseInFlightRef.current = true;
+    setPurchasing(true);
+    try {
+      const result = await presentPaywall({ displayCloseButton: true });
+      if (result.success && (result.data === PAYWALL_RESULT.PURCHASED || result.data === PAYWALL_RESULT.RESTORED)) {
+        showToast('Subskrypcja aktywowana!', 'SUCCESS');
+      } else if (!result.success) {
+        showToast('Nie udało się wyświetlić oferty. Spróbuj ponownie.', 'ERROR');
+      }
+    } catch (err) {
+      Sentry.captureException(err, { extra: { context: 'show_paywall' } });
+      showToast('Nie udało się wyświetlić oferty. Spróbuj ponownie.', 'ERROR');
+    } finally {
+      setPurchasing(false);
+      purchaseInFlightRef.current = false;
+    }
+  };
+
   const handlePurchase = async () => {
-    const monthlyPackage = offerings?.current?.availablePackages?.find(
-      (p) => p.packageType === 'MONTHLY'
-    ) || offerings?.current?.availablePackages?.[0];
-    if (!monthlyPackage) {
+    if (purchaseInFlightRef.current) return;
+    if (!selectedPackage) {
       showToast('Brak dostępnych planów. Spróbuj ponownie później.', 'ERROR');
       return;
     }
 
+    purchaseInFlightRef.current = true;
     setPurchasing(true);
     try {
-      const result = await purchasePackage(monthlyPackage);
+      const result = await purchasePackage(selectedPackage);
       if (result.success) {
         showToast('Subskrypcja aktywowana!', 'SUCCESS');
       } else if (result.code !== 'USER_CANCELLED' && result.error !== 'USER_CANCELLED') {
         showToast('Nie udało się dokonać zakupu. Spróbuj ponownie.', 'ERROR');
       }
     } catch (err) {
-      Sentry.captureException(err);
+      Sentry.captureException(err, { extra: { context: 'subscription_purchase', plan: selectedPlan } });
       showToast('Wystąpił nieoczekiwany błąd. Spróbuj ponownie.', 'ERROR');
     } finally {
       setPurchasing(false);
+      purchaseInFlightRef.current = false;
     }
   };
 
@@ -181,7 +230,7 @@ export default function SubscriptionScreen() {
         showToast('Nie udało się przywrócić zakupów. Spróbuj ponownie.', 'ERROR');
       }
     } catch (err) {
-      Sentry.captureException(err);
+      Sentry.captureException(err, { extra: { context: 'restore_purchases' } });
       showToast('Wystąpił nieoczekiwany błąd. Spróbuj ponownie.', 'ERROR');
     } finally {
       setRestoring(false);
@@ -195,8 +244,6 @@ export default function SubscriptionScreen() {
       platform: grantData.platform
     });
 
-    if (!mountedRef.current) return grantResult;
-
     if (grantResult.success) {
       await clearPendingAddonGrant();
       Sentry.addBreadcrumb({
@@ -209,7 +256,6 @@ export default function SubscriptionScreen() {
           credits: grantData.credits
         }
       });
-      showToast(`Dodano ${grantData.credits} Punktów Magii!`, 'SUCCESS');
     } else {
       Sentry.captureMessage('grantAddonCredits failed after purchase', {
         level: 'error',
@@ -218,6 +264,13 @@ export default function SubscriptionScreen() {
           productId: grantData.productId
         }
       });
+    }
+
+    if (!mountedRef.current) return grantResult;
+
+    if (grantResult.success) {
+      showToast(`Dodano ${grantData.credits} Punktów Magii!`, 'SUCCESS');
+    } else {
       showToast('Zakup udany, ale nie udało się dodać punktów. Ponowimy automatycznie przy następnym uruchomieniu.', 'ERROR');
     }
 
@@ -240,7 +293,15 @@ export default function SubscriptionScreen() {
       const userId = await getCurrentUserId();
       if (!userId) return;
       const pending = await loadPendingAddonGrant();
-      if (!pending || !pending.transactionId || !pending.productId) return;
+      if (!pending) return;
+      if (!pending.transactionId || !pending.productId) {
+        Sentry.captureMessage('Pending addon grant has missing fields, cannot retry', {
+          level: 'error',
+          extra: { hasTransactionId: !!pending.transactionId, hasProductId: !!pending.productId }
+        });
+        await clearPendingAddonGrant();
+        return;
+      }
       if (!pending.userId || pending.userId !== String(userId)) {
         await clearPendingAddonGrant();
         return;
@@ -249,6 +310,9 @@ export default function SubscriptionScreen() {
     };
     retry().catch((err) => {
       Sentry.captureException(err, { extra: { context: 'pending_addon_grant_retry' } });
+      if (mountedRef.current) {
+        showToast('Mamy problem z naliczeniem punktów. Spróbuj ponownie lub skontaktuj się z nami.', 'ERROR');
+      }
     });
   }, [loading, attemptGrantAddonCredits]);
 
@@ -311,7 +375,6 @@ export default function SubscriptionScreen() {
 
         // transactionIdentifier is a RevenueCat-assigned ID, not an App Store/Play Store receipt.
         // The backend receives it as receipt_token and uses it as an idempotency key.
-        const currentUserId = await getCurrentUserId();
         const grantData = {
           transactionId: matchedTransaction.transactionIdentifier,
           productId: pack.id,
@@ -320,7 +383,13 @@ export default function SubscriptionScreen() {
           userId: String(currentUserId)
         };
 
-        await persistPendingAddonGrant(grantData);
+        const persisted = await persistPendingAddonGrant(grantData);
+        if (!persisted) {
+          Sentry.captureMessage('Addon grant safety net compromised: AsyncStorage write failed', {
+            level: 'error',
+            extra: { productId: pack.id, transactionId: grantData.transactionId }
+          });
+        }
         await attemptGrantAddonCredits(grantData);
       } else if (result.code !== 'USER_CANCELLED' && result.error !== 'USER_CANCELLED') {
         showToast('Nie udało się dokonać zakupu. Spróbuj ponownie.', 'ERROR');
@@ -334,22 +403,25 @@ export default function SubscriptionScreen() {
     }
   };
 
-  const handleManageSubscription = () => {
-    const url = Platform.OS === 'ios'
-      ? 'https://apps.apple.com/account/subscriptions'
-      : 'https://play.google.com/store/account/subscriptions';
-
-    Linking.openURL(url).catch((err) => {
-      Sentry.captureException(err, { extra: { context: 'manage_subscription_link' } });
+  const handleManageSubscription = async () => {
+    try {
+      const result = await presentCustomerCenter();
+      if (!result.success) {
+        Sentry.captureMessage('Customer center failed, falling back to platform URL', {
+          level: 'warning',
+          extra: { error: result.error, platform: Platform.OS }
+        });
+        const url = Platform.OS === 'ios'
+          ? 'https://apps.apple.com/account/subscriptions'
+          : 'https://play.google.com/store/account/subscriptions';
+        await Linking.openURL(url);
+        showToast('Otwieram ustawienia subskrypcji w przeglądarce...', 'INFO');
+      }
+    } catch (err) {
+      Sentry.captureException(err, { extra: { context: 'manage_subscription' } });
       showToast('Nie udało się otworzyć ustawień subskrypcji.', 'ERROR');
-    });
+    }
   };
-
-  const monthlyPackage = offerings?.current?.availablePackages?.find(
-    (p) => p.packageType === 'MONTHLY'
-  ) || offerings?.current?.availablePackages?.[0];
-  const priceLabel = monthlyPackage?.product?.priceString || null;
-  const priceLoading = loadingOfferings || (!offerings && !offeringsError);
 
   const addonPacks = ADDON_PACKS_CONFIG.map((pack) => ({
     ...pack,
@@ -440,7 +512,7 @@ export default function SubscriptionScreen() {
                 <Text style={styles.activeBadgeText}>Aktywna</Text>
               </View>
 
-              <Text style={styles.planTitle}>Plan Miesięczny</Text>
+              <Text style={styles.planTitle}>DawnoTemu Premium</Text>
 
               {expirationDate && (
                 <View style={styles.detailRow}>
@@ -454,8 +526,7 @@ export default function SubscriptionScreen() {
               <View style={styles.separator} />
 
               <Text style={styles.manageHint}>
-                Aby anulować lub zmienić plan, przejdź do ustawień subskrypcji w{' '}
-                {Platform.OS === 'ios' ? 'App Store' : 'Google Play'}.
+                Zarządzaj subskrypcją, anuluj lub poproś o zwrot.
               </Text>
 
               <TouchableOpacity
@@ -463,7 +534,7 @@ export default function SubscriptionScreen() {
                 onPress={handleManageSubscription}
               >
                 <Text style={styles.manageButtonText}>Zarządzaj subskrypcją</Text>
-                <Feather name="external-link" size={16} color={COLORS.lavender} />
+                <Feather name="settings" size={16} color={COLORS.lavender} />
               </TouchableOpacity>
             </View>
 
@@ -504,7 +575,7 @@ export default function SubscriptionScreen() {
             </Text>
 
             <View style={styles.featuresCard}>
-              {FEATURES.map((feature) => (
+              {FEATURES_BASE.map((feature) => (
                 <View key={feature.label} style={styles.featureRow}>
                   <View style={styles.featureIconContainer}>
                     <Feather name={feature.icon} size={18} color={COLORS.lavender} />
@@ -512,26 +583,77 @@ export default function SubscriptionScreen() {
                   <Text style={styles.featureText}>{feature.label}</Text>
                 </View>
               ))}
+              <View style={styles.featureRow}>
+                <View style={styles.featureIconContainer}>
+                  <Feather name="star" size={18} color={COLORS.lavender} />
+                </View>
+                <Text style={styles.featureText}>
+                  {CREDITS_PER_PLAN[selectedPlan] ?? CREDITS_PER_PLAN.MONTHLY} Punktów Magii miesięcznie
+                </Text>
+              </View>
             </View>
 
-            <View style={styles.planCard}>
-              <Text style={styles.planCardTitle}>Plan Miesięczny</Text>
-              {priceLoading ? (
-                <ActivityIndicator size="small" color={COLORS.lavender} style={styles.priceLoader} />
-              ) : priceLabel ? (
-                <>
-                  <Text style={styles.planPrice}>{priceLabel}</Text>
-                  <Text style={styles.planPeriod}>/ miesiąc</Text>
-                </>
-              ) : (
-                <Text style={styles.planPriceUnavailable}>Cena niedostępna</Text>
+            <View style={styles.planSelector}>
+              {monthlyPackage && (
+                <TouchableOpacity
+                  style={[
+                    styles.planCard,
+                    selectedPlan === 'MONTHLY' ? styles.planCardSelected : styles.planCardUnselected
+                  ]}
+                  onPress={() => setSelectedPlan('MONTHLY')}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.planCardTitle}>Miesięczny</Text>
+                  {monthlyPrice ? (
+                    <>
+                      <Text style={styles.planPrice}>{monthlyPrice}</Text>
+                      <Text style={styles.planPeriod}>/ miesiąc</Text>
+                    </>
+                  ) : (
+                    <ActivityIndicator size="small" color={COLORS.lavender} style={styles.priceLoader} />
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {yearlyPackage && (
+                <TouchableOpacity
+                  style={[
+                    styles.planCard,
+                    selectedPlan === 'ANNUAL' ? styles.planCardSelected : styles.planCardUnselected
+                  ]}
+                  onPress={() => setSelectedPlan('ANNUAL')}
+                  activeOpacity={0.85}
+                >
+                  <View style={styles.savingsBadge}>
+                    <Text style={styles.savingsBadgeText}>Najlepsza oferta</Text>
+                  </View>
+                  <Text style={styles.planCardTitle}>Roczny</Text>
+                  {yearlyPrice ? (
+                    <>
+                      <Text style={styles.planPrice}>{yearlyPrice}</Text>
+                      <Text style={styles.planPeriod}>/ rok</Text>
+                    </>
+                  ) : (
+                    <ActivityIndicator size="small" color={COLORS.lavender} style={styles.priceLoader} />
+                  )}
+                </TouchableOpacity>
               )}
             </View>
 
+            {!monthlyPackage && !yearlyPackage && !priceLoading && (
+              <View style={styles.planCard}>
+                <Text style={styles.planPriceUnavailable}>Plany chwilowo niedostępne</Text>
+              </View>
+            )}
+
+            {priceLoading && !monthlyPackage && !yearlyPackage && (
+              <ActivityIndicator size="small" color={COLORS.lavender} style={styles.priceLoader} />
+            )}
+
             <TouchableOpacity
-              style={[styles.purchaseButton, (purchasing || !priceLabel) && styles.disabledButton]}
+              style={[styles.purchaseButton, (purchasing || !selectedPrice) && styles.disabledButton]}
               onPress={handlePurchase}
-              disabled={purchasing || loadingOfferings || !priceLabel}
+              disabled={purchasing || loadingOfferings || !selectedPrice}
               activeOpacity={0.9}
             >
               {purchasing ? (
@@ -539,6 +661,15 @@ export default function SubscriptionScreen() {
               ) : (
                 <Text style={styles.purchaseButtonText}>Subskrybuj</Text>
               )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.paywallButton}
+              onPress={handleShowPaywall}
+              disabled={purchasing}
+            >
+              <Feather name="shopping-bag" size={16} color={COLORS.lavender} />
+              <Text style={styles.paywallButtonText}>Zobacz wszystkie oferty</Text>
             </TouchableOpacity>
 
             <TouchableOpacity

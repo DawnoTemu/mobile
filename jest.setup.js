@@ -20,4 +20,24 @@ jest.mock('react-native-purchases', () => ({
   restorePurchases: jest.fn().mockResolvedValue({ entitlements: { active: {} } }),
   getCustomerInfo: jest.fn().mockResolvedValue({ entitlements: { active: {} } }),
   addCustomerInfoUpdateListener: jest.fn().mockReturnValue(() => {}),
+  setLogLevel: jest.fn(),
+  LOG_LEVEL: { DEBUG: 'DEBUG', INFO: 'INFO', WARN: 'WARN', ERROR: 'ERROR' },
+}));
+
+jest.mock('react-native-purchases-ui', () => ({
+  __esModule: true,
+  default: {
+    presentPaywall: jest.fn().mockResolvedValue('CANCELLED'),
+    presentPaywallIfNeeded: jest.fn().mockResolvedValue('NOT_PRESENTED'),
+    presentCustomerCenter: jest.fn().mockResolvedValue(undefined),
+    Paywall: jest.fn(() => null),
+    CustomerCenterView: jest.fn(() => null),
+  },
+  PAYWALL_RESULT: {
+    PURCHASED: 'PURCHASED',
+    RESTORED: 'RESTORED',
+    CANCELLED: 'CANCELLED',
+    NOT_PRESENTED: 'NOT_PRESENTED',
+    ERROR: 'ERROR',
+  },
 }));

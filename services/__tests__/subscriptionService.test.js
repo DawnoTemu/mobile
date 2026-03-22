@@ -10,10 +10,30 @@ const mockPurchases = {
   purchasePackage: jest.fn(),
   restorePurchases: jest.fn(),
   getCustomerInfo: jest.fn(),
-  addCustomerInfoUpdateListener: jest.fn()
+  addCustomerInfoUpdateListener: jest.fn(),
+  setLogLevel: jest.fn(),
+  LOG_LEVEL: { DEBUG: 'DEBUG', INFO: 'INFO', WARN: 'WARN', ERROR: 'ERROR' }
 };
 
 jest.mock('react-native-purchases', () => mockPurchases);
+
+const mockRevenueCatUI = {
+  presentPaywall: jest.fn(),
+  presentPaywallIfNeeded: jest.fn(),
+  presentCustomerCenter: jest.fn()
+};
+
+jest.mock('react-native-purchases-ui', () => ({
+  __esModule: true,
+  default: mockRevenueCatUI,
+  PAYWALL_RESULT: {
+    PURCHASED: 'PURCHASED',
+    RESTORED: 'RESTORED',
+    CANCELLED: 'CANCELLED',
+    NOT_PRESENTED: 'NOT_PRESENTED',
+    ERROR: 'ERROR',
+  },
+}));
 
 describe('subscriptionService', () => {
   let service;
@@ -109,7 +129,7 @@ describe('subscriptionService', () => {
   describe('purchasePackage', () => {
     test('returns success with isActive when entitlement is present', async () => {
       const customerInfo = {
-        entitlements: { active: { premium: { expirationDate: '2026-12-01' } } }
+        entitlements: { active: { 'DawnoTemu Subscription': { expirationDate: '2026-12-01' } } }
       };
       mockPurchases.purchasePackage.mockResolvedValue({ customerInfo });
 
@@ -157,7 +177,7 @@ describe('subscriptionService', () => {
   describe('restorePurchases', () => {
     test('returns isActive based on entitlements', async () => {
       const customerInfo = {
-        entitlements: { active: { premium: {} } }
+        entitlements: { active: { 'DawnoTemu Subscription': {} } }
       };
       mockPurchases.restorePurchases.mockResolvedValue(customerInfo);
 
@@ -208,11 +228,11 @@ describe('subscriptionService', () => {
       expect(result.willRenew).toBe(false);
     });
 
-    test('returns subscribed with expiration when premium entitlement active', () => {
+    test('returns subscribed with expiration when entitlement active', () => {
       const result = service.parseCustomerInfo({
         entitlements: {
           active: {
-            premium: {
+            'DawnoTemu Subscription': {
               expirationDate: '2026-12-01T00:00:00Z',
               willRenew: true
             }
@@ -229,7 +249,7 @@ describe('subscriptionService', () => {
       const result = service.parseCustomerInfo({
         entitlements: {
           active: {
-            premium: {
+            'DawnoTemu Subscription': {
               expirationDate: '2026-12-01T00:00:00Z'
             }
           }
@@ -244,7 +264,7 @@ describe('subscriptionService', () => {
       const result = service.parseCustomerInfo({
         entitlements: {
           active: {
-            premium: { willRenew: true }
+            'DawnoTemu Subscription': { willRenew: true }
           }
         }
       });
@@ -286,6 +306,105 @@ describe('subscriptionService', () => {
       expect(result.isSubscribed).toBe(false);
       expect(result.expirationDate).toBeNull();
       expect(result.willRenew).toBe(false);
+    });
+  });
+
+  describe('presentPaywall', () => {
+    test('presents paywall and returns result on success', async () => {
+      mockRevenueCatUI.presentPaywall.mockResolvedValue('PURCHASED');
+
+      const result = await service.presentPaywall({ displayCloseButton: true });
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe('PURCHASED');
+      expect(mockRevenueCatUI.presentPaywall).toHaveBeenCalledWith({ displayCloseButton: true });
+    });
+
+    test('passes offering when provided', async () => {
+      const offering = { identifier: 'premium_offering' };
+      mockRevenueCatUI.presentPaywall.mockResolvedValue('PURCHASED');
+
+      const result = await service.presentPaywall({ offering, displayCloseButton: false });
+
+      expect(result.success).toBe(true);
+      expect(mockRevenueCatUI.presentPaywall).toHaveBeenCalledWith({
+        displayCloseButton: false,
+        offering
+      });
+    });
+
+    test('omits offering when not provided', async () => {
+      mockRevenueCatUI.presentPaywall.mockResolvedValue('CANCELLED');
+
+      await service.presentPaywall({ displayCloseButton: true });
+
+      const callArgs = mockRevenueCatUI.presentPaywall.mock.calls[0][0];
+      expect(callArgs).toEqual({ displayCloseButton: true });
+      expect(callArgs).not.toHaveProperty('offering');
+    });
+
+    test('returns error on failure', async () => {
+      mockRevenueCatUI.presentPaywall.mockRejectedValue(new Error('Paywall error'));
+
+      const result = await service.presentPaywall();
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Paywall error');
+    });
+  });
+
+  describe('presentPaywallIfNeeded', () => {
+    test('presents paywall only if entitlement not active', async () => {
+      mockRevenueCatUI.presentPaywallIfNeeded.mockResolvedValue('NOT_PRESENTED');
+
+      const result = await service.presentPaywallIfNeeded();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe('NOT_PRESENTED');
+      expect(mockRevenueCatUI.presentPaywallIfNeeded).toHaveBeenCalledWith({
+        requiredEntitlementIdentifier: 'DawnoTemu Subscription'
+      });
+    });
+
+    test('passes custom entitlement identifier when provided', async () => {
+      mockRevenueCatUI.presentPaywallIfNeeded.mockResolvedValue('PURCHASED');
+
+      const result = await service.presentPaywallIfNeeded({
+        requiredEntitlementIdentifier: 'Custom Entitlement'
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockRevenueCatUI.presentPaywallIfNeeded).toHaveBeenCalledWith({
+        requiredEntitlementIdentifier: 'Custom Entitlement'
+      });
+    });
+
+    test('returns error on failure', async () => {
+      mockRevenueCatUI.presentPaywallIfNeeded.mockRejectedValue(new Error('Paywall error'));
+
+      const result = await service.presentPaywallIfNeeded();
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Paywall error');
+    });
+  });
+
+  describe('presentCustomerCenter', () => {
+    test('presents customer center on success', async () => {
+      mockRevenueCatUI.presentCustomerCenter.mockResolvedValue(undefined);
+
+      const result = await service.presentCustomerCenter();
+
+      expect(result.success).toBe(true);
+    });
+
+    test('returns error on failure', async () => {
+      mockRevenueCatUI.presentCustomerCenter.mockRejectedValue(new Error('CC error'));
+
+      const result = await service.presentCustomerCenter();
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('CC error');
     });
   });
 });
