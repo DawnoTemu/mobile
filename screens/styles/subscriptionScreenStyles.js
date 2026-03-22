@@ -234,20 +234,46 @@ export const styles = StyleSheet.create({
     color: COLORS.text.primary,
     flex: 1
   },
+  planSelector: {
+    flexDirection: 'row',
+    width: '100%',
+    marginBottom: 20,
+    gap: 12
+  },
   planCard: {
+    flex: 1,
     backgroundColor: COLORS.white,
     borderRadius: 16,
     padding: 20,
-    width: '100%',
     alignItems: 'center',
-    marginBottom: 20,
     borderWidth: 2,
-    borderColor: COLORS.lavender,
+    borderColor: 'transparent',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.04,
     shadowRadius: 10,
-    elevation: 1
+    elevation: 1,
+    position: 'relative'
+  },
+  planCardSelected: {
+    borderColor: COLORS.lavender
+  },
+  planCardUnselected: {
+    borderColor: 'rgba(0, 0, 0, 0.08)',
+    opacity: 0.75
+  },
+  savingsBadge: {
+    position: 'absolute',
+    top: -10,
+    backgroundColor: COLORS.peach,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8
+  },
+  savingsBadgeText: {
+    fontFamily: 'Quicksand-Bold',
+    fontSize: 11,
+    color: COLORS.white
   },
   planCardTitle: {
     fontFamily: 'Quicksand-Medium',
@@ -291,6 +317,19 @@ export const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.7
+  },
+  paywallButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    marginBottom: 4,
+    gap: 8
+  },
+  paywallButtonText: {
+    fontFamily: 'Quicksand-Medium',
+    fontSize: 14,
+    color: COLORS.lavender
   },
   restoreButton: {
     paddingVertical: 12,

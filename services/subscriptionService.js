@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import Purchases from 'react-native-purchases';
+import RevenueCatUI, { PAYWALL_RESULT } from 'react-native-purchases-ui';
 import * as Sentry from '@sentry/react-native';
 
 const REVENUECAT_API_KEYS = {
@@ -9,7 +10,8 @@ const REVENUECAT_API_KEYS = {
 
 // Must match the entitlement identifier in RevenueCat > Project > Entitlements.
 // A mismatch causes isSubscribed to always return false with no error.
-const ENTITLEMENT_ID = 'premium';
+// Dashboard path: RevenueCat > Project Settings > Entitlements > [identifier]
+const ENTITLEMENT_ID = 'DawnoTemu Subscription';
 
 const UNSUBSCRIBED_DEFAULT = { isSubscribed: false, expirationDate: null, willRenew: false };
 
@@ -22,6 +24,10 @@ const configure = async () => {
     if (!apiKey) {
       const platform = Platform.OS === 'ios' ? 'EXPO_PUBLIC_REVENUECAT_IOS_KEY' : 'EXPO_PUBLIC_REVENUECAT_ANDROID_KEY';
       return { success: false, error: `RevenueCat API key not configured. Set ${platform} in .env`, code: 'MISSING_API_KEY' };
+    }
+
+    if (__DEV__) {
+      Purchases.setLogLevel(Purchases.LOG_LEVEL.DEBUG);
     }
 
     await Purchases.configure({ apiKey });
@@ -144,6 +150,42 @@ const parseCustomerInfo = (customerInfo) => {
   };
 };
 
+const presentPaywall = async ({ offering, displayCloseButton = true } = {}) => {
+  try {
+    const options = { displayCloseButton };
+    if (offering) {
+      options.offering = offering;
+    }
+    const result = await RevenueCatUI.presentPaywall(options);
+    return { success: true, data: result };
+  } catch (error) {
+    Sentry.captureException(error, { extra: { context: 'revenuecat_present_paywall' } });
+    return { success: false, error: error.message, code: error.code };
+  }
+};
+
+const presentPaywallIfNeeded = async ({ requiredEntitlementIdentifier } = {}) => {
+  try {
+    const result = await RevenueCatUI.presentPaywallIfNeeded({
+      requiredEntitlementIdentifier: requiredEntitlementIdentifier || ENTITLEMENT_ID
+    });
+    return { success: true, data: result };
+  } catch (error) {
+    Sentry.captureException(error, { extra: { context: 'revenuecat_present_paywall_if_needed' } });
+    return { success: false, error: error.message, code: error.code };
+  }
+};
+
+const presentCustomerCenter = async () => {
+  try {
+    await RevenueCatUI.presentCustomerCenter();
+    return { success: true, data: null };
+  } catch (error) {
+    Sentry.captureException(error, { extra: { context: 'revenuecat_customer_center' } });
+    return { success: false, error: error.message, code: error.code };
+  }
+};
+
 export {
   configure,
   loginUser,
@@ -154,5 +196,9 @@ export {
   getCustomerInfo,
   onCustomerInfoUpdate,
   parseCustomerInfo,
-  ENTITLEMENT_ID
+  presentPaywall,
+  presentPaywallIfNeeded,
+  presentCustomerCenter,
+  ENTITLEMENT_ID,
+  PAYWALL_RESULT
 };

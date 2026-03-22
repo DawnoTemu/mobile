@@ -31,6 +31,10 @@ const mockOnCustomerInfoUpdate = jest.fn();
 
 let mockCustomerInfoUpdateCallback = null;
 
+const mockPresentPaywall = jest.fn().mockResolvedValue({ success: true, data: 'CANCELLED' });
+const mockPresentPaywallIfNeeded = jest.fn().mockResolvedValue({ success: true, data: 'NOT_PRESENTED' });
+const mockPresentCustomerCenter = jest.fn().mockResolvedValue({ success: true, data: null });
+
 jest.mock('../../services/subscriptionService', () => {
   const actual = jest.requireActual('../../services/subscriptionService');
   return {
@@ -42,7 +46,17 @@ jest.mock('../../services/subscriptionService', () => {
     restorePurchases: (...args) => mockRestorePurchasesService(...args),
     getCustomerInfo: (...args) => mockGetCustomerInfo(...args),
     onCustomerInfoUpdate: (...args) => mockOnCustomerInfoUpdate(...args),
-    parseCustomerInfo: actual.parseCustomerInfo
+    parseCustomerInfo: actual.parseCustomerInfo,
+    presentPaywall: (...args) => mockPresentPaywall(...args),
+    presentPaywallIfNeeded: (...args) => mockPresentPaywallIfNeeded(...args),
+    presentCustomerCenter: (...args) => mockPresentCustomerCenter(...args),
+    PAYWALL_RESULT: {
+      PURCHASED: 'PURCHASED',
+      RESTORED: 'RESTORED',
+      CANCELLED: 'CANCELLED',
+      NOT_PRESENTED: 'NOT_PRESENTED',
+      ERROR: 'ERROR',
+    }
   };
 });
 
@@ -406,7 +420,7 @@ describe('SubscriptionProvider', () => {
           customerInfo: {
             entitlements: {
               active: {
-                premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+                'DawnoTemu Subscription': { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
               }
             }
           },
@@ -548,7 +562,7 @@ describe('SubscriptionProvider', () => {
         data: {
           entitlements: {
             active: {
-              premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+              'DawnoTemu Subscription': { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
             }
           }
         }
@@ -559,7 +573,7 @@ describe('SubscriptionProvider', () => {
         data: {
           entitlements: {
             active: {
-              premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+              'DawnoTemu Subscription': { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
             }
           }
         }
@@ -598,7 +612,7 @@ describe('SubscriptionProvider', () => {
         data: {
           entitlements: {
             active: {
-              premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+              'DawnoTemu Subscription': { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
             }
           }
         }
@@ -630,7 +644,7 @@ describe('SubscriptionProvider', () => {
         mockCustomerInfoUpdateCallback({
           entitlements: {
             active: {
-              premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+              'DawnoTemu Subscription': { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
             }
           }
         });
@@ -663,7 +677,7 @@ describe('SubscriptionProvider', () => {
           customerInfo: {
             entitlements: {
               active: {
-                premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+                'DawnoTemu Subscription': { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
               }
             }
           },
@@ -812,7 +826,7 @@ describe('SubscriptionProvider', () => {
         data: {
           entitlements: {
             active: {
-              premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+              'DawnoTemu Subscription': { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
             }
           }
         }
@@ -915,7 +929,7 @@ describe('SubscriptionProvider', () => {
           customerInfo: {
             entitlements: {
               active: {
-                premium: { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+                'DawnoTemu Subscription': { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
               }
             }
           },

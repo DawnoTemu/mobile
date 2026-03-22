@@ -36,16 +36,31 @@ const mockRefresh = jest.fn().mockResolvedValue(undefined);
 
 let mockCurrentSubscriptionState = { ...mockSubscriptionState };
 
+const mockPresentPaywall = jest.fn().mockResolvedValue({ success: true, data: 'CANCELLED' });
+const mockPresentCustomerCenter = jest.fn().mockResolvedValue({ success: true, data: null });
+
 jest.mock('../../hooks/useSubscription', () => ({
   useSubscription: () => mockCurrentSubscriptionState,
   useSubscriptionActions: () => ({
     purchasePackage: mockPurchasePackage,
     restorePurchases: mockRestorePurchases,
     getOfferings: mockGetOfferings,
+    presentPaywall: mockPresentPaywall,
+    presentCustomerCenter: mockPresentCustomerCenter,
     refresh: mockRefresh,
     dismissOnboarding: jest.fn(),
     dismissLapseModal: jest.fn()
   })
+}));
+
+jest.mock('../../services/subscriptionService', () => ({
+  PAYWALL_RESULT: {
+    PURCHASED: 'PURCHASED',
+    RESTORED: 'RESTORED',
+    CANCELLED: 'CANCELLED',
+    NOT_PRESENTED: 'NOT_PRESENTED',
+    ERROR: 'ERROR',
+  }
 }));
 
 const mockRefreshCredits = jest.fn().mockResolvedValue(undefined);
@@ -132,7 +147,7 @@ describe('SubscriptionScreen', () => {
     test('successful purchase shows success toast', async () => {
       mockPurchasePackage.mockResolvedValueOnce({
         success: true,
-        data: { customerInfo: { entitlements: { active: { premium: {} } } } }
+        data: { customerInfo: { entitlements: { active: { 'DawnoTemu Subscription': {} } } } }
       });
 
       const { getByText } = render(<SubscriptionScreen />);
@@ -269,7 +284,7 @@ describe('SubscriptionScreen', () => {
         success: true,
         data: {
           customerInfo: {
-            entitlements: { active: { premium: {} } },
+            entitlements: { active: { 'DawnoTemu Subscription': {} } },
             nonSubscriptionTransactions: [
               { productIdentifier: 'credits_10', transactionIdentifier: 'txn-abc' }
             ]
@@ -334,7 +349,7 @@ describe('SubscriptionScreen', () => {
         success: true,
         data: {
           customerInfo: {
-            entitlements: { active: { premium: {} } },
+            entitlements: { active: { 'DawnoTemu Subscription': {} } },
             nonSubscriptionTransactions: [
               { productIdentifier: 'credits_10', transactionIdentifier: 'txn-xyz' }
             ]
