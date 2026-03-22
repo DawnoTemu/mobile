@@ -118,4 +118,4 @@ Environment is resolved in `services/config.js`.
 - Auth events broadcast via `authService.subscribeAuthEvents()` for cross-component coordination
 - Subscription lapse detection compares the AsyncStorage-persisted `subscription_last_known_state` with live RevenueCat data; if this key is absent (e.g., after logout, first install, or manual storage clear), the lapse modal is suppressed
 - RevenueCat SDK is configured on SubscriptionProvider mount; the refresh function guards against use before configuration via `isConfiguredRef`, but the real-time listener only registers after `sdkConfigured` state flips to true
-- `canGenerate` is derived in two reducer branches (`SET_CUSTOMER_INFO` and `SET_TRIAL_STATUS`) because either data source may update independently
+- `canGenerate` is derived in a `useMemo` that falls back to `isSubscribed || trial.active` when `backendCanGenerate` is null; the reducer receives `backendCanGenerate` from the backend via `SET_REFRESH_COMPLETE` and `SET_TRIAL_STATUS`, while `SET_CUSTOMER_INFO` may reset it to null when the entitlement direction changes — these are all independent update paths

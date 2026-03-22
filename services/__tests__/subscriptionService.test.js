@@ -320,6 +320,29 @@ describe('subscriptionService', () => {
       expect(mockRevenueCatUI.presentPaywall).toHaveBeenCalledWith({ displayCloseButton: true });
     });
 
+    test('passes offering when provided', async () => {
+      const offering = { identifier: 'premium_offering' };
+      mockRevenueCatUI.presentPaywall.mockResolvedValue('PURCHASED');
+
+      const result = await service.presentPaywall({ offering, displayCloseButton: false });
+
+      expect(result.success).toBe(true);
+      expect(mockRevenueCatUI.presentPaywall).toHaveBeenCalledWith({
+        displayCloseButton: false,
+        offering
+      });
+    });
+
+    test('omits offering when not provided', async () => {
+      mockRevenueCatUI.presentPaywall.mockResolvedValue('CANCELLED');
+
+      await service.presentPaywall({ displayCloseButton: true });
+
+      const callArgs = mockRevenueCatUI.presentPaywall.mock.calls[0][0];
+      expect(callArgs).toEqual({ displayCloseButton: true });
+      expect(callArgs).not.toHaveProperty('offering');
+    });
+
     test('returns error on failure', async () => {
       mockRevenueCatUI.presentPaywall.mockRejectedValue(new Error('Paywall error'));
 
@@ -340,6 +363,19 @@ describe('subscriptionService', () => {
       expect(result.data).toBe('NOT_PRESENTED');
       expect(mockRevenueCatUI.presentPaywallIfNeeded).toHaveBeenCalledWith({
         requiredEntitlementIdentifier: 'DawnoTemu Subscription'
+      });
+    });
+
+    test('passes custom entitlement identifier when provided', async () => {
+      mockRevenueCatUI.presentPaywallIfNeeded.mockResolvedValue('PURCHASED');
+
+      const result = await service.presentPaywallIfNeeded({
+        requiredEntitlementIdentifier: 'Custom Entitlement'
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockRevenueCatUI.presentPaywallIfNeeded).toHaveBeenCalledWith({
+        requiredEntitlementIdentifier: 'Custom Entitlement'
       });
     });
 

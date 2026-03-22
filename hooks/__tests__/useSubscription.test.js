@@ -867,6 +867,205 @@ describe('SubscriptionProvider', () => {
     });
   });
 
+  describe('presentPaywall', () => {
+    test('refreshes subscription state after PURCHASED result', async () => {
+      mockPresentPaywall.mockResolvedValueOnce({ success: true, data: 'PURCHASED' });
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      const customerInfoCallsBefore = mockGetCustomerInfo.mock.calls.length;
+
+      let paywallResult;
+      await act(async () => {
+        paywallResult = await result.current.actions.presentPaywall({ displayCloseButton: true });
+      });
+
+      expect(paywallResult.success).toBe(true);
+      expect(paywallResult.data).toBe('PURCHASED');
+      expect(mockGetCustomerInfo.mock.calls.length).toBeGreaterThan(customerInfoCallsBefore);
+    });
+
+    test('refreshes subscription state after RESTORED result', async () => {
+      mockPresentPaywall.mockResolvedValueOnce({ success: true, data: 'RESTORED' });
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      const customerInfoCallsBefore = mockGetCustomerInfo.mock.calls.length;
+
+      await act(async () => {
+        await result.current.actions.presentPaywall({ displayCloseButton: true });
+      });
+
+      expect(mockGetCustomerInfo.mock.calls.length).toBeGreaterThan(customerInfoCallsBefore);
+    });
+
+    test('does not refresh after CANCELLED result', async () => {
+      mockPresentPaywall.mockResolvedValueOnce({ success: true, data: 'CANCELLED' });
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      const customerInfoCallsBefore = mockGetCustomerInfo.mock.calls.length;
+
+      await act(async () => {
+        await result.current.actions.presentPaywall({ displayCloseButton: true });
+      });
+
+      expect(mockGetCustomerInfo.mock.calls.length).toBe(customerInfoCallsBefore);
+    });
+
+    test('returns error on failure without throwing', async () => {
+      mockPresentPaywall.mockRejectedValueOnce(new Error('Paywall crashed'));
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      let paywallResult;
+      await act(async () => {
+        paywallResult = await result.current.actions.presentPaywall();
+      });
+
+      expect(paywallResult.success).toBe(false);
+      expect(paywallResult.error).toBe('Paywall crashed');
+    });
+  });
+
+  describe('presentPaywallIfNeeded', () => {
+    test('refreshes after PURCHASED result', async () => {
+      mockPresentPaywallIfNeeded.mockResolvedValueOnce({ success: true, data: 'PURCHASED' });
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      const customerInfoCallsBefore = mockGetCustomerInfo.mock.calls.length;
+
+      await act(async () => {
+        await result.current.actions.presentPaywallIfNeeded();
+      });
+
+      expect(mockGetCustomerInfo.mock.calls.length).toBeGreaterThan(customerInfoCallsBefore);
+    });
+
+    test('does not refresh when NOT_PRESENTED', async () => {
+      mockPresentPaywallIfNeeded.mockResolvedValueOnce({ success: true, data: 'NOT_PRESENTED' });
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      const customerInfoCallsBefore = mockGetCustomerInfo.mock.calls.length;
+
+      await act(async () => {
+        await result.current.actions.presentPaywallIfNeeded();
+      });
+
+      expect(mockGetCustomerInfo.mock.calls.length).toBe(customerInfoCallsBefore);
+    });
+
+    test('returns error on failure without throwing', async () => {
+      mockPresentPaywallIfNeeded.mockRejectedValueOnce(new Error('Failed'));
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      let paywallResult;
+      await act(async () => {
+        paywallResult = await result.current.actions.presentPaywallIfNeeded();
+      });
+
+      expect(paywallResult.success).toBe(false);
+      expect(paywallResult.error).toBe('Failed');
+    });
+  });
+
+  describe('presentCustomerCenter', () => {
+    test('refreshes after successful customer center', async () => {
+      mockPresentCustomerCenter.mockResolvedValueOnce({ success: true, data: null });
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      const customerInfoCallsBefore = mockGetCustomerInfo.mock.calls.length;
+
+      await act(async () => {
+        await result.current.actions.presentCustomerCenter();
+      });
+
+      expect(mockGetCustomerInfo.mock.calls.length).toBeGreaterThan(customerInfoCallsBefore);
+    });
+
+    test('does not refresh on failure', async () => {
+      mockPresentCustomerCenter.mockResolvedValueOnce({ success: false, error: 'CC error' });
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      const customerInfoCallsBefore = mockGetCustomerInfo.mock.calls.length;
+
+      await act(async () => {
+        await result.current.actions.presentCustomerCenter();
+      });
+
+      expect(mockGetCustomerInfo.mock.calls.length).toBe(customerInfoCallsBefore);
+    });
+
+    test('returns error on failure without throwing', async () => {
+      mockPresentCustomerCenter.mockRejectedValueOnce(new Error('Center crashed'));
+
+      const { result } = renderHook(
+        () => ({ state: useSubscription(), actions: useSubscriptionActions() }),
+        { wrapper }
+      );
+
+      await waitFor(() => expect(result.current.state.loading).toBe(false));
+
+      let centerResult;
+      await act(async () => {
+        centerResult = await result.current.actions.presentCustomerCenter();
+      });
+
+      expect(centerResult.success).toBe(false);
+      expect(centerResult.error).toBe('Center crashed');
+    });
+  });
+
   describe('real-time listener backend resync', () => {
     test('listener triggers backend status resync to update backendCanGenerate', async () => {
       const { result } = renderHook(() => useSubscription(), { wrapper });

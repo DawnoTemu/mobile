@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sentry from '@sentry/react-native';
 import { useSubscription, useSubscriptionActions } from '../hooks/useSubscription';
@@ -66,8 +67,10 @@ const persistPendingAddonGrant = async (grantData) => {
       STORAGE_KEYS.PENDING_ADDON_GRANT,
       JSON.stringify({ ...grantData, createdAt: Date.now() })
     );
+    return true;
   } catch (err) {
     Sentry.captureException(err, { extra: { context: 'persist_pending_addon_grant' } });
+    return false;
   }
 };
 
@@ -92,6 +95,7 @@ const loadPendingAddonGrant = async () => {
     return parsed;
   } catch (err) {
     Sentry.captureException(err, { extra: { context: 'load_pending_addon_grant' } });
+    await clearPendingAddonGrant();
     return null;
   }
 };
@@ -142,7 +146,7 @@ export default function SubscriptionScreen() {
         setOfferingsError(result.error || 'Nie udało się załadować planów.');
       }
     } catch (err) {
-      Sentry.captureException(err);
+      Sentry.captureException(err, { extra: { context: 'load_offerings' } });
       setOfferingsError('Nie udało się załadować planów.');
     } finally {
       setLoadingOfferings(false);
@@ -167,27 +171,36 @@ export default function SubscriptionScreen() {
   const selectedPackage = selectedPlan === 'ANNUAL' ? yearlyPackage : monthlyPackage;
   const selectedPrice = selectedPlan === 'ANNUAL' ? yearlyPrice : monthlyPrice;
 
+  const purchaseInFlightRef = useRef(false);
+
   const handleShowPaywall = async () => {
+    if (purchaseInFlightRef.current) return;
+    purchaseInFlightRef.current = true;
     setPurchasing(true);
     try {
       const result = await presentPaywall({ displayCloseButton: true });
       if (result.success && (result.data === PAYWALL_RESULT.PURCHASED || result.data === PAYWALL_RESULT.RESTORED)) {
         showToast('Subskrypcja aktywowana!', 'SUCCESS');
+      } else if (!result.success) {
+        showToast('Nie udało się wyświetlić oferty. Spróbuj ponownie.', 'ERROR');
       }
     } catch (err) {
       Sentry.captureException(err, { extra: { context: 'show_paywall' } });
       showToast('Nie udało się wyświetlić oferty. Spróbuj ponownie.', 'ERROR');
     } finally {
       setPurchasing(false);
+      purchaseInFlightRef.current = false;
     }
   };
 
   const handlePurchase = async () => {
+    if (purchaseInFlightRef.current) return;
     if (!selectedPackage) {
       showToast('Brak dostępnych planów. Spróbuj ponownie później.', 'ERROR');
       return;
     }
 
+    purchaseInFlightRef.current = true;
     setPurchasing(true);
     try {
       const result = await purchasePackage(selectedPackage);
@@ -197,10 +210,11 @@ export default function SubscriptionScreen() {
         showToast('Nie udało się dokonać zakupu. Spróbuj ponownie.', 'ERROR');
       }
     } catch (err) {
-      Sentry.captureException(err);
+      Sentry.captureException(err, { extra: { context: 'subscription_purchase', plan: selectedPlan } });
       showToast('Wystąpił nieoczekiwany błąd. Spróbuj ponownie.', 'ERROR');
     } finally {
       setPurchasing(false);
+      purchaseInFlightRef.current = false;
     }
   };
 
@@ -216,7 +230,7 @@ export default function SubscriptionScreen() {
         showToast('Nie udało się przywrócić zakupów. Spróbuj ponownie.', 'ERROR');
       }
     } catch (err) {
-      Sentry.captureException(err);
+      Sentry.captureException(err, { extra: { context: 'restore_purchases' } });
       showToast('Wystąpił nieoczekiwany błąd. Spróbuj ponownie.', 'ERROR');
     } finally {
       setRestoring(false);
@@ -230,8 +244,6 @@ export default function SubscriptionScreen() {
       platform: grantData.platform
     });
 
-    if (!mountedRef.current) return grantResult;
-
     if (grantResult.success) {
       await clearPendingAddonGrant();
       Sentry.addBreadcrumb({
@@ -244,7 +256,6 @@ export default function SubscriptionScreen() {
           credits: grantData.credits
         }
       });
-      showToast(`Dodano ${grantData.credits} Punktów Magii!`, 'SUCCESS');
     } else {
       Sentry.captureMessage('grantAddonCredits failed after purchase', {
         level: 'error',
@@ -253,6 +264,13 @@ export default function SubscriptionScreen() {
           productId: grantData.productId
         }
       });
+    }
+
+    if (!mountedRef.current) return grantResult;
+
+    if (grantResult.success) {
+      showToast(`Dodano ${grantData.credits} Punktów Magii!`, 'SUCCESS');
+    } else {
       showToast('Zakup udany, ale nie udało się dodać punktów. Ponowimy automatycznie przy następnym uruchomieniu.', 'ERROR');
     }
 
@@ -275,7 +293,15 @@ export default function SubscriptionScreen() {
       const userId = await getCurrentUserId();
       if (!userId) return;
       const pending = await loadPendingAddonGrant();
-      if (!pending || !pending.transactionId || !pending.productId) return;
+      if (!pending) return;
+      if (!pending.transactionId || !pending.productId) {
+        Sentry.captureMessage('Pending addon grant has missing fields, cannot retry', {
+          level: 'error',
+          extra: { hasTransactionId: !!pending.transactionId, hasProductId: !!pending.productId }
+        });
+        await clearPendingAddonGrant();
+        return;
+      }
       if (!pending.userId || pending.userId !== String(userId)) {
         await clearPendingAddonGrant();
         return;
@@ -284,6 +310,9 @@ export default function SubscriptionScreen() {
     };
     retry().catch((err) => {
       Sentry.captureException(err, { extra: { context: 'pending_addon_grant_retry' } });
+      if (mountedRef.current) {
+        showToast('Mamy problem z naliczeniem punktów. Spróbuj ponownie lub skontaktuj się z nami.', 'ERROR');
+      }
     });
   }, [loading, attemptGrantAddonCredits]);
 
@@ -354,7 +383,13 @@ export default function SubscriptionScreen() {
           userId: String(currentUserId)
         };
 
-        await persistPendingAddonGrant(grantData);
+        const persisted = await persistPendingAddonGrant(grantData);
+        if (!persisted) {
+          Sentry.captureMessage('Addon grant safety net compromised: AsyncStorage write failed', {
+            level: 'error',
+            extra: { productId: pack.id, transactionId: grantData.transactionId }
+          });
+        }
         await attemptGrantAddonCredits(grantData);
       } else if (result.code !== 'USER_CANCELLED' && result.error !== 'USER_CANCELLED') {
         showToast('Nie udało się dokonać zakupu. Spróbuj ponownie.', 'ERROR');
@@ -369,18 +404,22 @@ export default function SubscriptionScreen() {
   };
 
   const handleManageSubscription = async () => {
-    const result = await presentCustomerCenter();
-    if (!result.success) {
-      // Fallback to platform subscription management URL
-      const url = Platform.OS === 'ios'
-        ? 'https://apps.apple.com/account/subscriptions'
-        : 'https://play.google.com/store/account/subscriptions';
-
-      const { openURL } = await import('expo-linking');
-      openURL(url).catch((err) => {
-        Sentry.captureException(err, { extra: { context: 'manage_subscription_link' } });
-        showToast('Nie udało się otworzyć ustawień subskrypcji.', 'ERROR');
-      });
+    try {
+      const result = await presentCustomerCenter();
+      if (!result.success) {
+        Sentry.captureMessage('Customer center failed, falling back to platform URL', {
+          level: 'warning',
+          extra: { error: result.error, platform: Platform.OS }
+        });
+        const url = Platform.OS === 'ios'
+          ? 'https://apps.apple.com/account/subscriptions'
+          : 'https://play.google.com/store/account/subscriptions';
+        await Linking.openURL(url);
+        showToast('Otwieram ustawienia subskrypcji w przeglądarce...', 'INFO');
+      }
+    } catch (err) {
+      Sentry.captureException(err, { extra: { context: 'manage_subscription' } });
+      showToast('Nie udało się otworzyć ustawień subskrypcji.', 'ERROR');
     }
   };
 
@@ -549,7 +588,7 @@ export default function SubscriptionScreen() {
                   <Feather name="star" size={18} color={COLORS.lavender} />
                 </View>
                 <Text style={styles.featureText}>
-                  {CREDITS_PER_PLAN[selectedPlan] || 26} Punktów Magii miesięcznie
+                  {CREDITS_PER_PLAN[selectedPlan] ?? CREDITS_PER_PLAN.MONTHLY} Punktów Magii miesięcznie
                 </Text>
               </View>
             </View>

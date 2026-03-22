@@ -89,8 +89,9 @@ jest.mock('../../styles/colors', () => ({
   }
 }));
 
+const mockOpenURL = jest.fn().mockResolvedValue(undefined);
 jest.mock('expo-linking', () => ({
-  openURL: jest.fn().mockResolvedValue(undefined)
+  openURL: mockOpenURL
 }));
 
 jest.mock('../../utils/formatDate', () => ({
@@ -195,6 +196,52 @@ describe('SubscriptionScreen', () => {
           expect.stringContaining('Nie udało się'),
           'ERROR'
         );
+      });
+    });
+  });
+
+  describe('double-tap prevention', () => {
+    test('second subscribe press while first is in-flight does not call purchasePackage again', async () => {
+      let resolveFirst;
+      mockPurchasePackage.mockImplementationOnce(
+        () => new Promise((resolve) => { resolveFirst = resolve; })
+      );
+
+      const { getByText, UNSAFE_root } = render(<SubscriptionScreen />);
+      await waitFor(() => expect(getByText('Subskrybuj')).toBeTruthy());
+
+      const subscribeButton = getByText('Subskrybuj').parent;
+      fireEvent.press(subscribeButton);
+
+      // Button now shows spinner, press the same touchable again
+      fireEvent.press(subscribeButton);
+
+      resolveFirst({ success: true, data: { customerInfo: { entitlements: { active: {} } } } });
+
+      await waitFor(() => {
+        expect(mockPurchasePackage).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    test('second paywall press while first is in-flight does not call presentPaywall again', async () => {
+      let resolveFirst;
+      mockPresentPaywall.mockImplementationOnce(
+        () => new Promise((resolve) => { resolveFirst = resolve; })
+      );
+
+      const { getByText } = render(<SubscriptionScreen />);
+      await waitFor(() => expect(getByText('Zobacz wszystkie oferty')).toBeTruthy());
+
+      const paywallButton = getByText('Zobacz wszystkie oferty').parent;
+      fireEvent.press(paywallButton);
+
+      // Press again while first is in flight
+      fireEvent.press(paywallButton);
+
+      resolveFirst({ success: true, data: 'PURCHASED' });
+
+      await waitFor(() => {
+        expect(mockPresentPaywall).toHaveBeenCalledTimes(1);
       });
     });
   });
@@ -383,13 +430,90 @@ describe('SubscriptionScreen', () => {
       });
     });
 
-    test('addon purchase blocked for non-subscribers', async () => {
+    test('addon buttons are disabled for non-subscribers', async () => {
       mockCurrentSubscriptionState = { ...mockSubscriptionState, isSubscribed: false };
 
+      mockGetOfferings.mockResolvedValue({
+        success: true,
+        data: {
+          current: {
+            availablePackages: [{ packageType: 'MONTHLY', product: { priceString: '29,99 zł', identifier: 'monthly' } }]
+          },
+          all: {
+            credit_packs: {
+              availablePackages: [
+                { product: { identifier: 'credits_10', priceString: '9,99 zł' } }
+              ]
+            }
+          }
+        }
+      });
+
       const { getByText } = render(<SubscriptionScreen />);
-      await waitFor(() => expect(getByText('Subskrybuj')).toBeTruthy());
+      await waitFor(() => expect(getByText('Dostępne tylko dla subskrybentów.')).toBeTruthy());
 
       expect(mockPurchasePackage).not.toHaveBeenCalled();
+    });
+
+    test('logs to Sentry when persist fails but still attempts grant', async () => {
+      const Sentry = require('@sentry/react-native');
+      mockCurrentSubscriptionState = {
+        ...mockSubscriptionState,
+        isSubscribed: true
+      };
+
+      mockGetOfferings.mockResolvedValue({
+        success: true,
+        data: {
+          current: {
+            availablePackages: [{ packageType: 'MONTHLY', product: { priceString: '29,99 zł', identifier: 'monthly' } }]
+          },
+          all: {
+            credit_packs: {
+              availablePackages: [
+                { product: { identifier: 'credits_10', priceString: '9,99 zł' } }
+              ]
+            }
+          }
+        }
+      });
+
+      mockPurchasePackage.mockResolvedValueOnce({
+        success: true,
+        data: {
+          customerInfo: {
+            entitlements: { active: { 'DawnoTemu Subscription': {} } },
+            nonSubscriptionTransactions: [
+              { productIdentifier: 'credits_10', transactionIdentifier: 'txn-persist-fail' }
+            ]
+          }
+        }
+      });
+
+      AsyncStorage.setItem.mockRejectedValueOnce(new Error('Disk full'));
+
+      mockGrantAddonCredits.mockResolvedValueOnce({
+        success: true,
+        data: { creditsGranted: 10, newBalance: 36 }
+      });
+
+      const { getAllByText } = render(<SubscriptionScreen />);
+      await waitFor(() => expect(getAllByText('10').length).toBeGreaterThan(0));
+
+      fireEvent.press(getAllByText('10')[0]);
+
+      await waitFor(() => {
+        expect(Sentry.captureMessage).toHaveBeenCalledWith(
+          'Addon grant safety net compromised: AsyncStorage write failed',
+          expect.objectContaining({ level: 'error' })
+        );
+      });
+
+      await waitFor(() => {
+        expect(mockGrantAddonCredits).toHaveBeenCalledWith(
+          expect.objectContaining({ transactionId: 'txn-persist-fail' })
+        );
+      });
     });
 
     test('retries pending addon grant on mount when subscribed', async () => {
@@ -568,6 +692,203 @@ describe('SubscriptionScreen', () => {
 
       const { queryByText } = render(<SubscriptionScreen />);
       expect(queryByText('Subskrybuj')).toBeNull();
+    });
+  });
+
+  describe('paywall flow', () => {
+    test('successful paywall purchase shows success toast', async () => {
+      mockPresentPaywall.mockResolvedValueOnce({ success: true, data: 'PURCHASED' });
+
+      const { getByText } = render(<SubscriptionScreen />);
+      await waitFor(() => expect(getByText('Zobacz wszystkie oferty')).toBeTruthy());
+
+      fireEvent.press(getByText('Zobacz wszystkie oferty'));
+
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith('Subskrypcja aktywowana!', 'SUCCESS');
+      });
+    });
+
+    test('successful paywall restore shows success toast', async () => {
+      mockPresentPaywall.mockResolvedValueOnce({ success: true, data: 'RESTORED' });
+
+      const { getByText } = render(<SubscriptionScreen />);
+      await waitFor(() => expect(getByText('Zobacz wszystkie oferty')).toBeTruthy());
+
+      fireEvent.press(getByText('Zobacz wszystkie oferty'));
+
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith('Subskrypcja aktywowana!', 'SUCCESS');
+      });
+    });
+
+    test('paywall cancelled shows no toast', async () => {
+      mockPresentPaywall.mockResolvedValueOnce({ success: true, data: 'CANCELLED' });
+
+      const { getByText } = render(<SubscriptionScreen />);
+      await waitFor(() => expect(getByText('Zobacz wszystkie oferty')).toBeTruthy());
+
+      fireEvent.press(getByText('Zobacz wszystkie oferty'));
+
+      await waitFor(() => {
+        expect(mockPresentPaywall).toHaveBeenCalled();
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+
+    test('paywall failure shows error toast', async () => {
+      mockPresentPaywall.mockResolvedValueOnce({ success: false, error: 'SDK error' });
+
+      const { getByText } = render(<SubscriptionScreen />);
+      await waitFor(() => expect(getByText('Zobacz wszystkie oferty')).toBeTruthy());
+
+      fireEvent.press(getByText('Zobacz wszystkie oferty'));
+
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.stringContaining('Nie udało się'),
+          'ERROR'
+        );
+      });
+    });
+  });
+
+  describe('manage subscription', () => {
+    test('successful customer center does not show toast', async () => {
+      mockCurrentSubscriptionState = {
+        ...mockSubscriptionState,
+        isSubscribed: true,
+        expirationDate: '2026-12-01'
+      };
+      mockPresentCustomerCenter.mockResolvedValueOnce({ success: true, data: null });
+
+      const { getByText } = render(<SubscriptionScreen />);
+      await waitFor(() => expect(getByText('Zarządzaj subskrypcją')).toBeTruthy());
+
+      fireEvent.press(getByText('Zarządzaj subskrypcją'));
+
+      await waitFor(() => {
+        expect(mockPresentCustomerCenter).toHaveBeenCalled();
+      });
+      expect(mockShowToast).not.toHaveBeenCalled();
+    });
+
+    test('customer center failure falls back to URL with info toast', async () => {
+      mockCurrentSubscriptionState = {
+        ...mockSubscriptionState,
+        isSubscribed: true,
+        expirationDate: '2026-12-01'
+      };
+      mockPresentCustomerCenter.mockResolvedValueOnce({ success: false, error: 'CC failed' });
+
+      const { getByText } = render(<SubscriptionScreen />);
+      await waitFor(() => expect(getByText('Zarządzaj subskrypcją')).toBeTruthy());
+
+      fireEvent.press(getByText('Zarządzaj subskrypcją'));
+
+      await waitFor(() => {
+        expect(mockOpenURL).toHaveBeenCalledWith(
+          expect.stringContaining('subscriptions')
+        );
+      });
+      expect(mockShowToast).toHaveBeenCalledWith(
+        expect.stringContaining('przeglądarce'),
+        'INFO'
+      );
+    });
+  });
+
+  describe('manage subscription errors', () => {
+    test('customer center throw shows error toast', async () => {
+      mockCurrentSubscriptionState = {
+        ...mockSubscriptionState,
+        isSubscribed: true,
+        expirationDate: '2026-12-01'
+      };
+      mockPresentCustomerCenter.mockRejectedValueOnce(new Error('SDK crash'));
+
+      const { getByText } = render(<SubscriptionScreen />);
+      await waitFor(() => expect(getByText('Zarządzaj subskrypcją')).toBeTruthy());
+
+      fireEvent.press(getByText('Zarządzaj subskrypcją'));
+
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.stringContaining('Nie udało się otworzyć'),
+          'ERROR'
+        );
+      });
+    });
+
+    test('fallback URL failure shows error toast', async () => {
+      mockCurrentSubscriptionState = {
+        ...mockSubscriptionState,
+        isSubscribed: true,
+        expirationDate: '2026-12-01'
+      };
+      mockPresentCustomerCenter.mockResolvedValueOnce({ success: false, error: 'CC failed' });
+      mockOpenURL.mockRejectedValueOnce(new Error('Cannot open URL'));
+
+      const { getByText } = render(<SubscriptionScreen />);
+      await waitFor(() => expect(getByText('Zarządzaj subskrypcją')).toBeTruthy());
+
+      fireEvent.press(getByText('Zarządzaj subskrypcją'));
+
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.stringContaining('Nie udało się otworzyć'),
+          'ERROR'
+        );
+      });
+    });
+  });
+
+  describe('plan selection', () => {
+    test('renders yearly plan card when available', async () => {
+      mockGetOfferings.mockResolvedValue({
+        success: true,
+        data: {
+          current: {
+            availablePackages: [
+              { packageType: 'MONTHLY', product: { priceString: '29,99 zł', identifier: 'monthly' } },
+              { packageType: 'ANNUAL', product: { priceString: '249,99 zł', identifier: 'annual' } }
+            ]
+          }
+        }
+      });
+
+      const { getByText } = render(<SubscriptionScreen />);
+
+      await waitFor(() => {
+        expect(getByText('29,99 zł')).toBeTruthy();
+        expect(getByText('249,99 zł')).toBeTruthy();
+      });
+    });
+
+    test('switching to yearly plan updates credits display', async () => {
+      mockGetOfferings.mockResolvedValue({
+        success: true,
+        data: {
+          current: {
+            availablePackages: [
+              { packageType: 'MONTHLY', product: { priceString: '29,99 zł', identifier: 'monthly' } },
+              { packageType: 'ANNUAL', product: { priceString: '249,99 zł', identifier: 'annual' } }
+            ]
+          }
+        }
+      });
+
+      const { getByText } = render(<SubscriptionScreen />);
+
+      await waitFor(() => expect(getByText('Roczny')).toBeTruthy());
+
+      expect(getByText('26 Punktów Magii miesięcznie')).toBeTruthy();
+
+      fireEvent.press(getByText('Roczny'));
+
+      await waitFor(() => {
+        expect(getByText('30 Punktów Magii miesięcznie')).toBeTruthy();
+      });
     });
   });
 
