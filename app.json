@@ -68,7 +68,6 @@
         }
       ],
       "expo-font",
-      "react-native-purchases",
       [
         "expo-build-properties",
         {

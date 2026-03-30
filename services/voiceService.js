@@ -2873,10 +2873,12 @@ const pollForVoiceCompletion = async (
         };
       }
 
-      if (statusKey === 'ready') {
+      // 'ready' = fully allocated, 'recorded' = processed and waiting for
+      // lazy slot allocation on first synthesis.  Both are success states.
+      if (statusKey === 'ready' || statusKey === 'recorded') {
         return {
           success: true,
-          voiceId: payload.elevenlabs_voice_id || payload.voice_id || null,
+          voiceId: payload.elevenlabs_voice_id || payload.voice_id || String(voiceId),
           name: payload.name || null
         };
       }
