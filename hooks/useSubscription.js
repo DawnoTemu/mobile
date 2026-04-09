@@ -26,7 +26,7 @@ import {
   presentCustomerCenter as presentCustomerCenterService,
   PAYWALL_RESULT
 } from '../services/subscriptionService';
-import { fetchSubscriptionStatus } from '../services/subscriptionStatusService';
+import { fetchSubscriptionStatus, linkRevenueCat } from '../services/subscriptionStatusService';
 import { subscribeAuthEvents, getCurrentUserId } from '../services/authService';
 import { STORAGE_KEYS } from '../services/config';
 
@@ -301,6 +301,10 @@ export const SubscriptionProvider = ({ children }) => {
             }
             return;
           }
+          // Bridge RC identity to backend so webhooks can find this user
+          linkRevenueCat(String(userId)).catch((err) =>
+            Sentry.captureException(err, { extra: { context: 'link_revenuecat_init' } })
+          );
         }
 
         await refresh();
@@ -398,6 +402,10 @@ export const SubscriptionProvider = ({ children }) => {
               }
               return;
             }
+            // Bridge RC identity to backend so webhooks can find this user
+            linkRevenueCat(String(userId)).catch((err) =>
+              Sentry.captureException(err, { extra: { context: 'link_revenuecat_login_event' } })
+            );
           }
           await refresh();
           if (mountedRef.current) setSdkConfigured(true);

@@ -71,7 +71,8 @@ const mockFetchSubscriptionStatus = jest.fn().mockResolvedValue({
 });
 
 jest.mock('../../services/subscriptionStatusService', () => ({
-  fetchSubscriptionStatus: (...args) => mockFetchSubscriptionStatus(...args)
+  fetchSubscriptionStatus: (...args) => mockFetchSubscriptionStatus(...args),
+  linkRevenueCat: jest.fn().mockResolvedValue({ success: true })
 }));
 
 let mockAuthEventCallback = null;

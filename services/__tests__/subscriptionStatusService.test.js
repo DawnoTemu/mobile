@@ -382,4 +382,59 @@ describe('subscriptionStatusService', () => {
       );
     });
   });
+
+  describe('linkRevenueCat', () => {
+    test('sends POST with revenuecat_app_user_id and returns success', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ status: 'linked', revenuecat_app_user_id: '42' })
+      });
+
+      const result = await service.linkRevenueCat('42');
+      expect(result.success).toBe(true);
+
+      const [url, options] = global.fetch.mock.calls[0];
+      expect(url).toContain('/api/user/link-revenuecat');
+      expect(JSON.parse(options.body)).toEqual({ revenuecat_app_user_id: '42' });
+    });
+
+    test('returns error without Sentry on 409 conflict', async () => {
+      const Sentry = require('@sentry/react-native');
+      global.fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        text: () => Promise.resolve(JSON.stringify({ error: 'RevenueCat ID already linked to another account' }))
+      });
+
+      const result = await service.linkRevenueCat('42');
+      expect(result.success).toBe(false);
+      expect(result.status).toBe(409);
+      expect(Sentry.captureMessage).not.toHaveBeenCalled();
+    });
+
+    test('returns error with Sentry on non-409 failure', async () => {
+      const Sentry = require('@sentry/react-native');
+      global.fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve(JSON.stringify({ error: 'Failed to link account' }))
+      });
+
+      const result = await service.linkRevenueCat('42');
+      expect(result.success).toBe(false);
+      expect(Sentry.captureMessage).toHaveBeenCalledWith(
+        'linkRevenueCat failed',
+        expect.objectContaining({ level: 'warning' })
+      );
+    });
+
+    test('returns AUTH_REQUIRED when no token', async () => {
+      mockGetAccessToken.mockResolvedValueOnce(null);
+
+      const result = await service.linkRevenueCat('42');
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('AUTH_REQUIRED');
+    });
+  });
 });

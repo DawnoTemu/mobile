@@ -193,7 +193,54 @@ const grantAddonCredits = async ({ transactionId, productId, platform }) => {
   }
 };
 
+const linkRevenueCat = async (revenuecatAppUserId) => {
+  let timeoutId;
+  try {
+    const token = await getAccessToken();
+    if (!token) {
+      return { success: false, error: 'Authentication required', code: 'AUTH_REQUIRED' };
+    }
+
+    const controller = new AbortController();
+    timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+
+    const response = await fetch(`${API_BASE_URL}/api/user/link-revenuecat`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ revenuecat_app_user_id: revenuecatAppUserId }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => '');
+      let body = {};
+      try { body = JSON.parse(responseText); } catch (_) { /* ignore */ }
+      if (response.status !== 409) {
+        Sentry.captureMessage('linkRevenueCat failed', {
+          level: 'warning',
+          extra: { status: response.status, error: body.error, revenuecatAppUserId }
+        });
+      }
+      return { success: false, error: body.error || `HTTP ${response.status}`, status: response.status };
+    }
+
+    return { success: true };
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      return { success: false, error: 'Request timeout', code: 'TIMEOUT' };
+    }
+    Sentry.captureException(error, { extra: { context: 'link_revenuecat' } });
+    return { success: false, error: error.message };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 export {
   fetchSubscriptionStatus,
-  grantAddonCredits
+  grantAddonCredits,
+  linkRevenueCat
 };

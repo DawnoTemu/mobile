@@ -485,11 +485,16 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
         (responseBody && typeof responseBody === 'object'
           ? responseBody.error || responseBody.message
           : null) || `Request failed with status ${status}`;
+      // Prefer the server's specific error code (e.g. SUBSCRIPTION_REQUIRED)
+      // over the generic HTTP-status-based code (e.g. FORBIDDEN).
+      const serverCode = responseBody && typeof responseBody === 'object'
+        ? responseBody.code
+        : null;
       return {
         success: false,
         status,
         error: message,
-        code: mapStatusToCode(status),
+        code: serverCode || mapStatusToCode(status),
         data: responseBody,
         headers
       };
