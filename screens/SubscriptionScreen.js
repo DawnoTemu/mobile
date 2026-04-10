@@ -11,7 +11,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sentry from '@sentry/react-native';
 import { useSubscription, useSubscriptionActions } from '../hooks/useSubscription';
 import { useToast } from '../components/StatusToast';
@@ -20,7 +19,10 @@ import { grantAddonCredits } from '../services/subscriptionStatusService';
 import { getCurrentUserId } from '../services/authService';
 import { PAYWALL_RESULT } from '../services/subscriptionService';
 import { COLORS } from '../styles/colors';
-import { STORAGE_KEYS } from '../services/config';
+import {
+  persistPendingAddonGrant,
+  clearPendingAddonGrant,
+} from '../utils/pendingAddonGrant';
 import { formatDate } from '../utils/formatDate';
 import { pluralizeDays } from '../utils/pluralize';
 import { styles } from './styles/subscriptionScreenStyles';
@@ -58,47 +60,11 @@ const findTransactionForProduct = (customerInfo, productId) => {
   return null;
 };
 
-// The pending-grant retry flow persists grantData to AsyncStorage and retries
-// on next mount. The backend grantAddonCredits endpoint must be idempotent
-// (keyed on the transactionId sent as receipt_token) so duplicate retry calls are safe.
-const persistPendingAddonGrant = async (grantData) => {
-  try {
-    await AsyncStorage.setItem(
-      STORAGE_KEYS.PENDING_ADDON_GRANT,
-      JSON.stringify({ ...grantData, createdAt: Date.now() })
-    );
-    return true;
-  } catch (err) {
-    Sentry.captureException(err, { extra: { context: 'persist_pending_addon_grant' } });
-    return false;
-  }
-};
-
-const clearPendingAddonGrant = async () => {
-  try {
-    await AsyncStorage.removeItem(STORAGE_KEYS.PENDING_ADDON_GRANT);
-  } catch (err) {
-    Sentry.captureException(err, { extra: { context: 'clear_pending_addon_grant' } });
-  }
-};
-
-const loadPendingAddonGrant = async () => {
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_ADDON_GRANT);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-    if (Date.now() - parsed.createdAt > ONE_DAY_MS) {
-      await clearPendingAddonGrant();
-      return null;
-    }
-    return parsed;
-  } catch (err) {
-    Sentry.captureException(err, { extra: { context: 'load_pending_addon_grant' } });
-    await clearPendingAddonGrant();
-    return null;
-  }
-};
+// AsyncStorage helpers for pending-grant retry live in
+// `utils/pendingAddonGrant.js` so both this screen and the app-root
+// `<PendingAddonGrantRetrier />` component can share them. The retry loop
+// itself has moved to the root so it fires on app launch rather than only
+// when this screen mounts — see DawnoTemu/mobile#21.
 
 export default function SubscriptionScreen() {
   const navigation = useNavigation();
@@ -283,38 +249,9 @@ export default function SubscriptionScreen() {
     return grantResult;
   }, [creditActions, showToast]);
 
-  const hasRetriedPendingGrantRef = useRef(false);
-
-  useEffect(() => {
-    if (loading || hasRetriedPendingGrantRef.current) return;
-    hasRetriedPendingGrantRef.current = true;
-
-    const retry = async () => {
-      const userId = await getCurrentUserId();
-      if (!userId) return;
-      const pending = await loadPendingAddonGrant();
-      if (!pending) return;
-      if (!pending.transactionId || !pending.productId) {
-        Sentry.captureMessage('Pending addon grant has missing fields, cannot retry', {
-          level: 'error',
-          extra: { hasTransactionId: !!pending.transactionId, hasProductId: !!pending.productId }
-        });
-        await clearPendingAddonGrant();
-        return;
-      }
-      if (!pending.userId || pending.userId !== String(userId)) {
-        await clearPendingAddonGrant();
-        return;
-      }
-      await attemptGrantAddonCredits(pending);
-    };
-    retry().catch((err) => {
-      Sentry.captureException(err, { extra: { context: 'pending_addon_grant_retry' } });
-      if (mountedRef.current) {
-        showToast('Mamy problem z naliczeniem punktów. Spróbuj ponownie lub skontaktuj się z nami.', 'ERROR');
-      }
-    });
-  }, [loading, attemptGrantAddonCredits]);
+  // Note: the pending-grant retry useEffect that used to live here was moved
+  // to <PendingAddonGrantRetrier /> at the app root so it fires on app
+  // launch, not only when this screen mounts. See DawnoTemu/mobile#21.
 
   const addonPurchaseInFlightRef = useRef(false);
 

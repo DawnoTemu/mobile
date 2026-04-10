@@ -70,9 +70,10 @@ const mockFetchSubscriptionStatus = jest.fn().mockResolvedValue({
   }
 });
 
+const mockLinkRevenueCat = jest.fn().mockResolvedValue({ success: true });
 jest.mock('../../services/subscriptionStatusService', () => ({
   fetchSubscriptionStatus: (...args) => mockFetchSubscriptionStatus(...args),
-  linkRevenueCat: jest.fn().mockResolvedValue({ success: true })
+  linkRevenueCat: (...args) => mockLinkRevenueCat(...args)
 }));
 
 let mockAuthEventCallback = null;
@@ -631,6 +632,67 @@ describe('SubscriptionProvider', () => {
       expect(mockLogoutUser).toHaveBeenCalled();
       expect(result.current.isSubscribed).toBe(false);
       expect(result.current.loading).toBe(false);
+    });
+  });
+
+  describe('linkRevenueCat dedup (mobile#22)', () => {
+    test('init + LOGIN event in same session only calls linkRevenueCat once', async () => {
+      mockLinkRevenueCat.mockClear();
+      mockGetCurrentUserId.mockResolvedValue(42);
+      mockLoginUser.mockResolvedValue({
+        success: true,
+        data: { entitlements: { active: {} } }
+      });
+      mockGetCustomerInfo.mockResolvedValue({
+        success: true,
+        data: { entitlements: { active: {} } }
+      });
+
+      const { result } = renderHook(() => useSubscription(), { wrapper });
+
+      // Init effect runs → linkRevenueCatOnce fires → single call
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      // LOGIN auth event fires right after (typical app-launch scenario)
+      await act(async () => {
+        await mockAuthEventCallback('LOGIN');
+      });
+
+      // Should still be exactly ONE linkRevenueCat call despite two code paths
+      expect(mockLinkRevenueCat).toHaveBeenCalledTimes(1);
+      expect(mockLinkRevenueCat).toHaveBeenCalledWith('42');
+    });
+
+    test('LOGOUT resets dedup so next LOGIN can link again', async () => {
+      mockLinkRevenueCat.mockClear();
+      mockGetCurrentUserId.mockResolvedValue(42);
+      mockLoginUser.mockResolvedValue({
+        success: true,
+        data: { entitlements: { active: {} } }
+      });
+      mockGetCustomerInfo.mockResolvedValue({
+        success: true,
+        data: { entitlements: { active: {} } }
+      });
+
+      const { result } = renderHook(() => useSubscription(), { wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(mockLinkRevenueCat).toHaveBeenCalledTimes(1);
+
+      // Logout
+      await act(async () => {
+        await mockAuthEventCallback('LOGOUT');
+      });
+
+      // New user logs in
+      mockGetCurrentUserId.mockResolvedValue(99);
+      await act(async () => {
+        await mockAuthEventCallback('LOGIN');
+      });
+
+      expect(mockLinkRevenueCat).toHaveBeenCalledTimes(2);
+      expect(mockLinkRevenueCat).toHaveBeenLastCalledWith('99');
     });
   });
 

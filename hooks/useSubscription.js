@@ -150,6 +150,11 @@ export const SubscriptionProvider = ({ children }) => {
   const hasInitializedRef = useRef(false);
   const isConfiguredRef = useRef(false);
   const refreshingRef = useRef(false);
+  // Tracks the userId we've already linked to RevenueCat in the current
+  // session. Prevents duplicate /api/user/link-revenuecat calls from the
+  // init effect and the LOGIN auth event handler firing back-to-back on
+  // app launch. See DawnoTemu/mobile#22.
+  const linkedUserIdRef = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -274,6 +279,25 @@ export const SubscriptionProvider = ({ children }) => {
     }
   }, [initSDK, checkLapse]);
 
+  // Binds the RC app_user_id to the backend exactly once per session for a
+  // given userId. The init effect and the LOGIN auth event handler both
+  // invoke this, but only the first call hits the backend; subsequent
+  // calls in the same session are no-ops. Resets on LOGOUT.
+  const linkRevenueCatOnce = useCallback(async (userId) => {
+    const key = String(userId);
+    if (linkedUserIdRef.current === key) return;
+    linkedUserIdRef.current = key;
+    try {
+      await linkRevenueCat(key);
+    } catch (err) {
+      // Reset the ref so a later retry can re-attempt.
+      if (linkedUserIdRef.current === key) {
+        linkedUserIdRef.current = null;
+      }
+      Sentry.captureException(err, { extra: { context: 'link_revenuecat_once', userId: key } });
+    }
+  }, []);
+
   // Initialization effect — guarded by ref to prevent double-fire
   useEffect(() => {
     if (hasInitializedRef.current) return;
@@ -301,10 +325,9 @@ export const SubscriptionProvider = ({ children }) => {
             }
             return;
           }
-          // Bridge RC identity to backend so webhooks can find this user
-          linkRevenueCat(String(userId)).catch((err) =>
-            Sentry.captureException(err, { extra: { context: 'link_revenuecat_init' } })
-          );
+          // Bridge RC identity to backend so webhooks can find this user.
+          // Session-scoped dedup — safe to call from both init and LOGIN handler.
+          linkRevenueCatOnce(userId);
         }
 
         await refresh();
@@ -402,10 +425,9 @@ export const SubscriptionProvider = ({ children }) => {
               }
               return;
             }
-            // Bridge RC identity to backend so webhooks can find this user
-            linkRevenueCat(String(userId)).catch((err) =>
-              Sentry.captureException(err, { extra: { context: 'link_revenuecat_login_event' } })
-            );
+            // Bridge RC identity to backend so webhooks can find this user.
+            // Session-scoped dedup — safe to call from both init and LOGIN handler.
+            linkRevenueCatOnce(userId);
           }
           await refresh();
           if (mountedRef.current) setSdkConfigured(true);
@@ -418,6 +440,8 @@ export const SubscriptionProvider = ({ children }) => {
               extra: { error: logoutResult.error }
             });
           }
+          // Allow the next user to link fresh
+          linkedUserIdRef.current = null;
           if (mountedRef.current) {
             setSdkConfigured(false);
             dispatch({ type: 'RESET' });
