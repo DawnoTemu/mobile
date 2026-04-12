@@ -25,7 +25,7 @@
     },
     "android": {
       "package": "com.dawnotemu.app",
-      "versionCode": 18,
+      "versionCode": 19,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#D4C1EC"
