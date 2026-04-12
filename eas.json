@@ -33,6 +33,11 @@
   },
   "submit": {
     "production": {
+      "ios": {
+        "ascAppId": "6748520744",
+        "appleId": "sz.paluch@gmail.com",
+        "appleTeamId": "CSR3B9S8QB"
+      },
       "android": {
         "serviceAccountKeyPath": "./credentials/play-service-account.json",
         "track": "production"
