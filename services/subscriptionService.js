@@ -15,6 +15,44 @@ const ENTITLEMENT_ID = 'DawnoTemu Subscription';
 
 const UNSUBSCRIBED_DEFAULT = { isSubscribed: false, expirationDate: null, willRenew: false };
 
+// RC SDK error codes that reflect store/device policy outcomes (Apple/Google),
+// not bugs in our code. Capture as breadcrumb-only to avoid Sentry noise; the
+// caller still sees `success: false` and can show the message to the user.
+const POLICY_ERROR_CODES = new Set([
+  'PURCHASE_NOT_ALLOWED_ERROR',     // parental controls / device restriction
+  'PURCHASE_INVALID_ERROR',         // store rejected purchase
+  'PRODUCT_NOT_AVAILABLE_FOR_PURCHASE_ERROR',
+  'STORE_PROBLEM_ERROR',            // generic Apple/Google store issue
+  'CONFIGURATION_ERROR',            // app store config problem (paid-app, sandbox)
+  'INELIGIBLE_ERROR',
+  'PAYMENT_PENDING_ERROR'
+]);
+
+const isPolicyError = (error) => {
+  if (!error) return false;
+  if (POLICY_ERROR_CODES.has(error.code)) return true;
+  // Some RN SDK builds surface the code only inside `userInfo`.
+  const inner = error.userInfo && (error.userInfo.readableErrorCode || error.userInfo.code);
+  return POLICY_ERROR_CODES.has(inner);
+};
+
+const captureRCError = (error, context) => {
+  if (isPolicyError(error)) {
+    // Add a breadcrumb so it shows up in incident timelines, but don't fire
+    // an exception event.
+    try {
+      Sentry.addBreadcrumb({
+        category: 'revenuecat_policy',
+        level: 'info',
+        message: error?.message || 'RevenueCat policy outcome',
+        data: { context, code: error?.code }
+      });
+    } catch (_) { /* ignore */ }
+    return;
+  }
+  Sentry.captureException(error, { extra: { context } });
+};
+
 const configure = async () => {
   try {
     const apiKey = Platform.OS === 'ios'
@@ -33,7 +71,7 @@ const configure = async () => {
     await Purchases.configure({ apiKey });
     return { success: true, data: null };
   } catch (error) {
-    Sentry.captureException(error, { extra: { context: 'revenuecat_configure' } });
+    captureRCError(error, 'revenuecat_configure');
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -43,7 +81,7 @@ const loginUser = async (userId) => {
     const { customerInfo } = await Purchases.logIn(String(userId));
     return { success: true, data: customerInfo };
   } catch (error) {
-    Sentry.captureException(error, { extra: { context: 'revenuecat_login' } });
+    captureRCError(error, 'revenuecat_login');
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -53,6 +91,12 @@ const logoutUser = async () => {
     const customerInfo = await Purchases.logOut();
     return { success: true, data: customerInfo };
   } catch (error) {
+    // Expected when the SDK is still on its anonymous user (no Purchases.logIn
+    // has happened in this session). Treat as a no-op rather than an exception.
+    const message = String(error?.message || '');
+    if (message.includes('current user is anonymous')) {
+      return { success: true, data: null, anonymous: true };
+    }
     Sentry.captureException(error, { extra: { context: 'revenuecat_logout' } });
     return { success: false, error: error.message, code: error.code };
   }
@@ -63,7 +107,7 @@ const getOfferings = async () => {
     const offerings = await Purchases.getOfferings();
     return { success: true, data: offerings };
   } catch (error) {
-    Sentry.captureException(error, { extra: { context: 'revenuecat_get_offerings' } });
+    captureRCError(error, 'revenuecat_get_offerings');
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -77,7 +121,7 @@ const purchasePackage = async (pkg) => {
     if (error.userCancelled) {
       return { success: false, error: 'USER_CANCELLED', code: 'USER_CANCELLED' };
     }
-    Sentry.captureException(error, { extra: { context: 'revenuecat_purchase' } });
+    captureRCError(error, 'revenuecat_purchase');
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -88,7 +132,7 @@ const restorePurchases = async () => {
     const isActive = customerInfo?.entitlements?.active?.[ENTITLEMENT_ID] !== undefined;
     return { success: true, data: { customerInfo, isActive } };
   } catch (error) {
-    Sentry.captureException(error, { extra: { context: 'revenuecat_restore' } });
+    captureRCError(error, 'revenuecat_restore');
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -98,7 +142,7 @@ const getCustomerInfo = async () => {
     const customerInfo = await Purchases.getCustomerInfo();
     return { success: true, data: customerInfo };
   } catch (error) {
-    Sentry.captureException(error, { extra: { context: 'revenuecat_get_customer_info' } });
+    captureRCError(error, 'revenuecat_get_customer_info');
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -108,7 +152,7 @@ const onCustomerInfoUpdate = (callback) => {
     const listener = Purchases.addCustomerInfoUpdateListener(callback);
     return { success: true, data: listener };
   } catch (error) {
-    Sentry.captureException(error, { extra: { context: 'revenuecat_listener_setup' } });
+    captureRCError(error, 'revenuecat_listener_setup');
     return { success: false, error: error.message };
   }
 };
@@ -159,7 +203,7 @@ const presentPaywall = async ({ offering, displayCloseButton = true } = {}) => {
     const result = await RevenueCatUI.presentPaywall(options);
     return { success: true, data: result };
   } catch (error) {
-    Sentry.captureException(error, { extra: { context: 'revenuecat_present_paywall' } });
+    captureRCError(error, 'revenuecat_present_paywall');
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -171,7 +215,7 @@ const presentPaywallIfNeeded = async ({ requiredEntitlementIdentifier } = {}) =>
     });
     return { success: true, data: result };
   } catch (error) {
-    Sentry.captureException(error, { extra: { context: 'revenuecat_present_paywall_if_needed' } });
+    captureRCError(error, 'revenuecat_present_paywall_if_needed');
     return { success: false, error: error.message, code: error.code };
   }
 };
@@ -181,7 +225,7 @@ const presentCustomerCenter = async () => {
     await RevenueCatUI.presentCustomerCenter();
     return { success: true, data: null };
   } catch (error) {
-    Sentry.captureException(error, { extra: { context: 'revenuecat_customer_center' } });
+    captureRCError(error, 'revenuecat_customer_center');
     return { success: false, error: error.message, code: error.code };
   }
 };

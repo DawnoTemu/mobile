@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,6 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
-import * as Sentry from '@sentry/react-native';
 import { COLORS } from '../../styles/colors';
 import { pluralizeDays } from '../../utils/pluralize';
 
@@ -22,17 +21,6 @@ const WELCOME_FEATURES = [
 
 export default function OnboardingModal({ visible, trialDays, priceLabel, onDismiss }) {
   const hasValidTrialDays = typeof trialDays === 'number' && trialDays > 0;
-  const hasSentFallbackWarningRef = useRef(false);
-
-  useEffect(() => {
-    if (visible && !hasValidTrialDays && !hasSentFallbackWarningRef.current) {
-      hasSentFallbackWarningRef.current = true;
-      Sentry.captureMessage('OnboardingModal: trial days unavailable', {
-        level: 'warning',
-        extra: { receivedTrialDays: trialDays }
-      });
-    }
-  }, [visible, hasValidTrialDays, trialDays]);
 
   if (!visible) return null;
   const displayPrice = priceLabel || null;
