@@ -16,6 +16,7 @@
     "preview": {
       "developmentClient": false,
       "distribution": "internal",
+      "channel": "preview",
       "env": {
         "SENTRY_AUTH_TOKEN": "${SENTRY_AUTH_TOKEN}",
         "SENTRY_ORG": "dawnotemu",
@@ -24,6 +25,7 @@
     },
     "production": {
       "autoIncrement": true,
+      "channel": "production",
       "env": {
         "SENTRY_AUTH_TOKEN": "${SENTRY_AUTH_TOKEN}",
         "SENTRY_ORG": "dawnotemu",
