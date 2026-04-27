@@ -608,7 +608,18 @@ describe('SubscriptionProvider', () => {
       expect(mockGetCustomerInfo).toHaveBeenCalledTimes(1);
     });
 
-    test('LOGOUT event resets state and logs out RevenueCat', async () => {
+    test('LOGOUT event after a real LOGIN logs out RevenueCat and resets state', async () => {
+      mockGetCurrentUserId.mockResolvedValue(42);
+      mockLoginUser.mockResolvedValue({
+        success: true,
+        data: {
+          entitlements: {
+            active: {
+              'DawnoTemu Subscription': { expirationDate: '2026-12-01T00:00:00Z', willRenew: true }
+            }
+          }
+        }
+      });
       mockGetCustomerInfo.mockResolvedValue({
         success: true,
         data: {
@@ -632,6 +643,28 @@ describe('SubscriptionProvider', () => {
       expect(mockLogoutUser).toHaveBeenCalled();
       expect(result.current.isSubscribed).toBe(false);
       expect(result.current.loading).toBe(false);
+    });
+
+    test('LOGOUT before any LOGIN skips Purchases.logOut() (RC still anonymous)', async () => {
+      // No userId means linkedUserIdRef stays null and the SDK is never linked.
+      mockGetCurrentUserId.mockResolvedValue(null);
+      mockGetCustomerInfo.mockResolvedValue({
+        success: true,
+        data: { entitlements: { active: {} } }
+      });
+
+      const { result } = renderHook(() => useSubscription(), { wrapper });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      mockLogoutUser.mockClear();
+
+      await act(async () => {
+        await mockAuthEventCallback('LOGOUT');
+      });
+
+      // Guard prevents the anonymous-logout error from RevenueCat.
+      expect(mockLogoutUser).not.toHaveBeenCalled();
+      expect(result.current.isSubscribed).toBe(false);
     });
   });
 

@@ -246,10 +246,15 @@ export const SubscriptionProvider = ({ children }) => {
       if (!mountedRef.current) return { success: false, error: 'unmounted' };
 
       if (!trialResult.success) {
-        Sentry.captureMessage('Failed to fetch trial status', {
-          level: 'warning',
-          extra: { error: trialResult.error, code: trialResult.code }
-        });
+        // AUTH_ERROR/OFFLINE/TIMEOUT are expected and already handled by
+        // apiRequest's refresh-and-broadcast-LOGOUT path; not actionable.
+        const benignCodes = new Set(['AUTH_ERROR', 'OFFLINE', 'TIMEOUT']);
+        if (!benignCodes.has(trialResult.code)) {
+          Sentry.captureMessage('Failed to fetch trial status', {
+            level: 'warning',
+            extra: { error: trialResult.error, code: trialResult.code, status: trialResult.status }
+          });
+        }
       }
 
       if (customerResult.success) {
@@ -288,9 +293,15 @@ export const SubscriptionProvider = ({ children }) => {
     if (linkedUserIdRef.current === key) return;
     linkedUserIdRef.current = key;
     try {
-      await linkRevenueCat(key);
+      const result = await linkRevenueCat(key);
+      if (!result?.success) {
+        // Reset the ref so a later retry can re-attempt (e.g., after a 401
+        // refresh, or when an offline session reconnects).
+        if (linkedUserIdRef.current === key) {
+          linkedUserIdRef.current = null;
+        }
+      }
     } catch (err) {
-      // Reset the ref so a later retry can re-attempt.
       if (linkedUserIdRef.current === key) {
         linkedUserIdRef.current = null;
       }
@@ -370,10 +381,13 @@ export const SubscriptionProvider = ({ children }) => {
               }
             });
           } else {
-            Sentry.captureMessage('Backend resync failed after listener update', {
-              level: 'warning',
-              extra: { error: trialResult.error, code: trialResult.code }
-            });
+            const benignCodes = new Set(['AUTH_ERROR', 'OFFLINE', 'TIMEOUT']);
+            if (!benignCodes.has(trialResult.code)) {
+              Sentry.captureMessage('Backend resync failed after listener update', {
+                level: 'warning',
+                extra: { error: trialResult.error, code: trialResult.code, status: trialResult.status }
+              });
+            }
             dispatch({ type: 'CLEAR_BACKEND_RESYNC_PENDING' });
           }
         }).catch((err) => {
@@ -433,12 +447,19 @@ export const SubscriptionProvider = ({ children }) => {
           if (mountedRef.current) setSdkConfigured(true);
           await checkOnboarding();
         } else if (event === 'LOGOUT') {
-          const logoutResult = await logoutUser();
-          if (!logoutResult.success) {
-            Sentry.captureMessage('RevenueCat logout failed', {
-              level: 'warning',
-              extra: { error: logoutResult.error }
-            });
+          // Only call Purchases.logOut() if we actually identified a real user.
+          // If the LOGOUT event fires from a 401-refresh-fail before
+          // Purchases.logIn(userId) ran, the SDK is still on $RCAnonymous and
+          // throws "LogOut was called but the current user is anonymous."
+          // Skip the call in that case — the anon-state cleanup is a no-op.
+          if (linkedUserIdRef.current) {
+            const logoutResult = await logoutUser();
+            if (!logoutResult.success) {
+              Sentry.captureMessage('RevenueCat logout failed', {
+                level: 'warning',
+                extra: { error: logoutResult.error }
+              });
+            }
           }
           // Allow the next user to link fresh
           linkedUserIdRef.current = null;
