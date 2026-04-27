@@ -248,7 +248,9 @@ export const SubscriptionProvider = ({ children }) => {
       if (!trialResult.success) {
         // AUTH_ERROR/OFFLINE/TIMEOUT are expected and already handled by
         // apiRequest's refresh-and-broadcast-LOGOUT path; not actionable.
-        const benignCodes = new Set(['AUTH_ERROR', 'OFFLINE', 'TIMEOUT']);
+        // API_ERROR covers transient fetch failures on flaky mobile networks
+        // (DNS, mid-request drops, TLS resets) — also not actionable.
+        const benignCodes = new Set(['AUTH_ERROR', 'OFFLINE', 'TIMEOUT', 'API_ERROR']);
         if (!benignCodes.has(trialResult.code)) {
           Sentry.captureMessage('Failed to fetch trial status', {
             level: 'warning',
@@ -381,7 +383,7 @@ export const SubscriptionProvider = ({ children }) => {
               }
             });
           } else {
-            const benignCodes = new Set(['AUTH_ERROR', 'OFFLINE', 'TIMEOUT']);
+            const benignCodes = new Set(['AUTH_ERROR', 'OFFLINE', 'TIMEOUT', 'API_ERROR']);
             if (!benignCodes.has(trialResult.code)) {
               Sentry.captureMessage('Backend resync failed after listener update', {
                 level: 'warning',
@@ -447,19 +449,16 @@ export const SubscriptionProvider = ({ children }) => {
           if (mountedRef.current) setSdkConfigured(true);
           await checkOnboarding();
         } else if (event === 'LOGOUT') {
-          // Only call Purchases.logOut() if we actually identified a real user.
-          // If the LOGOUT event fires from a 401-refresh-fail before
-          // Purchases.logIn(userId) ran, the SDK is still on $RCAnonymous and
-          // throws "LogOut was called but the current user is anonymous."
-          // Skip the call in that case — the anon-state cleanup is a no-op.
-          if (linkedUserIdRef.current) {
-            const logoutResult = await logoutUser();
-            if (!logoutResult.success) {
-              Sentry.captureMessage('RevenueCat logout failed', {
-                level: 'warning',
-                extra: { error: logoutResult.error }
-              });
-            }
+          // Always call logoutUser(); subscriptionService gracefully no-ops
+          // when the SDK is still on $RCAnonymous. Gating on linkedUserIdRef
+          // would desync if linkRevenueCat (backend bridge) failed after a
+          // successful Purchases.logIn — the SDK would stay identified.
+          const logoutResult = await logoutUser();
+          if (!logoutResult.success) {
+            Sentry.captureMessage('RevenueCat logout failed', {
+              level: 'warning',
+              extra: { error: logoutResult.error }
+            });
           }
           // Allow the next user to link fresh
           linkedUserIdRef.current = null;
