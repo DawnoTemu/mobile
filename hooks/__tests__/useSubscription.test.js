@@ -645,13 +645,17 @@ describe('SubscriptionProvider', () => {
       expect(result.current.loading).toBe(false);
     });
 
-    test('LOGOUT before any LOGIN skips Purchases.logOut() (RC still anonymous)', async () => {
-      // No userId means linkedUserIdRef stays null and the SDK is never linked.
+    test('LOGOUT before any LOGIN still calls logoutUser (service no-ops on anonymous)', async () => {
+      // No userId — SDK never linked. The service-layer logoutUser swallows
+      // the RC "anonymous" error, so the hook unconditionally calls it to
+      // avoid desync if linkRevenueCat (backend bridge) failed after a
+      // successful Purchases.logIn.
       mockGetCurrentUserId.mockResolvedValue(null);
       mockGetCustomerInfo.mockResolvedValue({
         success: true,
         data: { entitlements: { active: {} } }
       });
+      mockLogoutUser.mockResolvedValue({ success: true, data: null, anonymous: true });
 
       const { result } = renderHook(() => useSubscription(), { wrapper });
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -662,8 +666,7 @@ describe('SubscriptionProvider', () => {
         await mockAuthEventCallback('LOGOUT');
       });
 
-      // Guard prevents the anonymous-logout error from RevenueCat.
-      expect(mockLogoutUser).not.toHaveBeenCalled();
+      expect(mockLogoutUser).toHaveBeenCalledTimes(1);
       expect(result.current.isSubscribed).toBe(false);
     });
   });

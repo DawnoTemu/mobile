@@ -250,7 +250,7 @@ export const SubscriptionProvider = ({ children }) => {
         // apiRequest's refresh-and-broadcast-LOGOUT path; not actionable.
         // API_ERROR covers transient fetch failures on flaky mobile networks
         // (DNS, mid-request drops, TLS resets) — also not actionable.
-        const benignCodes = new Set(['AUTH_ERROR', 'OFFLINE', 'TIMEOUT', 'API_ERROR']);
+        const benignCodes = new Set(['AUTH_ERROR', 'AUTH_REQUIRED', 'OFFLINE', 'TIMEOUT', 'API_ERROR']);
         if (!benignCodes.has(trialResult.code)) {
           Sentry.captureMessage('Failed to fetch trial status', {
             level: 'warning',
@@ -383,7 +383,7 @@ export const SubscriptionProvider = ({ children }) => {
               }
             });
           } else {
-            const benignCodes = new Set(['AUTH_ERROR', 'OFFLINE', 'TIMEOUT', 'API_ERROR']);
+            const benignCodes = new Set(['AUTH_ERROR', 'AUTH_REQUIRED', 'OFFLINE', 'TIMEOUT', 'API_ERROR']);
             if (!benignCodes.has(trialResult.code)) {
               Sentry.captureMessage('Backend resync failed after listener update', {
                 level: 'warning',

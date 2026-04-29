@@ -121,6 +121,20 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
     if (!response.ok) {
       // Special case for 401 Unauthorized - only try refresh once
       if (status === 401 && !isRetry) {
+        if (!token) {
+          // No access token in storage — there is no active session to refresh
+          // or log out from. Surface as AUTH_REQUIRED so callers can handle
+          // "endpoint needs auth" without triggering a spurious LOGOUT cascade
+          // on cold start (Google Play test bot, fresh installs).
+          const message = data?.error || data?.message || 'Authentication required';
+          return {
+            success: false,
+            status,
+            error: message,
+            code: 'AUTH_REQUIRED',
+            data
+          };
+        }
         // Try token refresh if unauthorized and this is not already a retry
         const refreshed = await refreshToken();
         if (refreshed) {
