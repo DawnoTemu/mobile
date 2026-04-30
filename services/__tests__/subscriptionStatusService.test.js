@@ -60,6 +60,23 @@ describe('subscriptionStatusService', () => {
       expect(Sentry.captureMessage).not.toHaveBeenCalled();
     });
 
+    test('forwards 401/AUTH_REQUIRED result without Sentry capture', async () => {
+      const Sentry = require('@sentry/react-native');
+      mockApiRequest.mockResolvedValue({
+        success: false,
+        status: 401,
+        error: 'Authentication required',
+        code: 'AUTH_REQUIRED'
+      });
+
+      const result = await service.fetchSubscriptionStatus();
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('AUTH_REQUIRED');
+      expect(result.status).toBe(401);
+      expect(Sentry.captureMessage).not.toHaveBeenCalled();
+    });
+
     test('captures Sentry warning on 404', async () => {
       const Sentry = require('@sentry/react-native');
       mockApiRequest.mockResolvedValue({
@@ -320,6 +337,23 @@ describe('subscriptionStatusService', () => {
 
       expect(result.success).toBe(false);
       expect(result.status).toBe(401);
+      expect(Sentry.captureMessage).not.toHaveBeenCalled();
+    });
+
+    test('returns error without Sentry on 401/AUTH_REQUIRED (handled by apiRequest)', async () => {
+      const Sentry = require('@sentry/react-native');
+      mockApiRequest.mockResolvedValue({
+        success: false,
+        status: 401,
+        error: 'Authentication required',
+        code: 'AUTH_REQUIRED'
+      });
+
+      const result = await service.linkRevenueCat('42');
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe(401);
+      expect(result.code).toBe('AUTH_REQUIRED');
       expect(Sentry.captureMessage).not.toHaveBeenCalled();
     });
 

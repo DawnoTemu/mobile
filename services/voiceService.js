@@ -1923,22 +1923,6 @@ export const downloadAudio = async (
 ) => {
   let downloadResumable;
   const attemptNumber = retryCount + 1;
-  const describeUrl = () => {
-    try {
-      const parsed = new URL(url);
-      return {
-        full: parsed.href,
-        origin: parsed.origin,
-        path: parsed.pathname
-      };
-    } catch (error) {
-      return {
-        full: url,
-        origin: null,
-        path: null
-      };
-    }
-  };
   const isApiOrigin = () => {
     try {
       const parsedUrl = new URL(url);
