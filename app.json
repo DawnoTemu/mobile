@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.dawnotemu.mobile",
-      "buildNumber": "23",
+      "buildNumber": "24",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "We use the microphone to record a short voice sample, which is used to create a personalized AI voice model for generating children’s audiobooks narrated in your voice.",
         "UIBackgroundModes": [
@@ -25,7 +25,7 @@
     },
     "android": {
       "package": "com.dawnotemu.app",
-      "versionCode": 22,
+      "versionCode": 23,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#D4C1EC"
