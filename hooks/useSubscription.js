@@ -50,6 +50,30 @@ const initialState = {
   showLapseModal: false
 };
 
+// Codes that don't warrant Sentry noise on the cold-start refresh path
+// (called from the init effect's Promise.all). On a fresh install the
+// user has no tokens; AUTH_REQUIRED is the expected outcome and must NOT
+// trigger LOGOUT cascade. The other codes are recoverable signals already
+// handled at the apiRequest layer.
+const BENIGN_TRIAL_REFRESH_CODES = new Set([
+  'AUTH_ERROR',     // refresh token failed; apiRequest already broadcast LOGOUT
+  'AUTH_REQUIRED',  // no tokens in storage; cold start / fresh install
+  'OFFLINE',
+  'TIMEOUT',
+  'API_ERROR'       // transient fetch failures (DNS, mid-request drops, TLS resets)
+]);
+
+// Codes that don't warrant Sentry noise after a real-time RC listener update.
+// At this point sdkConfigured is true → the user is logged in. AUTH_REQUIRED
+// is NOT benign here — it would indicate tokens vanished mid-session and is
+// worth a warning capture. Only transient-by-nature codes are suppressed.
+const BENIGN_TRIAL_RESYNC_CODES = new Set([
+  'AUTH_ERROR',
+  'OFFLINE',
+  'TIMEOUT',
+  'API_ERROR'
+]);
+
 const reducer = (state, action) => {
   switch (action.type) {
     case 'SET_LOADING':
@@ -246,12 +270,7 @@ export const SubscriptionProvider = ({ children }) => {
       if (!mountedRef.current) return { success: false, error: 'unmounted' };
 
       if (!trialResult.success) {
-        // AUTH_ERROR/OFFLINE/TIMEOUT are expected and already handled by
-        // apiRequest's refresh-and-broadcast-LOGOUT path; not actionable.
-        // API_ERROR covers transient fetch failures on flaky mobile networks
-        // (DNS, mid-request drops, TLS resets) — also not actionable.
-        const benignCodes = new Set(['AUTH_ERROR', 'AUTH_REQUIRED', 'OFFLINE', 'TIMEOUT', 'API_ERROR']);
-        if (!benignCodes.has(trialResult.code)) {
+        if (!BENIGN_TRIAL_REFRESH_CODES.has(trialResult.code)) {
           Sentry.captureMessage('Failed to fetch trial status', {
             level: 'warning',
             extra: { error: trialResult.error, code: trialResult.code, status: trialResult.status }
@@ -383,8 +402,7 @@ export const SubscriptionProvider = ({ children }) => {
               }
             });
           } else {
-            const benignCodes = new Set(['AUTH_ERROR', 'AUTH_REQUIRED', 'OFFLINE', 'TIMEOUT', 'API_ERROR']);
-            if (!benignCodes.has(trialResult.code)) {
+            if (!BENIGN_TRIAL_RESYNC_CODES.has(trialResult.code)) {
               Sentry.captureMessage('Backend resync failed after listener update', {
                 level: 'warning',
                 extra: { error: trialResult.error, code: trialResult.code, status: trialResult.status }

@@ -94,6 +94,8 @@ jest.mock('@sentry/react-native', () => ({
   captureMessage: jest.fn()
 }));
 
+const Sentry = require('@sentry/react-native');
+
 const {
   SubscriptionProvider,
   useSubscription,
@@ -667,6 +669,53 @@ describe('SubscriptionProvider', () => {
       });
 
       expect(mockLogoutUser).toHaveBeenCalledTimes(1);
+      expect(result.current.isSubscribed).toBe(false);
+      // Verify full RESET → initialState reducer transition
+      expect(result.current.expirationDate).toBeNull();
+      expect(result.current.willRenew).toBe(false);
+      expect(result.current.trial.active).toBe(false);
+    });
+  });
+
+  describe('cold-start without token', () => {
+    test('AUTH_REQUIRED on cold-start refresh does not log out user or capture Sentry warning', async () => {
+      // Cold-start scenario: fresh install, no logged-in user, no tokens.
+      // fetchSubscriptionStatus returns AUTH_REQUIRED — must be treated as benign:
+      //   - listener is registered but no LOGOUT broadcast occurs
+      //   - no Sentry capture (it's in BENIGN_TRIAL_REFRESH_CODES)
+      //   - hook settles cleanly with isSubscribed=false, error=null
+      mockGetCurrentUserId.mockResolvedValue(null);
+
+      mockGetCustomerInfo.mockResolvedValue({
+        success: true,
+        data: { entitlements: { active: {} } }
+      });
+
+      mockFetchSubscriptionStatus.mockResolvedValueOnce({
+        success: false,
+        code: 'AUTH_REQUIRED',
+        status: 401,
+        error: 'No tokens'
+      });
+
+      const { result } = renderHook(() => useSubscription(), { wrapper });
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      // Listener was registered (subscribeAuthEvents called) but NEVER
+      // invoked with LOGOUT — AUTH_REQUIRED must not cascade to logout.
+      expect(mockSubscribeAuthEvents).toHaveBeenCalled();
+      expect(mockLogoutUser).not.toHaveBeenCalled();
+
+      // AUTH_REQUIRED is in BENIGN_TRIAL_REFRESH_CODES → no Sentry warning
+      const trialStatusWarnings = Sentry.captureMessage.mock.calls.filter(
+        ([msg]) => msg === 'Failed to fetch trial status'
+      );
+      expect(trialStatusWarnings).toHaveLength(0);
+
+      // Hook settles cleanly
+      expect(result.current.error).toBeNull();
+      expect(result.current.loading).toBe(false);
       expect(result.current.isSubscribed).toBe(false);
     });
   });

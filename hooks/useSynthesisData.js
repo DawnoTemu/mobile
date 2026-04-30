@@ -17,7 +17,7 @@ const useSynthesisData = ({
   setIsLoading
 }) => {
   const handleApiError = useCallback((result, defaultMessage) => {
-    if (result.code === 'AUTH_ERROR') {
+    if (result.code === 'AUTH_ERROR' || result.code === 'AUTH_REQUIRED') {
       showToast('Sesja wygasła. Zaloguj się ponownie.', 'ERROR');
       navigation.replace('Login');
       return;

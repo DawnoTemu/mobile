@@ -122,10 +122,29 @@ const apiRequest = async (endpoint, options = {}, signal = null, isRetry = false
       // Special case for 401 Unauthorized - only try refresh once
       if (status === 401 && !isRetry) {
         if (!token) {
-          // No access token in storage — there is no active session to refresh
-          // or log out from. Surface as AUTH_REQUIRED so callers can handle
-          // "endpoint needs auth" without triggering a spurious LOGOUT cascade
-          // on cold start (Google Play test bot, fresh installs).
+          // Disambiguate: no access token could mean (a) truly anonymous user
+          // (cold start, fresh install — no LOGOUT cascade needed) or (b) access
+          // token vanished mid-session while refresh token survived (rare anomaly:
+          // partial keychain failure, race after concurrent rotation). The presence
+          // of a refresh token is the signal.
+          const hasRefreshToken = !!(await getRefreshToken());
+          if (hasRefreshToken) {
+            // Anomaly path — try refresh; on failure fall through to logout cascade.
+            const refreshed = await refreshToken();
+            if (refreshed) {
+              return apiRequest(endpoint, options, signal, true);
+            }
+            await logout();
+            const message = data?.error || data?.message || 'Authentication failed';
+            return {
+              success: false,
+              status,
+              error: message,
+              code: 'AUTH_ERROR',
+              data
+            };
+          }
+          // Truly anonymous — surface AUTH_REQUIRED without logout cascade.
           const message = data?.error || data?.message || 'Authentication required';
           return {
             success: false,

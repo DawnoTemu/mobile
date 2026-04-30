@@ -1,19 +1,20 @@
-// Custom entry that runs BEFORE expo-router/entry-classic mounts the root
-// component. We need this for two reasons:
+// Custom entry that runs BEFORE expo-router/entry mounts the root component.
+// Two side-effects, both removable when the upstream bugs are fixed:
 //
-// 1. expo-router 6.0.12 ships a Sitemap view that reads `window.location.origin`
-//    unconditionally. On React Native `window.location` is `undefined`, so any
-//    deep link / push notification / mistyped `dawnotemu://...` URL that
-//    bounces through the auto-generated `/_sitemap` or `+not-found` routes
-//    crashes the app with a fatal C++ exception (REACT-NATIVE-16, 2026-04-28).
-//    Defining a no-op `globalThis.location` makes the read return an empty
-//    string and the screen renders fine.
+// 1. expo-router's Sitemap view (and +not-found fallback) reads
+//    `window.location.origin` unconditionally during render. On React Native,
+//    `window.location` is undefined → fatal C++ exception, reachable via any
+//    deep link / push notification / mistyped scheme URL the router can't
+//    match. Defining a no-op `globalThis.location` makes the read return ''
+//    and the screen renders. The stub intentionally exposes only `origin`;
+//    if future code (e.g. RSC) needs `href`/`pathname`, expand the stub.
+//    TODO: remove once expo-router guards the access.
 //
-// 2. `react-native-url-polyfill` is in `package.json` deps but was never
-//    imported anywhere. Hermes 0.81's URL implementation has known gaps
-//    (`URL.canParse`, `searchParams.size`, etc.). Importing the polyfill
-//    here makes URL parsing identical across Hermes versions and OTA bundles.
-if (typeof globalThis.location === 'undefined') {
+// 2. `react-native-url-polyfill` is in package.json deps but never imported.
+//    Hermes has gaps in URL (`URL.canParse`, `searchParams.size` etc.).
+//    Importing here makes URL parsing identical across Hermes versions and
+//    OTA bundles. TODO: remove once Hermes ships full URL support.
+if (!globalThis.location || typeof globalThis.location.origin !== 'string') {
   globalThis.location = { origin: '' };
 }
 
