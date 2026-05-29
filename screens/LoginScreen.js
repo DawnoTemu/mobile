@@ -57,14 +57,24 @@ export default function LoginScreen({ navigation }) {
       } else {
         let errorMessage = 'Błąd logowania. Spróbuj ponownie.';
         
+        // The backend's stable `code` lands at result.data.code (authService
+        // overwrites result.code with an HTTP-status-derived value). Prefer it;
+        // fall back to a case-insensitive match on "confirm" so the older
+        // message wording ("confirm"/"confirmation"/"confirmed") still routes
+        // correctly — the previous `.includes('confirmed')` check never matched
+        // the backend's actual message and stranded unconfirmed users.
+        const isEmailNotConfirmed =
+          result.data?.code === 'EMAIL_NOT_CONFIRMED' ||
+          (result.error && /confirm/i.test(result.error));
+
         if (result.code === 'OFFLINE') {
           errorMessage = 'Brak połączenia z internetem. Połącz się z internetem i spróbuj ponownie.';
+        } else if (isEmailNotConfirmed) {
+          errorMessage = 'Konto nie zostało potwierdzone. Sprawdź swój email.';
+          // Route to the confirm/resend screen so the user can recover.
+          navigation.navigate('ConfirmEmail', { email });
         } else if (result.error && result.error.includes('credentials')) {
           errorMessage = 'Nieprawidłowy email lub hasło.';
-        } else if (result.error && result.error.includes('confirmed')) {
-          errorMessage = 'Konto nie zostało potwierdzone. Sprawdź swój email.';
-          // Optionally navigate to confirm email screen
-          navigation.navigate('ConfirmEmail', { email });
         } else if (result.error) {
           errorMessage = result.error;
         }
@@ -153,6 +163,7 @@ export default function LoginScreen({ navigation }) {
           
           {/* Login Button */}
           <TouchableOpacity
+            testID="login-submit"
             style={[styles.loginButton, isLoading && styles.disabledButton]}
             onPress={handleLogin}
             disabled={isLoading}
