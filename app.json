@@ -7,7 +7,6 @@
     "icon": "./assets/images/logo.png",
     "scheme": "dawnotemu",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.dawnotemu.mobile",
@@ -77,7 +76,11 @@
             }
           }
         }
-      ]
+      ],
+      "@sentry/react-native",
+      "expo-image",
+      "expo-web-browser",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
