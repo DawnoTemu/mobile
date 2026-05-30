@@ -22,7 +22,7 @@ jest.mock('@react-native-community/netinfo', () => ({
   fetch: jest.fn().mockResolvedValue({ isConnected: true })
 }));
 
-jest.mock('expo-file-system', () => ({
+jest.mock('expo-file-system/legacy', () => ({
   documentDirectory: '/mock-doc-dir/',
   cacheDirectory: '/mock-cache-dir/',
   getInfoAsync: jest.fn().mockResolvedValue({ exists: false }),

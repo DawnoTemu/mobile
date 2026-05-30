@@ -28,7 +28,7 @@ import OnboardingModal from '../components/Modals/OnboardingModal';
 import SubscriptionLapseModal from '../components/Modals/SubscriptionLapseModal';
 import AppMenu from '../components/AppMenu';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { usePlaybackQueue, usePlaybackQueueDispatch, LOOP_MODES } from '../context/PlaybackQueueProvider';
 import useQueueDerivedState, { resolveQueueStoryId as resolveQueueStoryIdHelper } from '../hooks/useQueueDerivedState';
 import * as Sentry from '@sentry/react-native';

@@ -80,7 +80,8 @@
       "@sentry/react-native",
       "expo-image",
       "expo-web-browser",
-      "expo-asset"
+      "expo-asset",
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true
@@ -91,7 +92,7 @@
       }
     },
     "owner": "szymonpaluch",
-    "runtimeVersion": "1.1.0",
+    "runtimeVersion": "1.2.0",
     "updates": {
       "url": "https://u.expo.dev/9e719385-ec85-4354-a7dd-c1e4d8b3e35b"
     }
